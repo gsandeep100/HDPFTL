@@ -19,7 +19,7 @@ class TabularNet(nn.Module):
         self.shared = nn.Sequential(
             nn.Linear(input_dim, 128),
             nn.ReLU(),
-            nn.BatchNorm1d(128),
+            nn.LayerNorm(128),
             nn.Linear(128, 64),
             nn.ReLU(),
             nn.BatchNorm1d(64)

@@ -124,6 +124,6 @@ NUM_CLIENTS = 10
 NUM_DEVICE = 2
 CLIENTS_PER_AGGREGATOR = 5
 NUM_ROUNDS = 5
-input_dim = 87  # Your feature size
+input_dim = 79  # Your feature size
 pretrain_classes = 5  # Suppose you pretrained with 5 classes
 target_classes = 10  # Suppose you pretrained with 5 classes

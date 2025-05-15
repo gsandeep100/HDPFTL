@@ -17,9 +17,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from config import target_classes, input_dim, pretrain_classes
 from models.TabularNet import TabularNet
-from utils import setup_device
+from utility.config import target_classes, input_dim, pretrain_classes
+from utility.utils import setup_device
 
 
 def target_class():

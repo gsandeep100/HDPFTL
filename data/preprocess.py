@@ -18,9 +18,7 @@ from glob import glob
 import numpy as np
 import pandas as pd
 import torch
-from imblearn.combine import SMOTEENN
 from imblearn.over_sampling import SVMSMOTE
-from imblearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
 
@@ -37,8 +35,13 @@ def safe_smote(X, y):
 
 
 def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=None):
-    all_files = glob(os.path.join(folder_path, "*.csv"))
+    all_files = glob(os.path.join(folder_path, "*.csv")) + glob(os.path.join(folder_path, "*.CSV"))
+
+    if not all_files:
+        raise FileNotFoundError(f"No CSV files found in: {os.path.abspath(folder_path)}")
+    print(f"Found {len(all_files)} CSV files in '{folder_path}'")
     combined_df = []
+
 
     for file in all_files:
         df = pd.read_csv(file)
@@ -65,7 +68,6 @@ def preprocess_data(path):
     df.drop_duplicates(inplace=True)
     df.drop(['Flow ID', 'Source IP', 'Destination IP', 'Timestamp'], axis=1, inplace=True, errors="ignore")
     df.columns = df.columns.str.strip()
-    print(df.columns)
     # label_encoder = LabelEncoder()
     # df['Label'] = label_encoder.fit_transform(df['Label'])
     # label = 0 if 'benign' in os.path.basename(path).lower() else 1
@@ -75,18 +77,28 @@ def preprocess_data(path):
     features = df.columns.difference(['Label'])
     df[features] = scaler.fit_transform(df[features])
     X, y = df[features], df['Label']
+    print(df.columns)
 
     # SVMSMOTE- Create synthetic minority points near SVM boundary (critical zones).
     #           Makes the minority class stronger exactly where it matters — at the decision boundary.
     # SMOTEENN- Clean noisy samples after oversampling using Edited Nearest Neighbors.
     #           Removes confusing and overlapped samples, making the classifier much more accurate.
 
-    resampling_pipeline = Pipeline([
-        ('svm_smote', SVMSMOTE(random_state=42)),
-        ('smote_enn', SMOTEENN(random_state=42))
-    ])
-    X_final, y_final = resampling_pipeline.fit_resample(X, y)
-    return train_test_split(X_final, y_final, test_size=0.2, random_state=42, stratify=y_final)
+    # resampling_pipeline = Pipeline([
+    #     ('svm_smote', SVMSMOTE(random_state=42)),
+    #     ('smote_enn', SMOTEENN(random_state=42))
+    # ])
+    X_final, y_final = safe_smote(X, y)
+    # Scale features
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X_final)
+    X_train, X_test, y_train, y_test = train_test_split(X, y_final, test_size=0.2, random_state=42, stratify=y_final)
+    # Convert to PyTorch tensors
+    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+    X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+    y_train_tensor = torch.tensor(y_train, dtype=torch.long)
+    y_test_tensor = torch.tensor(y_test.to_numpy(), dtype=torch.long)
+    return X_train_tensor, X_test_tensor, y_train_tensor, y_test_tensor
 
 
 def preprocess_data_small(csv_path, test_size=0.2):
