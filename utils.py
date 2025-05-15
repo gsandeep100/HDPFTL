@@ -20,6 +20,7 @@ def setup_device():
     print(f"Using device: {device}")
     return device
 
+
 def make_dir(path):
     if not os.path.exists(path):
         os.makedirs(path)

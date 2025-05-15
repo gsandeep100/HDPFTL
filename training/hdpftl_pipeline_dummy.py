@@ -1,17 +1,19 @@
+import copy
+import random
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
-import numpy as np
-import copy
-import random
 
 # Set seed for reproducibility
 random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
+
 
 # ========== 1. Base Model ==========
 class TabularNet(nn.Module):
@@ -25,6 +27,7 @@ class TabularNet(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
 
 # ========== 2. Device-Level Training ==========
 def train_device_model(base_model_fn, dataloader, device):
@@ -42,6 +45,7 @@ def train_device_model(base_model_fn, dataloader, device):
             optimizer.step()
     return model.state_dict()
 
+
 # ========== 3. Fleet-Level Aggregation ==========
 def aggregate_fleet_models(models):
     avg_model = copy.deepcopy(models[0])
@@ -50,6 +54,7 @@ def aggregate_fleet_models(models):
             avg_model[key] += models[i][key]
         avg_model[key] = avg_model[key] / len(models)
     return avg_model
+
 
 # ========== 4. Transfer + Personalize ==========
 def transfer_and_personalize(global_model_weights, target_loader, base_model_fn, device):
@@ -73,8 +78,9 @@ def transfer_and_personalize(global_model_weights, target_loader, base_model_fn,
             optimizer.step()
     return model
 
+
 # ========== 5. Federated Pipeline ==========
-def hdpftl_pipeline(fleet_dataloaders, base_model_fn, device):
+def hdpftl_pipeline_dummy(fleet_dataloaders, base_model_fn, device):
     fleet_models = []
 
     for fleet_id, device_loaders in enumerate(fleet_dataloaders):
@@ -96,6 +102,7 @@ def hdpftl_pipeline(fleet_dataloaders, base_model_fn, device):
     personalized_model = transfer_and_personalize(global_model, target_loader, base_model_fn, device)
     return personalized_model
 
+
 # ========== 6. Simulated IIoT Data ==========
 def detect_anomalies_isolation_forest(X_np):
     scaler = StandardScaler()
@@ -107,6 +114,7 @@ def detect_anomalies_isolation_forest(X_np):
     # Keep only normal samples (pred = 1)
     mask = preds == 1
     return X_np[mask], mask
+
 
 def create_fleet_data(num_fleets=2, devices_per_fleet=3, samples_per_device=200, input_dim=3):
     fleet_dataloaders = []
@@ -132,6 +140,8 @@ def create_fleet_data(num_fleets=2, devices_per_fleet=3, samples_per_device=200,
         fleet_dataloaders.append(fleet)
 
     return fleet_dataloaders
+
+
 # def create_fleet_data(num_fleets=200, devices_per_fleet=300, samples_per_device=200):
 #     fleet_dataloaders = []
 #     for _ in range(num_fleets):
@@ -156,13 +166,15 @@ def evaluate(model, device):
         acc = (preds == y).float().mean()
         print(f"\n✅ Personalized Model Test Accuracy: {acc.item():.2f}")
 
+
 # ========== 8. Main ==========
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("📡 Running HDPFTL Pipeline for IIoT...\n")
     fleet_dataloaders = create_fleet_data()
-    personalized_model = hdpftl_pipeline(fleet_dataloaders, TabularNet, device)
+    personalized_model = hdpftl_pipeline_dummy(fleet_dataloaders, TabularNet, device)
     evaluate(personalized_model, device)
+
 
 if __name__ == "__main__":
     main()

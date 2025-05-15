@@ -21,6 +21,7 @@ from config import input_dim, pretrain_classes
 from models.TabularNet import TabularNet
 from utils import setup_device, make_dir
 
+
 def pretrain_class():
     print("\n=== Pretraining Phase ===")
     # Create random pretraining data

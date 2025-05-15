@@ -40,7 +40,6 @@
 # Optionally fine-tune global model with transfer learning on target silo's data
 
 
-
 # 1. Data Preprocessing per Silo
 # Load raw data (e.g., CICIDS2017) for each IoT silo.
 #
@@ -115,7 +114,11 @@
 # Use the final personalized model per silo
 #
 # Deployed on-device or on-edge for real-time zero-day detection
-DATASET_PATH = "./dataset/CICIDS_2017/"
+INPUT_DATASET_PATH_2023 = 'https://www.unb.ca/cic/datasets/iotdataset-2023.html'
+INPUT_DATASET_PATH_2024 = 'https://www.unb.ca/cic/datasets/iotdataset-2024.html'
+OUTPUT_DATASET_PATH_2023 = "./dataset/CIC_IoT_IDAD_Dataset_2023/"
+OUTPUT_DATASET_PATH_2024 = "./dataset/CIC_IoT_IDAD_Dataset_2024/"
+
 BATCH_SIZE = 32
 NUM_CLIENTS = 10
 NUM_DEVICE = 2

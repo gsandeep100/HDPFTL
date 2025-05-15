@@ -19,7 +19,8 @@ def train_fleet(self):
     models = [client.train_local(self.model_fn()) for client in self.clients]
     return self.aggregate(models)
 
-#TODO use bayesian aggregation technique
+
+# TODO use bayesian aggregation technique
 def aggregate(self, models):
     avg_model = copy.deepcopy(models[0])
     for key in avg_model.state_dict():

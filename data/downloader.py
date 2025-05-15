@@ -10,24 +10,35 @@
    Python3 Version:   3.12.8
 -------------------------------------------------
 """
-
 import os
-import shutil
 
-import kagglehub
-from kaggle import KaggleApi
-
-from config import DATASET_PATH
+import requests
 
 
-def download_dataset():
-    if not os.path.exists(DATASET_PATH):
-        api = KaggleApi()
-        api.authenticate()
-        path = kagglehub.dataset_download("bertvankeulen/cicids-2017")
-        #path1 = kagglehub.dataset_download("ishasingh03/friday-workinghours-afternoon-ddos")
-        shutil.copytree(path, DATASET_PATH)
-        #shutil.copytree(path1, DATASET_PATH)
-        print("Dataset downloaded at:", DATASET_PATH)
+def download_dataset(input_dir, output_dir):
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    # Fake browser headers
+    # Send a GET request to the URL
+    response = requests.get(input_dir)
+
+    # Check if the request was successful
+    if response.status_code == 200:
+        # Save the content to a local file
+        with open('CIC_IoT_Dataset_2023.html', 'wb') as file:
+            file.write(response.content)
+        print('File downloaded successfully.')
     else:
-        print("Dataset already exists at:", DATASET_PATH)
+        print(f'Failed to download file. Status code: {response.status_code}')
+
+# def download_dataset():
+#     if not os.path.exists(DATASET_PATH_2023):
+#         api = KaggleApi()
+#         api.authenticate()
+#         path = kagglehub.dataset_download("bertvankeulen/cicids-2017")
+#         #path1 = kagglehub.dataset_download("ishasingh03/friday-workinghours-afternoon-ddos")
+#         shutil.copytree(path, DATASET_PATH_2023)
+#         #shutil.copytree(path1, DATASET_PATH)
+#         print("Dataset downloaded at:", DATASET_PATH_2023)
+#     else:
+#         print("Dataset already exists at:", DATASET_PATH_2023)

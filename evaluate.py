@@ -13,7 +13,7 @@
 import torch
 
 
-#✅ Evaluate on Global Test Set
+# ✅ Evaluate on Global Test Set
 # def evaluate_global_model(model, X_test, y_test, batch_size=32, device='cuda'):
 #     model.eval()
 #     dataloader = DataLoader(TensorDataset(X_test.to(device), y_test.to(device)), batch_size=batch_size)

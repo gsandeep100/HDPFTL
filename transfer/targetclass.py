@@ -25,7 +25,7 @@ from utils import setup_device
 def target_class():
     print("\n=== Fine-tuning Phase ===")
 
-# Create random target data
+    # Create random target data
     target_features = torch.randn(1000, input_dim)
     target_labels = torch.randint(0, target_classes, (1000,))
 
@@ -76,4 +76,3 @@ def target_class():
         return transfer_model
     else:
         print("❌ The file 'fine_tuned_tabular_model.pth' does not exist.")
-

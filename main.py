@@ -10,9 +10,8 @@
    Python3 Version:   3.12.8
 -------------------------------------------------
 """
-import torch
 
-from data.downloader import download_dataset, DATASET_PATH
+from config import OUTPUT_DATASET_PATH_2024
 from data.preprocess import preprocess_data
 from evaluate import evaluate_model
 from training.aggregator import train_fleet
@@ -25,8 +24,8 @@ from utils import setup_device
 if __name__ == "__main__":
     print("\n=== Process Started ===")
     ############################################
-    download_dataset()
-    X_train, X_test, y_train, y_test = preprocess_data(DATASET_PATH)
+    # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
+    X_train, X_test, y_train, y_test = preprocess_data(OUTPUT_DATASET_PATH_2024)
     # Step 2: Pretrain global model
     pre_model = pretrain_class()
     # Step 3: Instantiate target model and train on device
@@ -39,4 +38,3 @@ if __name__ == "__main__":
     # Step 6: Optional fleet training
     model = train_fleet(model)
     ############################################
-

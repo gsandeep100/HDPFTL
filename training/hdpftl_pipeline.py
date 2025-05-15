@@ -23,6 +23,7 @@ def dirichlet_partition(X, y, num_clients, alpha, num_classes):
 
 import torch
 
+
 def safe_split(tensor, proportions, dim=0):
     """
     Safely splits a tensor along any dimension using proportions that sum to 1.0.
@@ -51,6 +52,7 @@ def safe_split(tensor, proportions, dim=0):
 
     return torch.split(tensor, split_sizes.tolist(), dim=dim)
 
+
 def train_device_model(model, data, labels, device, epochs=3, lr=0.001, batch_size=32):
     model = model.to(device)
     data = data.to(device)
@@ -68,6 +70,7 @@ def train_device_model(model, data, labels, device, epochs=3, lr=0.001, batch_si
             optimizer.step()
     return model
 
+
 def aggregate_models(models, base_model_fn, device):
     new_model = base_model_fn().to(device)
     new_state_dict = {}
@@ -76,6 +79,7 @@ def aggregate_models(models, base_model_fn, device):
             new_state_dict[key] = sum([m.state_dict()[key] for m in models]) / len(models)
     new_model.load_state_dict(new_state_dict)
     return new_model
+
 
 def evaluate_global_model(model, X_test, y_test, batch_size=32, device='cuda'):
     model.eval()
@@ -90,6 +94,7 @@ def evaluate_global_model(model, X_test, y_test, batch_size=32, device='cuda'):
     acc = correct / total
     print(f"Global Accuracy: {acc:.4f}")
     return acc
+
 
 def evaluate_per_client(model, X, y, client_partitions, batch_size=32, device='cuda'):
     accs = {}
@@ -107,6 +112,7 @@ def evaluate_per_client(model, X, y, client_partitions, batch_size=32, device='c
         print(f"Client {cid} Accuracy: {accs[cid]:.4f}")
     return accs
 
+
 def personalize_clients(global_model, X, y, client_partitions, epochs=2, batch_size=32, device='cuda'):
     models = {}
     for cid, idx in client_partitions.items():
@@ -115,11 +121,11 @@ def personalize_clients(global_model, X, y, client_partitions, epochs=2, batch_s
         print(f"Personalized model trained for Client {cid}")
     return models
 
+
 # --- Main HDPFTL pipeline ---
 
 def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn,
                     num_clients=5, alpha=0.5, device='cuda'):
-
     print("\n[1] Partitioning data using Dirichlet...")
     num_classes = len(torch.unique(y_train))
     client_partitions = dirichlet_partition(X_train, y_train, num_clients, alpha, num_classes)
@@ -144,8 +150,8 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn,
 
     print("\n[6] Evaluating personalized models...")
     for cid, model in personalized_models.items():
-        acc = evaluate_global_model(model, X_train[client_partitions[cid]], y_train[client_partitions[cid]], device=device)
+        acc = evaluate_global_model(model, X_train[client_partitions[cid]], y_train[client_partitions[cid]],
+                                    device=device)
         print(f"Personalized Accuracy for Client {cid}: {acc:.4f}")
 
     return global_model, personalized_models
-

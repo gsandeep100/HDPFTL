@@ -11,16 +11,19 @@
 -------------------------------------------------
 """
 import glob
+import os
 from collections import Counter
+from glob import glob
 
 import numpy as np
 import pandas as pd
 import torch
 from imblearn.combine import SMOTEENN
-from imblearn.over_sampling import SVMSMOTE, SMOTE
+from imblearn.over_sampling import SVMSMOTE
 from imblearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
+
 
 def safe_smote(X, y):
     counts = Counter(y)
@@ -32,15 +35,42 @@ def safe_smote(X, y):
     smote = SVMSMOTE(k_neighbors=k, random_state=42)
     return smote.fit_resample(X, y)
 
+
+def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=None):
+    all_files = glob(os.path.join(folder_path, "*.csv"))
+    combined_df = []
+
+    for file in all_files:
+        df = pd.read_csv(file)
+        filename = os.path.basename(file).lower()
+
+        # Determine label from filename
+        if any(kw in filename for kw in benign_keywords):
+            df['Label'] = 0
+        else:
+            df['Label'] = 1  # assume attack if not explicitly benign
+
+        combined_df.append(df)
+
+    final_df = pd.concat(combined_df, ignore_index=True)
+    return final_df
+
+
 def preprocess_data(path):
-    all_files = glob.glob(path + "*.csv")
-    df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)
+    # all_files = glob.glob(path + "*.csv")
+    # df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)
+    df = load_and_label_all(path)
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df.dropna(inplace=True)
     df.drop_duplicates(inplace=True)
     df.drop(['Flow ID', 'Source IP', 'Destination IP', 'Timestamp'], axis=1, inplace=True, errors="ignore")
-    label_encoder = LabelEncoder()
-    df['Label'] = label_encoder.fit_transform(df['Label'])
+    df.columns = df.columns.str.strip()
+    print(df.columns)
+    # label_encoder = LabelEncoder()
+    # df['Label'] = label_encoder.fit_transform(df['Label'])
+    # label = 0 if 'benign' in os.path.basename(path).lower() else 1
+    # df['Label'] = label
+    df = df.select_dtypes(include=[np.number]).dropna(axis=1)
     scaler = MinMaxScaler()
     features = df.columns.difference(['Label'])
     df[features] = scaler.fit_transform(df[features])
@@ -55,12 +85,13 @@ def preprocess_data(path):
         ('svm_smote', SVMSMOTE(random_state=42)),
         ('smote_enn', SMOTEENN(random_state=42))
     ])
-    X_final, y_final = safe_smote(X, y)
+    X_final, y_final = resampling_pipeline.fit_resample(X, y)
     return train_test_split(X_final, y_final, test_size=0.2, random_state=42, stratify=y_final)
+
 
 def preprocess_data_small(csv_path, test_size=0.2):
     # Load dataset
-    df = pd.read_csv(csv_path+ "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv", low_memory=False)
+    df = pd.read_csv(csv_path + "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv", low_memory=False)
 
     # Drop unnamed or constant columns
     df.drop(columns=[col for col in df.columns if 'Unnamed' in col or df[col].nunique() <= 1], inplace=True)
