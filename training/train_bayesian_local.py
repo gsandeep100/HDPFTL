@@ -4,6 +4,7 @@ from torch.optim import Adam
 
 from models.BayesianTabularNet import BayesianTabularNet
 
+
 def extract_priors(model):
     return {
         'fc1.weight': model.fc1.weight.detach(),

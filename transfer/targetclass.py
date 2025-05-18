@@ -17,7 +17,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from models.BayesianTabularNet import BayesianTabularNet
 from models.TabularNet import TabularNet
 from utility.config import target_classes, input_dim, pretrain_classes
 from utility.utils import setup_device

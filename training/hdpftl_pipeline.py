@@ -3,15 +3,14 @@ from copy import deepcopy
 import numpy as np
 import torch
 from pyro.infer import Trace_ELBO, SVI
-from pyro.infer.autoguide import AutoDiagonalNormal, guides
+from pyro.infer.autoguide import AutoDiagonalNormal
 from torch import optim, nn
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 
 from models.BayesianTabularNet import BayesianTabularNet
-from training.train_bayesian_local import extract_priors
-from utility.config import input_dim
 from utility.utils import setup_device
+
 
 def dirichlet_partition(X, y, num_clients, alpha, num_classes):
     data_per_client = {i: [] for i in range(num_clients)}
