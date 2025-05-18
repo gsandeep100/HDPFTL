@@ -42,7 +42,6 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
     print(f"Found {len(all_files)} CSV files in '{folder_path}'")
     combined_df = []
 
-
     for file in all_files:
         df = pd.read_csv(file)
         filename = os.path.basename(file).lower()
@@ -54,10 +53,8 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
             df['Label'] = 1  # assume attack if not explicitly benign
 
         combined_df.append(df)
-
     final_df = pd.concat(combined_df, ignore_index=True)
     return final_df
-
 
 def preprocess_data(path):
     # all_files = glob.glob(path + "*.csv")

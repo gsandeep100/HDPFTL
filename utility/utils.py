@@ -14,12 +14,11 @@ import os
 
 import torch
 
+from models.TabularNet import TabularNet
+
 
 def setup_device():
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
-    return device
-
+    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def make_dir(path):
     if not os.path.exists(path):

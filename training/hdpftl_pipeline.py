@@ -1,14 +1,17 @@
 from copy import deepcopy
 
 import numpy as np
+import torch
+from pyro.infer import Trace_ELBO, SVI
+from pyro.infer.autoguide import AutoDiagonalNormal, guides
 from torch import optim, nn
+from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 
+from models.BayesianTabularNet import BayesianTabularNet
+from training.train_bayesian_local import extract_priors
+from utility.config import input_dim
 from utility.utils import setup_device
-
-
-# --- Utility functions ---
-
 
 def dirichlet_partition(X, y, num_clients, alpha, num_classes):
     data_per_client = {i: [] for i in range(num_clients)}
@@ -22,9 +25,6 @@ def dirichlet_partition(X, y, num_clients, alpha, num_classes):
         for i, chunk in enumerate(split):
             data_per_client[i].extend(chunk.tolist())
     return data_per_client
-
-
-import torch
 
 
 def safe_split(tensor, proportions, dim=0):
@@ -55,11 +55,10 @@ def safe_split(tensor, proportions, dim=0):
 
     return torch.split(tensor, split_sizes.tolist(), dim=dim)
 
-
-def train_device_model(model, data, labels, device, epochs=3, lr=0.001, batch_size=32, verbose=False):
-    model = model.to(device)
-    data = data.to(device)
-    labels = labels.to(device)
+def train_device_model(model, data, labels, epochs=3, lr=0.001, batch_size=32, verbose=False):
+    model = model.to(setup_device())
+    data = data.to(setup_device())
+    labels = labels.to(setup_device())
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.CrossEntropyLoss()
@@ -70,7 +69,7 @@ def train_device_model(model, data, labels, device, epochs=3, lr=0.001, batch_si
         for epoch in range(epochs):
             running_loss = 0.0
             for x, y in loader:
-                x, y = x.to(device), y.to(device)
+                x, y = x.to(setup_device()), y.to(setup_device())
                 optimizer.zero_grad()
                 output = model(x)
                 loss = loss_fn(output, y)
@@ -82,48 +81,63 @@ def train_device_model(model, data, labels, device, epochs=3, lr=0.001, batch_si
 
     return model
 
-
-# def train_device_model(model, data, labels, device, epochs=3, lr=0.001, batch_size=32):
-#     model = model.to(device)
-#     data = data.to(device)
-#     labels = labels.to(device)
-#     model.train()
-#     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-#     loss_fn = torch.nn.CrossEntropyLoss()
-#     loader = DataLoader(TensorDataset(data, labels), batch_size=batch_size, shuffle=True)
-#     for _ in range(epochs):
-#         for x, y in loader:
-#             optimizer.zero_grad()
-#             output = model(x)
-#             loss = loss_fn(output, y)
-#             loss.backward()
-#             optimizer.step()
-#     return model
-
-
-def aggregate_models(models, base_model_fn, device):
-    new_model = base_model_fn
+def aggregate_models(models, base_model_fn):
+    new_model = base_model_fn().to(setup_device())
     new_state_dict = {}
     with torch.no_grad():
         for key in models[0].state_dict().keys():
-            new_state_dict[key] = sum([m.state_dict()[key] for m in models]) / len(models)
+            # Average the parameters across all models
+            new_state_dict[key] = torch.stack([m.state_dict()[key].float() for m in models], dim=0).mean(dim=0)
+
+    # Load the averaged weights into the new model
     new_model.load_state_dict(new_state_dict)
     return new_model
 
 
-# def evaluate_global_model(model, X_test, y_test, batch_size=32, device='cuda'):
-#     model.eval()
-#     dataloader = DataLoader(TensorDataset(X_test.to(device), y_test.to(device)), batch_size=batch_size)
-#     correct, total = 0, 0
-#     with torch.no_grad():
-#         for x, y in dataloader:
-#             output = model(x)
-#             _, pred = torch.max(output, 1)
-#             correct += (pred == y).sum().item()
-#             total += y.size(0)
-#     acc = correct / total
-#     print(f"Global Accuracy: {acc:.4f}")
-#     return acc
+def train_bayesian_local(X_train, y_train, input_dim, num_classes, prior_params, device='cpu'):
+    model = BayesianTabularNet(input_dim, num_classes, prior_params=prior_params).to(device)
+    guide = AutoDiagonalNormal(model)
+    svi = SVI(model, guide, Adam({"lr": 1e-3}), loss=Trace_ELBO())
+
+    for step in range(200):
+        svi.step(X_train, y_train)
+
+    return guide
+
+def bayesian_aggregate_models(models, base_model_fn, epsilon=1e-8):
+    """
+    Bayesian model aggregation via inverse variance weighting.
+    """
+    n_models = len(models)
+    model_keys = models[0].state_dict().keys()
+
+    # Convert state_dicts to float tensors and collect all weights
+    all_states = [{k: v.float() for k, v in m.state_dict().items()} for m in models]
+
+    # Initialize new model and new state dict
+    new_model = base_model_fn.to(setup_device())
+    new_state_dict = {}
+
+    with torch.no_grad():
+        for key in model_keys:
+            # Stack weights from all models: shape [n_models, *param_shape]
+            stacked = torch.stack([state[key] for state in all_states], dim=0)
+
+            # Mean and variance across models
+            mean = torch.mean(stacked, dim=0)
+            var = torch.var(stacked, dim=0, unbiased=False) + epsilon  # add epsilon to avoid div by 0
+
+            # Inverse variance weighting
+            weights = 1.0 / var
+            weighted_sum = torch.sum(weights * stacked, dim=0)
+            norm_factor = torch.sum(weights, dim=0)
+            bayes_avg = weighted_sum / norm_factor
+
+            new_state_dict[key] = bayes_avg
+
+    new_model.load_state_dict(new_state_dict)
+    return new_model
+
 
 def evaluate_global_model(model, X_test, y_test, batch_size=32, device=setup_device()):
     model.eval()
@@ -154,11 +168,10 @@ def evaluate_global_model(model, X_test, y_test, batch_size=32, device=setup_dev
     print(f"Global Accuracy: {acc:.4f}")
     return acc
 
-
-def evaluate_per_client(model, X, y, client_partitions, batch_size=32, device='cuda'):
+def evaluate_per_client(model, X, y, client_partitions, batch_size=32):
     accs = {}
     for cid, idx in client_partitions.items():
-        loader = DataLoader(TensorDataset(X[idx].to(device), y[idx].to(device)), batch_size=batch_size)
+        loader = DataLoader(TensorDataset(X[idx].to(setup_device()), y[idx].to(setup_device())), batch_size=batch_size)
         model.eval()
         correct, total = 0, 0
         with torch.no_grad():
@@ -172,11 +185,11 @@ def evaluate_per_client(model, X, y, client_partitions, batch_size=32, device='c
     return accs
 
 
-def personalize_clients(global_model, X, y, client_partitions, epochs=2, batch_size=32, device='cuda'):
+def personalize_clients(global_model, X, y, client_partitions, epochs=2, batch_size=32):
     models = {}
     for cid, idx in client_partitions.items():
-        local_model = deepcopy(global_model).to(device)
-        models[cid] = train_device_model(local_model, X[idx], y[idx], device, epochs=epochs, batch_size=batch_size)
+        local_model = deepcopy(global_model).to(setup_device())
+        models[cid] = train_device_model(local_model, X[idx], y[idx] ,epochs=epochs, batch_size=batch_size)
         print(f"Personalized model trained for Client {cid}")
     return models
 
@@ -186,26 +199,30 @@ def personalize_clients(global_model, X, y, client_partitions, epochs=2, batch_s
 def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn,
                     num_clients=5, alpha=0.5):
     print("\n[1] Partitioning data using Dirichlet...")
+
     num_classes = len(torch.unique(y_train))
     client_partitions = dirichlet_partition(X_train, y_train, num_clients, alpha, num_classes)
 
     print("\n[2] Fleet-level local training...")
     local_models = []
     for cid in range(num_clients):
-        model = base_model_fn
+        model = base_model_fn.to(setup_device())
         idx = client_partitions[cid]
-        trained_model = train_device_model(model, X_train[idx], y_train[idx], setup_device())
+        trained_model = train_device_model(model, X_train[idx], y_train[idx])
+        # priors = extract_priors(trained_model)
+        # guide = train_bayesian_local(X_train, y_train, input_dim, num_classes, priors, device)
+        # guides.append(guide)
         local_models.append(trained_model)
 
     print("\n[3] Aggregating fleet models...")
-    global_model = aggregate_models(local_models, base_model_fn, setup_device())
-
+    #global_model = aggregate_models(local_models, base_model_fn)
+    global_model = bayesian_aggregate_models(local_models, base_model_fn)
     print("\n[4] Evaluating global model...")
-    evaluate_global_model(global_model, X_test, y_test, device=setup_device())
-    evaluate_per_client(global_model, X_train, y_train, client_partitions, device=setup_device())
+    evaluate_global_model(global_model, X_test, y_test)
+    evaluate_per_client(global_model, X_train, y_train, client_partitions)
 
     print("\n[5] Personalizing each client...")
-    personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions, device=setup_device())
+    personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)
 
     print("\n[6] Evaluating personalized models...")
     for cid, model in personalized_models.items():

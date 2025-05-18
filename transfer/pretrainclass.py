@@ -17,10 +17,18 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from models.BayesianTabularNet import BayesianTabularNet
 from models.TabularNet import TabularNet
 from utility.config import input_dim, pretrain_classes
 from utility.utils import setup_device, make_dir
 
+def extract_priors(model):
+    return {
+        'fc1.weight': pretrain_model.fc1.weight.detach(),
+        'fc1.bias': pretrain_model.fc1.bias.detach(),
+        'fc2.weight': pretrain_model.fc2.weight.detach(),
+        'fc2.bias': pretrain_model.fc2.bias.detach(),
+    }
 
 def pretrain_class():
     print("\n=== Pretraining Phase ===")
@@ -33,7 +41,6 @@ def pretrain_class():
 
     # Create model for pretraining
     pretrain_model = TabularNet(input_dim, pretrain_classes).to(setup_device())
-
     optimizer = torch.optim.Adam(pretrain_model.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
