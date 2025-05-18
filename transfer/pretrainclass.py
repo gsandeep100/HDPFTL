@@ -24,10 +24,10 @@ from utility.utils import setup_device, make_dir
 
 def extract_priors(model):
     return {
-        'fc1.weight': pretrain_model.fc1.weight.detach(),
-        'fc1.bias': pretrain_model.fc1.bias.detach(),
-        'fc2.weight': pretrain_model.fc2.weight.detach(),
-        'fc2.bias': pretrain_model.fc2.bias.detach(),
+        'fc1.weight': model.fc1.weight.detach(),
+        'fc1.bias': model.fc1.bias.detach(),
+        'fc2.weight': model.fc2.weight.detach(),
+        'fc2.bias': model.fc2.bias.detach(),
     }
 
 def pretrain_class():
