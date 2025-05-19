@@ -9,16 +9,17 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 
 from models.BayesianTabularNet import BayesianTabularNet
+from utility.config import NUM_CLIENTS
 from utility.utils import setup_device
 
 
-def dirichlet_partition(X, y, num_clients, alpha, num_classes):
-    data_per_client = {i: [] for i in range(num_clients)}
+def dirichlet_partition(X, y, alpha, num_classes):
+    data_per_client = {i: [] for i in range(NUM_CLIENTS)}
     class_indices = [torch.where(y == i)[0] for i in range(num_classes)]
 
     for c in range(num_classes):
         indices = class_indices[c][torch.randperm(len(class_indices[c]))]
-        proportions = np.random.dirichlet(np.repeat(alpha, num_clients))
+        proportions = np.random.dirichlet(np.repeat(alpha, NUM_CLIENTS))
         proportions = (np.cumsum(proportions) * len(indices)).astype(int)[:-1]
         split = safe_split(indices, proportions.tolist())
         for i, chunk in enumerate(split):
@@ -195,16 +196,15 @@ def personalize_clients(global_model, X, y, client_partitions, epochs=2, batch_s
 
 # --- Main HDPFTL pipeline ---
 
-def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn,
-                    num_clients=5, alpha=0.5):
+def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn,alpha=0.5):
     print("\n[1] Partitioning data using Dirichlet...")
 
     num_classes = len(torch.unique(y_train))
-    client_partitions = dirichlet_partition(X_train, y_train, num_clients, alpha, num_classes)
+    client_partitions = dirichlet_partition(X_train, y_train, alpha, num_classes)
 
     print("\n[2] Fleet-level local training...")
     local_models = []
-    for cid in range(num_clients):
+    for cid in range(NUM_CLIENTS):
         model = base_model_fn.to(setup_device())
         idx = client_partitions[cid]
         trained_model = train_device_model(model, X_train[idx], y_train[idx])

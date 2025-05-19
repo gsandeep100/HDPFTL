@@ -118,6 +118,8 @@ INPUT_DATASET_PATH_2023 = 'https://www.unb.ca/cic/datasets/iotdataset-2023.html'
 INPUT_DATASET_PATH_2024 = 'https://www.unb.ca/cic/datasets/iotdataset-2024.html'
 OUTPUT_DATASET_PATH_2023 = "./dataset/CIC_IoT_IDAD_Dataset_2023/"
 OUTPUT_DATASET_PATH_2024 = "./dataset/CIC_IoT_IDAD_Dataset_2024/"
+OUTPUT_DATASET_ALL_DATA = "./dataset/AllData/"
+
 
 BATCH_SIZE = 32
 NUM_CLIENTS = 10

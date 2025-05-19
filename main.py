@@ -15,13 +15,12 @@ from data.preprocess import preprocess_data
 from training.hdpftl_pipeline import hdpftl_pipeline
 from transfer.pretrainclass import pretrain_class
 from transfer.targetclass import target_class
-from utility.config import OUTPUT_DATASET_PATH_2024
-
+from utility.config import OUTPUT_DATASET_PATH_2024, OUTPUT_DATASET_ALL_DATA
 
 if __name__ == "__main__":
     print("\n=== Process Started ===")
     # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
-    X_train, X_test, y_train, y_test = preprocess_data(OUTPUT_DATASET_PATH_2024)
+    X_train, X_test, y_train, y_test = preprocess_data(OUTPUT_DATASET_ALL_DATA)
     # Step 2: Pretrain global model
     pre_model = pretrain_class()
     # Step 3: Instantiate target model and train on device
