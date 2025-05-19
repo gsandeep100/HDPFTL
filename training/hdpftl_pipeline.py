@@ -62,8 +62,7 @@ def train_device_model(model, data, labels, epochs=3, lr=0.001, batch_size=32, v
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.CrossEntropyLoss()
-    print("Train samples:", len(data))
-    print("Test samples:", len(labels))
+    print("Train and Test samples:", len(data))
     if len(data) > 0 and len(labels) > 0:
         loader = DataLoader(TensorDataset(data, labels), batch_size=batch_size, shuffle=True)
         for epoch in range(epochs):
