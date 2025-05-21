@@ -69,10 +69,14 @@ def target_class():
 
         print(
             f"Fine-tune Epoch [{epoch + 1}/10], Loss: {running_loss / len(target_loader):.4f}, Accuracy: {100 * correct / total:.2f}%")
-    # Save fine-tuned model
-    torch.save(transfer_model.state_dict(), "./trained-models/fine_tuned_tabular_model.pth")
     if os.path.exists("./trained-models/fine_tuned_tabular_model.pth"):
         print("✅ The file 'fine_tuned_tabular_model.pth' exists!")
-        return transfer_model
+        os.remove("./trained-models/fine_tuned_tabular_model.pth")
     else:
         print("❌ The file 'fine_tuned_tabular_model.pth' does not exist.")
+
+    # Save fine-tuned model
+    torch.save(transfer_model.state_dict(), "./trained-models/fine_tuned_tabular_model.pth")
+    return transfer_model
+
+

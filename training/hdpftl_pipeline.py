@@ -1,3 +1,4 @@
+import logging
 from copy import deepcopy
 
 import numpy as np
@@ -62,7 +63,7 @@ def train_device_model(model, data, labels, epochs=3, lr=0.001, batch_size=32, v
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.CrossEntropyLoss()
-    print("Train and Test samples:", len(data))
+    #print("Train and Test samples:", len(data))
     if len(data) > 0 and len(labels) > 0:
         loader = DataLoader(TensorDataset(data, labels), batch_size=batch_size, shuffle=True)
         for epoch in range(epochs):
@@ -105,28 +106,37 @@ def train_bayesian_local(X_train, y_train, input_dim, num_classes, prior_params,
 
 def bayesian_aggregate_models(models, base_model_fn, epsilon=1e-8):
     """
-    Bayesian model aggregation via inverse variance weighting.
+    Perform Bayesian aggregation of multiple PyTorch models using inverse variance weighting.
+
+    Args:
+        models (List[torch.nn.Module]): List of trained models with identical architectures.
+        base_model_fn (torch.nn.Module): An untrained model instance (used for structure).
+        epsilon (float): Small constant to prevent division by zero in variance.
+
+    Returns:
+        torch.nn.Module: Aggregated model with Bayesian-weighted parameters.
     """
+    device = setup_device()
     n_models = len(models)
+    if n_models == 0:
+        raise ValueError("Model list is empty.")
+
     model_keys = models[0].state_dict().keys()
 
-    # Convert state_dicts to float tensors and collect all weights
-    all_states = [{k: v.float() for k, v in m.state_dict().items()} for m in models]
+    # Convert state_dicts to float tensors
+    all_states = [{k: v.float().to(device) for k, v in m.state_dict().items()} for m in models]
 
-    # Initialize new model and new state dict
-    new_model = base_model_fn.to(setup_device())
+    # Initialize new model
+    new_model = base_model_fn.to(device)
     new_state_dict = {}
 
     with torch.no_grad():
         for key in model_keys:
-            # Stack weights from all models: shape [n_models, *param_shape]
             stacked = torch.stack([state[key] for state in all_states], dim=0)
 
-            # Mean and variance across models
             mean = torch.mean(stacked, dim=0)
-            var = torch.var(stacked, dim=0, unbiased=False) + epsilon  # add epsilon to avoid div by 0
+            var = torch.var(stacked, dim=0, unbiased=False) + epsilon
 
-            # Inverse variance weighting
             weights = 1.0 / var
             weighted_sum = torch.sum(weights * stacked, dim=0)
             norm_factor = torch.sum(weights, dim=0)
@@ -136,7 +146,6 @@ def bayesian_aggregate_models(models, base_model_fn, epsilon=1e-8):
 
     new_model.load_state_dict(new_state_dict)
     return new_model
-
 
 def evaluate_global_model(model, X_test, y_test, batch_size=32, device=setup_device()):
     model.eval()
@@ -164,7 +173,6 @@ def evaluate_global_model(model, X_test, y_test, batch_size=32, device=setup_dev
             total += y.size(0)
 
     acc = correct / total if total > 0 else 0
-    print(f"Global Accuracy: {acc:.4f}")
     return acc
 
 def evaluate_per_client(model, X, y, client_partitions, batch_size=32):
@@ -189,7 +197,7 @@ def personalize_clients(global_model, X, y, client_partitions, epochs=2, batch_s
     for cid, idx in client_partitions.items():
         local_model = deepcopy(global_model).to(setup_device())
         models[cid] = train_device_model(local_model, X[idx], y[idx] ,epochs=epochs, batch_size=batch_size)
-        print(f"Personalized model trained for Client {cid}")
+        #print(f"Personalized model trained for Client {cid}")
     return models
 
 
@@ -216,7 +224,10 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn,alpha=0.5):
     #global_model = aggregate_models(local_models, base_model_fn)
     global_model = bayesian_aggregate_models(local_models, base_model_fn)
     print("\n[4] Evaluating global model...")
-    evaluate_global_model(global_model, X_test, y_test)
+    acc = evaluate_global_model(global_model, X_test, y_test)
+    print(f"Global Accuracy Before Personalization: {acc:.4f}")
+    logging.info(f"Global Accuracy Before Personalization: {acc:.4f}")
+
     evaluate_per_client(global_model, X_train, y_train, client_partitions)
 
     print("\n[5] Personalizing each client...")
@@ -226,6 +237,9 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn,alpha=0.5):
     for cid, model in personalized_models.items():
         acc = evaluate_global_model(model, X_train[client_partitions[cid]], y_train[client_partitions[cid]],
                                     device=setup_device())
-        print(f"Personalized Accuracy for Client {cid}: {acc:.4f}")
+        print(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
+        logging.info(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
+
+        #print(f"Personalized Accuracy for Client {cid}: {acc:.4f}")
 
     return global_model, personalized_models

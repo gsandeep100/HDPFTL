@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 -------------------------------------------------
-   File Name:        main.py
+   File Name:        hdpftl_main.py
    Description:      HDPFTL - Preventing Zero-day Attacks on IoT Devices using
                      Hierarchical Decentralized Personalized Federated Transfer Learning (HDPFTL)
                      with ResNet-18 Model for Cross-Silo Collaboration on Heterogeneous Non-IID Data
@@ -22,6 +22,8 @@ from training.hdpftl_pipeline import hdpftl_pipeline
 from transfer.pretrainclass import pretrain_class
 from transfer.targetclass import target_class
 from utility.config import OUTPUT_DATASET_PATH_2024
+import warnings
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 
 # === Setup Logging ===
@@ -36,7 +38,7 @@ def setup_logging(log_to_file=True):
 
 if __name__ == "__main__":
     setup_logging()
-    logging.info("=== HDPFTL Pipeline Process Started ===")
+    logging.info("========================Process Started===================================")
     # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
     X_train, X_test, y_train, y_test = preprocess_data(OUTPUT_DATASET_PATH_2024)
     logging.info("Data preprocessing completed.")
@@ -62,6 +64,7 @@ if __name__ == "__main__":
 
     logging.info(f"Predictions: {preds}")
     logging.info(f"Probabilities: {probs}")
+    logging.info("=========================Process Finished===================================")
     print("Predictions:", preds)
     print("Probabilities:", probs)
     #plot(global_accuracies=preds, personalized_accuracies=probs)

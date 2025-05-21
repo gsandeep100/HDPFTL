@@ -74,7 +74,7 @@ def preprocess_data(path):
     features = df.columns.difference(['Label'])
     df[features] = scaler.fit_transform(df[features])
     X, y = df[features], df['Label']
-    print(df.columns)
+    #print(df.columns)
 
     # SVMSMOTE- Create synthetic minority points near SVM boundary (critical zones).
     #           Makes the minority class stronger exactly where it matters — at the decision boundary.

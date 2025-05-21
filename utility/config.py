@@ -14,7 +14,7 @@
 # │   ├── local_train.py
 # │   └── federated.py
 # ├── evaluate.py
-# ├── main.py
+# ├── hdpftl_main.py
 # └── utils.py
 
 # Main Code Flow Based on the Diagrams
