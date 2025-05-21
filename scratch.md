@@ -1,37 +1,43 @@
 # 🧠 Project Notes
+
 ## 📅 Date
+
 **19 May 2025 Time 13:39**
+
 ## 📌 Overview
+
 Result on 6 csv files Date
+
 ## 💡 Logs & Observations
+
 === Process Started ===
 Found 6 CSV files in './dataset/AllData/'
 Index(['Src Port', 'Dst Port', 'Protocol', 'Flow Duration', 'Total Fwd Packet',
-       'Total Bwd packets', 'Total Length of Fwd Packet',
-       'Total Length of Bwd Packet', 'Fwd Packet Length Max',
-       'Fwd Packet Length Min', 'Fwd Packet Length Mean',
-       'Fwd Packet Length Std', 'Bwd Packet Length Max',
-       'Bwd Packet Length Min', 'Bwd Packet Length Mean',
-       'Bwd Packet Length Std', 'Flow Bytes/s', 'Flow Packets/s',
-       'Flow IAT Mean', 'Flow IAT Std', 'Flow IAT Max', 'Flow IAT Min',
-       'Fwd IAT Total', 'Fwd IAT Mean', 'Fwd IAT Std', 'Fwd IAT Max',
-       'Fwd IAT Min', 'Bwd IAT Total', 'Bwd IAT Mean', 'Bwd IAT Std',
-       'Bwd IAT Max', 'Bwd IAT Min', 'Fwd PSH Flags', 'Bwd PSH Flags',
-       'Fwd URG Flags', 'Bwd URG Flags', 'Fwd Header Length',
-       'Bwd Header Length', 'Fwd Packets/s', 'Bwd Packets/s',
-       'Packet Length Min', 'Packet Length Max', 'Packet Length Mean',
-       'Packet Length Std', 'Packet Length Variance', 'FIN Flag Count',
-       'SYN Flag Count', 'RST Flag Count', 'PSH Flag Count', 'ACK Flag Count',
-       'URG Flag Count', 'CWR Flag Count', 'ECE Flag Count', 'Down/Up Ratio',
-       'Average Packet Size', 'Fwd Segment Size Avg', 'Bwd Segment Size Avg',
-       'Fwd Bytes/Bulk Avg', 'Fwd Packet/Bulk Avg', 'Fwd Bulk Rate Avg',
-       'Bwd Bytes/Bulk Avg', 'Bwd Packet/Bulk Avg', 'Bwd Bulk Rate Avg',
-       'Subflow Fwd Packets', 'Subflow Fwd Bytes', 'Subflow Bwd Packets',
-       'Subflow Bwd Bytes', 'FWD Init Win Bytes', 'Bwd Init Win Bytes',
-       'Fwd Act Data Pkts', 'Fwd Seg Size Min', 'Active Mean', 'Active Std',
-       'Active Max', 'Active Min', 'Idle Mean', 'Idle Std', 'Idle Max',
-       'Idle Min', 'Label'],
-      dtype='object')
+'Total Bwd packets', 'Total Length of Fwd Packet',
+'Total Length of Bwd Packet', 'Fwd Packet Length Max',
+'Fwd Packet Length Min', 'Fwd Packet Length Mean',
+'Fwd Packet Length Std', 'Bwd Packet Length Max',
+'Bwd Packet Length Min', 'Bwd Packet Length Mean',
+'Bwd Packet Length Std', 'Flow Bytes/s', 'Flow Packets/s',
+'Flow IAT Mean', 'Flow IAT Std', 'Flow IAT Max', 'Flow IAT Min',
+'Fwd IAT Total', 'Fwd IAT Mean', 'Fwd IAT Std', 'Fwd IAT Max',
+'Fwd IAT Min', 'Bwd IAT Total', 'Bwd IAT Mean', 'Bwd IAT Std',
+'Bwd IAT Max', 'Bwd IAT Min', 'Fwd PSH Flags', 'Bwd PSH Flags',
+'Fwd URG Flags', 'Bwd URG Flags', 'Fwd Header Length',
+'Bwd Header Length', 'Fwd Packets/s', 'Bwd Packets/s',
+'Packet Length Min', 'Packet Length Max', 'Packet Length Mean',
+'Packet Length Std', 'Packet Length Variance', 'FIN Flag Count',
+'SYN Flag Count', 'RST Flag Count', 'PSH Flag Count', 'ACK Flag Count',
+'URG Flag Count', 'CWR Flag Count', 'ECE Flag Count', 'Down/Up Ratio',
+'Average Packet Size', 'Fwd Segment Size Avg', 'Bwd Segment Size Avg',
+'Fwd Bytes/Bulk Avg', 'Fwd Packet/Bulk Avg', 'Fwd Bulk Rate Avg',
+'Bwd Bytes/Bulk Avg', 'Bwd Packet/Bulk Avg', 'Bwd Bulk Rate Avg',
+'Subflow Fwd Packets', 'Subflow Fwd Bytes', 'Subflow Bwd Packets',
+'Subflow Bwd Bytes', 'FWD Init Win Bytes', 'Bwd Init Win Bytes',
+'Fwd Act Data Pkts', 'Fwd Seg Size Min', 'Active Mean', 'Active Std',
+'Active Max', 'Active Min', 'Idle Mean', 'Idle Std', 'Idle Max',
+'Idle Min', 'Label'],
+dtype='object')
 
 === Pretraining Phase ===
 Pretrain Epoch [1/5], Loss: 1.6896
@@ -130,7 +136,9 @@ Personalized Accuracy for Client 9: 0.0000
 Process finished with exit code 0
 
 ## 📅 Date
+
 ****
+
 ## 📌 Overview
 
 ## 💡 Logs & Observations

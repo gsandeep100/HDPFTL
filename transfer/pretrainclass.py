@@ -30,6 +30,7 @@ def extract_priors(model):
         'fc2.bias': model.fc2.bias.detach(),
     }
 
+
 def pretrain_class():
     print("\n=== Pretraining Phase ===")
     # Create random pretraining data
@@ -70,4 +71,3 @@ def pretrain_class():
 
     # Save pretrained model
     torch.save(pretrain_model.state_dict(), "./trained-models/pretrained_tabular_model.pth")
-

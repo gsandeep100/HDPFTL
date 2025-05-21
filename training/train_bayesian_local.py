@@ -13,6 +13,7 @@ def extract_priors(model):
         'fc2.bias': model.fc2.bias.detach(),
     }
 
+
 def train_bayesian_local(X_train, y_train, input_dim, num_classes, prior_params, device='cpu'):
     model = BayesianTabularNet(input_dim, num_classes, prior_params=prior_params).to(device)
     guide = AutoDiagonalNormal(model)
@@ -22,6 +23,7 @@ def train_bayesian_local(X_train, y_train, input_dim, num_classes, prior_params,
         svi.step(X_train, y_train)
 
     return guide
+
 
 def aggregate_guides(guides):
     avg_loc = {}

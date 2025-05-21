@@ -18,6 +18,7 @@ import torch
 def setup_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 def make_dir(path):
     if not os.path.exists(path):
         os.makedirs(path)

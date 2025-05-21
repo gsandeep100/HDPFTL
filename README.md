@@ -221,14 +221,18 @@
 # Use the final personalized model per silo
 
 #dirichlet_partition
-dirichlet_partition typically refers to a data partitioning strategy that uses the Dirichlet distribution to divide datasets — especially in federated learning — in order to simulate non-IID (non-identically independently distributed) data across clients.
+dirichlet_partition typically refers to a data partitioning strategy that uses the Dirichlet distribution to divide
+datasets — especially in federated learning — in order to simulate non-IID (non-identically independently distributed)
+data across clients.
 📘 What is the Dirichlet Distribution?
-The Dirichlet distribution is a multivariate generalization of the Beta distribution. It's often used to generate random proportions that sum to 1. It’s parameterized by a vector α = [α₁, α₂, ..., α_k].
+The Dirichlet distribution is a multivariate generalization of the Beta distribution. It's often used to generate random
+proportions that sum to 1. It’s parameterized by a vector α = [α₁, α₂, ..., α_k].
 
 For federated learning, it controls how skewed the label distribution is across clients.
 
 🎯 Purpose of dirichlet_partition in Federated Learning
-It’s used to simulate real-world heterogeneity, where clients (e.g., edge devices or users) have different distributions of data labels.
+It’s used to simulate real-world heterogeneity, where clients (e.g., edge devices or users) have different distributions
+of data labels.
 
 Example:
 If you have 3 classes (cat, dog, car) and 5 clients:

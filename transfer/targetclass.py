@@ -78,5 +78,3 @@ def target_class():
     # Save fine-tuned model
     torch.save(transfer_model.state_dict(), "./trained-models/fine_tuned_tabular_model.pth")
     return transfer_model
-
-

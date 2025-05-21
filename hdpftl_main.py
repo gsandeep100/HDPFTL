@@ -11,6 +11,7 @@
 -------------------------------------------------
 """
 import logging
+import warnings
 
 import numpy as np
 import torch
@@ -22,7 +23,7 @@ from training.hdpftl_pipeline import hdpftl_pipeline
 from transfer.pretrainclass import pretrain_class
 from transfer.targetclass import target_class
 from utility.config import OUTPUT_DATASET_PATH_2024
-import warnings
+
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 
@@ -35,6 +36,7 @@ def setup_logging(log_to_file=True):
         format=log_format,
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
 
 if __name__ == "__main__":
     setup_logging()
@@ -52,7 +54,6 @@ if __name__ == "__main__":
     save(global_model, personalized_models)
     logging.info("Models saved.")
 
-
     # Sample input: 3 feature vectors
     new_sample = np.random.rand(5, 79).astype(np.float32)  # 3 samples, each with 79 features
     new_sample = torch.tensor(new_sample)
@@ -67,4 +68,4 @@ if __name__ == "__main__":
     logging.info("=========================Process Finished===================================")
     print("Predictions:", preds)
     print("Probabilities:", probs)
-    #plot(global_accuracies=preds, personalized_accuracies=probs)
+    # plot(global_accuracies=preds, personalized_accuracies=probs)

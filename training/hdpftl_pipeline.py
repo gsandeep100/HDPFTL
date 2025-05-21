@@ -56,6 +56,7 @@ def safe_split(tensor, proportions, dim=0):
 
     return torch.split(tensor, split_sizes.tolist(), dim=dim)
 
+
 def train_device_model(model, data, labels, epochs=3, lr=0.001, batch_size=32, verbose=False):
     model = model.to(setup_device())
     data = data.to(setup_device())
@@ -63,7 +64,7 @@ def train_device_model(model, data, labels, epochs=3, lr=0.001, batch_size=32, v
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.CrossEntropyLoss()
-    #print("Train and Test samples:", len(data))
+    # print("Train and Test samples:", len(data))
     if len(data) > 0 and len(labels) > 0:
         loader = DataLoader(TensorDataset(data, labels), batch_size=batch_size, shuffle=True)
         for epoch in range(epochs):
@@ -80,6 +81,7 @@ def train_device_model(model, data, labels, epochs=3, lr=0.001, batch_size=32, v
                 print(f"Epoch [{epoch + 1}/{epochs}], Loss: {running_loss / len(loader):.4f}")
 
     return model
+
 
 def aggregate_models(models, base_model_fn):
     new_model = base_model_fn().to(setup_device())
@@ -103,6 +105,7 @@ def train_bayesian_local(X_train, y_train, input_dim, num_classes, prior_params,
         svi.step(X_train, y_train)
 
     return guide
+
 
 def bayesian_aggregate_models(models, base_model_fn, epsilon=1e-8):
     """
@@ -147,6 +150,7 @@ def bayesian_aggregate_models(models, base_model_fn, epsilon=1e-8):
     new_model.load_state_dict(new_state_dict)
     return new_model
 
+
 def evaluate_global_model(model, X_test, y_test, batch_size=32, device=setup_device()):
     model.eval()
 
@@ -175,6 +179,7 @@ def evaluate_global_model(model, X_test, y_test, batch_size=32, device=setup_dev
     acc = correct / total if total > 0 else 0
     return acc
 
+
 def evaluate_per_client(model, X, y, client_partitions, batch_size=32):
     accs = {}
     for cid, idx in client_partitions.items():
@@ -196,14 +201,14 @@ def personalize_clients(global_model, X, y, client_partitions, epochs=2, batch_s
     models = {}
     for cid, idx in client_partitions.items():
         local_model = deepcopy(global_model).to(setup_device())
-        models[cid] = train_device_model(local_model, X[idx], y[idx] ,epochs=epochs, batch_size=batch_size)
-        #print(f"Personalized model trained for Client {cid}")
+        models[cid] = train_device_model(local_model, X[idx], y[idx], epochs=epochs, batch_size=batch_size)
+        # print(f"Personalized model trained for Client {cid}")
     return models
 
 
 # --- Main HDPFTL pipeline ---
 
-def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn,alpha=0.5):
+def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn, alpha=0.5):
     print("\n[1] Partitioning data using Dirichlet...")
 
     num_classes = len(torch.unique(y_train))
@@ -221,7 +226,7 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn,alpha=0.5):
         local_models.append(trained_model)
 
     print("\n[3] Aggregating fleet models...")
-    #global_model = aggregate_models(local_models, base_model_fn)
+    # global_model = aggregate_models(local_models, base_model_fn)
     global_model = bayesian_aggregate_models(local_models, base_model_fn)
     print("\n[4] Evaluating global model...")
     acc = evaluate_global_model(global_model, X_test, y_test)
@@ -240,6 +245,6 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn,alpha=0.5):
         print(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
         logging.info(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
 
-        #print(f"Personalized Accuracy for Client {cid}: {acc:.4f}")
+        # print(f"Personalized Accuracy for Client {cid}: {acc:.4f}")
 
     return global_model, personalized_models

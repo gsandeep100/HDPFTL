@@ -56,6 +56,7 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
     final_df = pd.concat(combined_df, ignore_index=True)
     return final_df
 
+
 def preprocess_data(path):
     # all_files = glob.glob(path + "*.csv")
     # df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)
@@ -74,7 +75,7 @@ def preprocess_data(path):
     features = df.columns.difference(['Label'])
     df[features] = scaler.fit_transform(df[features])
     X, y = df[features], df['Label']
-    #print(df.columns)
+    # print(df.columns)
 
     # SVMSMOTE- Create synthetic minority points near SVM boundary (critical zones).
     #           Makes the minority class stronger exactly where it matters — at the decision boundary.
