@@ -22,6 +22,8 @@ from imblearn.over_sampling import SVMSMOTE
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
 
+from data.sampling import stratified_downsample
+
 
 def safe_smote(X, y):
     counts = Counter(y)
@@ -75,6 +77,8 @@ def preprocess_data(path):
     features = df.columns.difference(['Label'])
     df[features] = scaler.fit_transform(df[features])
     X, y = df[features], df['Label']
+    X_small, y_small = stratified_downsample(X, y, fraction=0.2)
+
     # print(df.columns)
 
     # SVMSMOTE- Create synthetic minority points near SVM boundary (critical zones).
@@ -86,7 +90,7 @@ def preprocess_data(path):
     #     ('svm_smote', SVMSMOTE(random_state=42)),
     #     ('smote_enn', SMOTEENN(random_state=42))
     # ])
-    X_final, y_final = safe_smote(X, y)
+    X_final, y_final = safe_smote(X_small, y_small)
     # Scale features
     scaler = StandardScaler()
     X = scaler.fit_transform(X_final)

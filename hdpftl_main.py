@@ -13,16 +13,12 @@
 import logging
 import warnings
 
-import numpy as np
-import torch
-
 from data.preprocess import preprocess_data
 from result.final_model import save
-from result.predictions import predict
 from training.hdpftl_pipeline import hdpftl_pipeline
 from transfer.pretrainclass import pretrain_class
 from transfer.targetclass import target_class
-from utility.config import OUTPUT_DATASET_PATH_2024
+from utility.config import OUTPUT_DATASET_ALL_DATA
 
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 
@@ -42,7 +38,7 @@ if __name__ == "__main__":
     setup_logging()
     logging.info("========================Process Started===================================")
     # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
-    X_train, X_test, y_train, y_test = preprocess_data(OUTPUT_DATASET_PATH_2024)
+    X_train, X_test, y_train, y_test = preprocess_data(OUTPUT_DATASET_ALL_DATA)
     logging.info("Data preprocessing completed.")
     # Step 2: Pretrain global model
     pre_model = pretrain_class()
@@ -53,6 +49,8 @@ if __name__ == "__main__":
     logging.info("HDPFTL training and personalization completed.")
     save(global_model, personalized_models)
     logging.info("Models saved.")
+
+""" commented for now...need a way to get the evaluation on a different dataset
 
     # Sample input: 3 feature vectors
     new_sample = np.random.rand(5, 79).astype(np.float32)  # 3 samples, each with 79 features
@@ -69,3 +67,4 @@ if __name__ == "__main__":
     print("Predictions:", preds)
     print("Probabilities:", probs)
     # plot(global_accuracies=preds, personalized_accuracies=probs)
+    """

@@ -14,18 +14,49 @@ from utility.config import NUM_CLIENTS
 from utility.utils import setup_device
 
 
-def dirichlet_partition(X, y, alpha, num_classes):
-    data_per_client = {i: [] for i in range(NUM_CLIENTS)}
-    class_indices = [torch.where(y == i)[0] for i in range(num_classes)]
+def dirichlet_partition(X, y, n_classes, alpha, seed=42):
+    """
+    Partition data indices using Dirichlet distribution.
 
-    for c in range(num_classes):
-        indices = class_indices[c][torch.randperm(len(class_indices[c]))]
-        proportions = np.random.dirichlet(np.repeat(alpha, NUM_CLIENTS))
-        proportions = (np.cumsum(proportions) * len(indices)).astype(int)[:-1]
-        split = safe_split(indices, proportions.tolist())
-        for i, chunk in enumerate(split):
-            data_per_client[i].extend(chunk.tolist())
-    return data_per_client
+    Args:
+        X: Dataset features (unused, only y matters here for indexing).
+        y: Dataset labels (1D numpy array or torch tensor).
+        alpha: Dirichlet concentration parameter.
+        n_clients: Number of partitions/clients.
+        n_classes: Number of unique classes (optional).
+        seed: Random seed for reproducibility.
+
+    Returns:
+        List of index lists, one per client.
+    """
+    if isinstance(y, torch.Tensor):
+        y = y.numpy()
+
+    np.random.seed(seed)
+    if n_classes is None:
+        n_classes = len(np.unique(y))
+
+    client_indices = [[] for _ in range(NUM_CLIENTS)]
+
+    for c in range(n_classes):
+        class_indices = np.where(y == c)[0]
+        np.random.shuffle(class_indices)
+
+        proportions = np.random.dirichlet([alpha] * NUM_CLIENTS)
+        # Scale to number of class samples
+        proportions = (proportions * len(class_indices)).astype(int)
+
+        # Correct any overflows/deficits
+        while proportions.sum() > len(class_indices):
+            proportions[np.argmax(proportions)] -= 1
+        while proportions.sum() < len(class_indices):
+            proportions[np.argmin(proportions)] += 1
+
+        splits = np.split(class_indices, np.cumsum(proportions)[:-1])
+        for i, split in enumerate(splits):
+            client_indices[i].extend(split.tolist())
+
+    return client_indices
 
 
 def safe_split(tensor, proportions, dim=0):
@@ -180,10 +211,18 @@ def evaluate_global_model(model, X_test, y_test, batch_size=32, device=setup_dev
     return acc
 
 
+"""
+To evaluate a trained model's accuracy on each client's local data. 
+This helps in understanding client-specific performance, 
+especially when data is non-IID (not identically distributed across clients).
+"""
+
+
 def evaluate_per_client(model, X, y, client_partitions, batch_size=32):
     accs = {}
-    for cid, idx in client_partitions.items():
-        loader = DataLoader(TensorDataset(X[idx].to(setup_device()), y[idx].to(setup_device())), batch_size=batch_size)
+    device = setup_device()
+    for cid, idx in enumerate(client_partitions):
+        loader = DataLoader(TensorDataset(X[idx].to(setup_device()), y[idx].to(device)), batch_size=batch_size)
         model.eval()
         correct, total = 0, 0
         with torch.no_grad():
@@ -199,7 +238,7 @@ def evaluate_per_client(model, X, y, client_partitions, batch_size=32):
 
 def personalize_clients(global_model, X, y, client_partitions, epochs=2, batch_size=32):
     models = {}
-    for cid, idx in client_partitions.items():
+    for cid, idx in enumerate(client_partitions):
         local_model = deepcopy(global_model).to(setup_device())
         models[cid] = train_device_model(local_model, X[idx], y[idx], epochs=epochs, batch_size=batch_size)
         # print(f"Personalized model trained for Client {cid}")
@@ -212,7 +251,8 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn, alpha=0.5):
     print("\n[1] Partitioning data using Dirichlet...")
 
     num_classes = len(torch.unique(y_train))
-    client_partitions = dirichlet_partition(X_train, y_train, alpha, num_classes)
+    client_partitions = dirichlet_partition(X_train, y_train, num_classes, alpha=0.5)
+    client_partitions_test = dirichlet_partition(X_test, y_test, num_classes, alpha)
 
     print("\n[2] Fleet-level local training...")
     local_models = []
@@ -233,7 +273,7 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn, alpha=0.5):
     print(f"Global Accuracy Before Personalization: {acc:.4f}")
     logging.info(f"Global Accuracy Before Personalization: {acc:.4f}")
 
-    evaluate_per_client(global_model, X_train, y_train, client_partitions)
+    evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
 
     print("\n[5] Personalizing each client...")
     personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)

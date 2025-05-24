@@ -22,7 +22,7 @@ class TabularNet(nn.Module):
             nn.LayerNorm(128),
             nn.Linear(128, 64),
             nn.ReLU(),
-            nn.BatchNorm1d(64)
+            nn.LayerNorm(64)
         )
         self.classifier = nn.Linear(64, num_classes)
 
