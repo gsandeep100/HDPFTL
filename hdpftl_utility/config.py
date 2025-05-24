@@ -2,14 +2,14 @@
 # hdpftl/
 # ├── __init__.py
 # ├── config.py.py
-# ├── data/
+# ├── hdpftl_data/
 # │   ├── __init__.py
 # │   ├── downloader.py
 # │   └── preprocess.py
-# ├── models/
+# ├── hdpftl_models/
 # │   ├── __init__.py
 # │   └── TabularNet.py
-# ├── training/
+# ├── hdpftl_training/
 # │   ├── __init__.py
 # │   ├── local_train.py
 # │   └── federated.py
@@ -19,29 +19,29 @@
 
 # Main Code Flow Based on the Diagrams
 # 🔁 Level 1: Device-Level Training (Personalized Learning)
-# Collect device-specific data
+# Collect device-specific hdpftl_data
 #
-# Train personalized local models (train_device_model)
+# Train personalized local hdpftl_models (train_device_model)
 #
-# Optionally evaluate and fine-tune with historical normal data to detect anomalies
+# Optionally evaluate and fine-tune with historical normal hdpftl_data to detect anomalies
 #
 # 🔁 Level 2: Fleet-Level Aggregation (Edge Aggregation)
 # Send model weights to fleet edge aggregator
 #
-# Aggregate weights using aggregate_models(models) → output: fleet model
+# Aggregate weights using aggregate_models(hdpftl_models) → output: fleet model
 #
 # Broadcast fleet model back to devices for local adaptation
 #
 # 🔁 Level 3: Global Aggregation (Cross-Silo Transfer)
-# Multiple fleet models (from different silos) are aggregated at the cloud/global level
+# Multiple fleet hdpftl_models (from different silos) are aggregated at the cloud/global level
 #
 # Use aggregate_models() again → output: global model
 #
-# Optionally fine-tune global model with transfer learning on target silo's data
+# Optionally fine-tune global model with pre-hdpftl_training learning on target silo's hdpftl_data
 
 
 # 1. Data Preprocessing per Silo
-# Load raw data (e.g., CICIDS2017) for each IoT silo.
+# Load raw hdpftl_data (e.g., CICIDS2017) for each IoT silo.
 #
 # Apply:
 #
@@ -60,14 +60,14 @@
 #
 # Modify final layers for intrusion detection classes
 #
-# Freeze lower layers (for transfer learning)
+# Freeze lower layers (for pre-hdpftl_training learning)
 #
 # 3. Personalized Training per Client (IoT Silo)
 # Each silo:
 #
-# Fine-tunes its local model on local (non-IID) data
+# Fine-tunes its local model on local (non-IID) hdpftl_data
 #
-# Uses transfer learning to adapt the shared model
+# Uses pre-hdpftl_training learning to adapt the shared model
 #
 # Apply regularization to maintain personalization
 #
@@ -85,7 +85,7 @@
 #
 # Global Level (Second Aggregation):
 #
-# Edge nodes send their aggregated models to the cloud
+# Edge nodes send their aggregated hdpftl_models to the cloud
 #
 # Global model update using hierarchical FedAvg
 #
@@ -116,9 +116,9 @@
 # Deployed on-device or on-edge for real-time zero-day detection
 INPUT_DATASET_PATH_2023 = 'https://www.unb.ca/cic/datasets/iotdataset-2023.html'
 INPUT_DATASET_PATH_2024 = 'https://www.unb.ca/cic/datasets/iotdataset-2024.html'
-OUTPUT_DATASET_PATH_2023 = "./dataset/CIC_IoT_IDAD_Dataset_2023/"
-OUTPUT_DATASET_PATH_2024 = "./dataset/CIC_IoT_IDAD_Dataset_2024/"
-OUTPUT_DATASET_ALL_DATA = "./dataset/AllData/"
+OUTPUT_DATASET_PATH_2023 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2023/"
+OUTPUT_DATASET_PATH_2024 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/"
+OUTPUT_DATASET_ALL_DATA = "./hdpftl_dataset/AllData/"
 
 BATCH_SIZE = 32
 NUM_CLIENTS = 10

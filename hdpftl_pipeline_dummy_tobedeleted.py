@@ -122,7 +122,7 @@ def create_fleet_data(num_fleets=2, devices_per_fleet=3, samples_per_device=200,
     for _ in range(num_fleets):
         fleet = []
         for _ in range(devices_per_fleet):
-            # Simulate device data
+            # Simulate device hdpftl_data
             X_np = np.random.normal(0, 1, (samples_per_device, input_dim))
             y_np = np.random.choice([0, 1], size=(samples_per_device,), p=[0.9, 0.1])  # Simulated labels
 
@@ -149,8 +149,8 @@ def create_fleet_data(num_fleets=2, devices_per_fleet=3, samples_per_device=200,
 #         for _ in range(devices_per_fleet):
 #             X = torch.tensor(np.random.normal(0, 1, (samples_per_device, 3)), dtype=torch.float32)
 #             y = torch.tensor(np.random.choice([0, 1], size=(samples_per_device,), p=[0.9, 0.1]), dtype=torch.long)
-#             dataset = TensorDataset(X, y)
-#             loader = DataLoader(dataset, batch_size=32, shuffle=True)
+#             hdpftl_dataset = TensorDataset(X, y)
+#             loader = DataLoader(hdpftl_dataset, batch_size=32, shuffle=True)
 #             fleet.append(loader)
 #         fleet_dataloaders.append(fleet)
 #     return fleet_dataloaders

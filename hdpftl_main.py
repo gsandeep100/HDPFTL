@@ -13,26 +13,15 @@
 import logging
 import warnings
 
-from data.preprocess import preprocess_data
-from result.final_model import save
-from training.hdpftl_pipeline import hdpftl_pipeline
-from transfer.pretrainclass import pretrain_class
-from transfer.targetclass import target_class
-from utility.config import OUTPUT_DATASET_ALL_DATA
+from hdpftl_data.preprocess import preprocess_data
+from hdpftl_pre_training.pretrainclass import pretrain_class
+from hdpftl_pre_training.targetclass import target_class
+from hdpftl_result.final_model import save
+from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline
+from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA
+from hdpftl_utility.log import setup_logging
 
 warnings.filterwarnings("ignore", category=SyntaxWarning)
-
-
-# === Setup Logging ===
-def setup_logging(log_to_file=True):
-    log_format = "%(asctime)s [%(levelname)s] %(message)s"
-    logging.basicConfig(
-        filename="hdpftl_run.log" if log_to_file else None,
-        level=logging.INFO,
-        format=log_format,
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
 
 if __name__ == "__main__":
     setup_logging()
@@ -46,11 +35,8 @@ if __name__ == "__main__":
     # Step 3: Instantiate target model and train on device
     model = target_class()
     global_model, personalized_models = hdpftl_pipeline(X_train, y_train, X_test, y_test, model)
-    logging.info("HDPFTL training and personalization completed.")
-    save(global_model, personalized_models)
-    logging.info("Models saved.")
 
-""" commented for now...need a way to get the evaluation on a different dataset
+""" commented for now...need a way to get the evaluation on a different hdpftl_dataset
 
     # Sample input: 3 feature vectors
     new_sample = np.random.rand(5, 79).astype(np.float32)  # 3 samples, each with 79 features

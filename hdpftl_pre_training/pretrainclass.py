@@ -17,9 +17,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from models.TabularNet import TabularNet
-from utility.config import input_dim, pretrain_classes
-from utility.utils import setup_device, make_dir
+from hdpftl_models.TabularNet import TabularNet
+from hdpftl_utility.config import input_dim, pretrain_classes
+from hdpftl_utility.utils import setup_device, make_dir
 
 
 def extract_priors(model):
@@ -33,7 +33,8 @@ def extract_priors(model):
 
 def pretrain_class():
     print("\n=== Pretraining Phase ===")
-    # Create random pretraining data
+    device = setup_device()
+    # Create random pretraining hdpftl_data
     pretrain_features = torch.randn(2000, input_dim)
     pretrain_labels = torch.randint(0, pretrain_classes, (2000,))
 
@@ -41,7 +42,7 @@ def pretrain_class():
     pretrain_loader = DataLoader(pretrain_dataset, batch_size=32, shuffle=True)
 
     # Create model for pretraining
-    pretrain_model = TabularNet(input_dim, pretrain_classes).to(setup_device())
+    pretrain_model = TabularNet(input_dim, pretrain_classes).to(device)
     optimizer = torch.optim.Adam(pretrain_model.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
@@ -50,7 +51,7 @@ def pretrain_class():
         pretrain_model.train()
         running_loss = 0
         for features, labels in pretrain_loader:
-            features, labels = features.to(setup_device()), labels.to(setup_device())
+            features, labels = features.to(device), labels.to(device)
 
             outputs = pretrain_model(features)
             loss = criterion(outputs, labels)
@@ -62,12 +63,12 @@ def pretrain_class():
             running_loss += loss.item()
 
         print(f"Pretrain Epoch [{epoch + 1}/5], Loss: {running_loss / len(pretrain_loader):.4f}")
-        make_dir("./trained-models/")
-    if os.path.exists("./trained-models/pretrained_tabular_model.pth"):
+        make_dir("./trained-hdpftl_models/")
+    if os.path.exists("./trained-hdpftl_models/pretrained_tabular_model.pth"):
         print("✅ The file 'pretrained_tabular_model.pth' exists!")
-        os.remove("./trained-models/pretrained_tabular_model.pth")
+        os.remove("./trained-hdpftl_models/pretrained_tabular_model.pth")
     else:
         print("❌ The file 'pretrained_tabular_model.pth' does not exist.")
 
     # Save pretrained model
-    torch.save(pretrain_model.state_dict(), "./trained-models/pretrained_tabular_model.pth")
+    torch.save(pretrain_model.state_dict(), "./trained-hdpftl_models/pretrained_tabular_model.pth")

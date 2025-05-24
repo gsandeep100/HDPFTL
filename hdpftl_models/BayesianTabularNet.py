@@ -19,6 +19,6 @@ class BayesianTabularNet(PyroModule):
     def forward(self, x, y=None):
         x = torch.relu(self.fc1(x))
         logits = self.fc2(x)
-        with pyro.plate("data", x.shape[0]):
+        with pyro.plate("hdpftl_data", x.shape[0]):
             obs = pyro.sample("obs", dist.Categorical(logits=logits), obs=y)
         return logits

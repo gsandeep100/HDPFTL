@@ -3,7 +3,7 @@ import torch
 from sklearn.model_selection import train_test_split
 
 
-# ✅ Reduce to 10% of the original data:
+# ✅ Reduce to 10% of the original hdpftl_data:
 def random_downsample(X, y, fraction=0.1):
     total_samples = len(X)
     sample_size = int(fraction * total_samples)
@@ -21,7 +21,7 @@ def stratified_downsample(X, y, fraction=0.1):
     return X_small, y_small
 
 
-# If one class is too large, reduce it to balance the dataset.
+# If one class is too large, reduce it to balance the hdpftl_dataset.
 def class_specific_downsample(X, y, max_per_class=1000):
     indices = []
     for cls in torch.unique(y):

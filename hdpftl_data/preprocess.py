@@ -22,7 +22,7 @@ from imblearn.over_sampling import SVMSMOTE
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
 
-from data.sampling import stratified_downsample
+from hdpftl_data.sampling import stratified_downsample
 
 
 def safe_smote(X, y):
@@ -104,7 +104,7 @@ def preprocess_data(path):
 
 
 def preprocess_data_small(csv_path, test_size=0.2):
-    # Load dataset
+    # Load hdpftl_dataset
     df = pd.read_csv(csv_path + "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv", low_memory=False)
 
     # Drop unnamed or constant columns

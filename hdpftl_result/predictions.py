@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from utility.utils import setup_device
+from hdpftl_utility.utils import setup_device
 
 
 def predict(new_data, global_model, label_map=None, return_proba=False, device=None):
@@ -9,7 +9,7 @@ def predict(new_data, global_model, label_map=None, return_proba=False, device=N
     Predicts classes (and optionally probabilities) using a trained PyTorch model.
 
     Args:
-        new_data (array-like or tensor): Input data of shape (n_samples, n_features).
+        new_data (array-like or tensor): Input hdpftl_data of shape (n_samples, n_features).
         global_model (torch.nn.Module): Trained model.
         label_map (dict, optional): Mapping from class indices to labels.
         return_proba (bool): Whether to return class probabilities.

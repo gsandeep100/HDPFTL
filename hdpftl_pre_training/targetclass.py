@@ -17,15 +17,15 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from models.TabularNet import TabularNet
-from utility.config import target_classes, input_dim, pretrain_classes
-from utility.utils import setup_device
+from hdpftl_models.TabularNet import TabularNet
+from hdpftl_utility.config import input_dim, target_classes, pretrain_classes
+from hdpftl_utility.utils import setup_device
 
 
 def target_class():
     print("\n=== Fine-tuning Phase ===")
-
-    # Create random target data
+    device = setup_device()
+    # Create random target hdpftl_data
     target_features = torch.randn(1000, input_dim)
     target_labels = torch.randint(0, target_classes, (1000,))
 
@@ -33,13 +33,13 @@ def target_class():
     target_loader = DataLoader(target_dataset, batch_size=32, shuffle=True)
 
     # Create new model instance for fine-tuning
-    transfer_model = TabularNet(input_dim, pretrain_classes).to(setup_device())
+    transfer_model = TabularNet(input_dim, pretrain_classes).to(device)
     try:
-        transfer_model.load_state_dict(torch.load("./trained-models/pretrained_tabular_model.pth"))
+        transfer_model.load_state_dict(torch.load("./trained-hdpftl_models/pretrained_tabular_model.pth"))
     except:
         print("❌ Something went wrong")
     # Replace final classifier layer
-    transfer_model.classifier = nn.Linear(64, target_classes).to(setup_device())
+    transfer_model.classifier = nn.Linear(64, target_classes).to(device)
     # Optional: Freeze feature extractor if you want
     for param in transfer_model.shared.parameters():
         param.requires_grad = False
@@ -53,7 +53,7 @@ def target_class():
         total = 0
 
         for features, labels in target_loader:
-            features, labels = features.to(setup_device()), labels.to(setup_device())
+            features, labels = features.to(device), labels.to(device)
 
             outputs = transfer_model(features)
             loss = criterion(outputs, labels)
@@ -69,12 +69,12 @@ def target_class():
 
         print(
             f"Fine-tune Epoch [{epoch + 1}/10], Loss: {running_loss / len(target_loader):.4f}, Accuracy: {100 * correct / total:.2f}%")
-    if os.path.exists("./trained-models/fine_tuned_tabular_model.pth"):
+    if os.path.exists("./trained-hdpftl_models/fine_tuned_tabular_model.pth"):
         print("✅ The file 'fine_tuned_tabular_model.pth' exists!")
-        os.remove("./trained-models/fine_tuned_tabular_model.pth")
+        os.remove("./trained-hdpftl_models/fine_tuned_tabular_model.pth")
     else:
         print("❌ The file 'fine_tuned_tabular_model.pth' does not exist.")
 
     # Save fine-tuned model
-    torch.save(transfer_model.state_dict(), "./trained-models/fine_tuned_tabular_model.pth")
+    torch.save(transfer_model.state_dict(), "./trained-hdpftl_models/fine_tuned_tabular_model.pth")
     return transfer_model
