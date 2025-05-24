@@ -9,7 +9,7 @@ def save(global_model, personalized_models):
     print(type(personalized_models))
 
     # Save personalized hdpftl_models (if you have them)
-    for i,(cid, model) in enumerate(personalized_models.items()):
+    for i, (cid, model) in enumerate(personalized_models.items()):
         # print(f"Client {cid} -> type: {type(entry)}, content: {entry}")
         if not isinstance(model, torch.nn.Module):
             raise TypeError(f"Expected a model at index {i}, but got {type(model)}")

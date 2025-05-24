@@ -16,7 +16,6 @@ import warnings
 from hdpftl_data.preprocess import preprocess_data
 from hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_pre_training.targetclass import target_class
-from hdpftl_result.final_model import save
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline
 from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA
 from hdpftl_utility.log import setup_logging

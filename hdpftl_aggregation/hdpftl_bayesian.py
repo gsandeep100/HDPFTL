@@ -15,7 +15,7 @@ def hdpftl_bayesian(local_models, base_model_fn, X_train, y_train, client_partit
     return personalized_models, global_model
 
 
-def aggregate_bayesian(models, base_model_fn, epsilon=1e-8):
+def aggregate_bayesian(models, base_model_fn, X_train, y_train, client_partitions, epsilon=1e-8):
     """
     Perform Bayesian aggregation of multiple PyTorch hdpftl_models using inverse variance weighting.
 
@@ -26,6 +26,10 @@ def aggregate_bayesian(models, base_model_fn, epsilon=1e-8):
 
     Returns:
         torch.nn.Module: Aggregated model with Bayesian-weighted parameters.
+        :param epsilon:
+        :param client_partitions:
+        :param y_train:
+        :param X_train:
     """
     device = setup_device()
     n_models = len(models)
@@ -38,7 +42,7 @@ def aggregate_bayesian(models, base_model_fn, epsilon=1e-8):
     all_states = [{k: v.float().to(device) for k, v in m.state_dict().items()} for m in models]
 
     # Initialize new model
-    new_model = base_model_fn().to(device)
+    new_model = base_model_fn.to(device)
     new_state_dict = {}
 
     with torch.no_grad():
@@ -56,4 +60,8 @@ def aggregate_bayesian(models, base_model_fn, epsilon=1e-8):
             new_state_dict[key] = bayes_avg
 
     new_model.load_state_dict(new_state_dict)
-    return new_model
+
+    logging.info("\n[5] Personalizing each Bayesian client...")
+    personalized_models = personalize_clients(new_model, X_train, y_train, client_partitions)
+
+    return new_model, personalized_models
