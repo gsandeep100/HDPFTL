@@ -4,7 +4,6 @@ import numpy as np
 import torch
 
 from hdpftl_aggregation.hdpftl_bayesian import aggregate_bayesian
-from hdpftl_aggregation.hdpftl_fedavg import aggregate_fed_avg
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
 from hdpftl_result.final_model import save
 from hdpftl_training.train_device_model import train_device_model
@@ -127,9 +126,10 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn, alpha=0.5):
         )
         local_models.append(trained_model)
 
-    #global_model, personalized_models = aggregate_fed_avg(local_models, base_model_fn, X_train, y_train,client_partitions)
+    # global_model, personalized_models = aggregate_fed_avg(local_models, base_model_fn, X_train, y_train,client_partitions)
 
-    global_model,personalized_models = aggregate_bayesian(local_models, base_model_fn, X_train, y_train,client_partitions)
+    global_model, personalized_models = aggregate_bayesian(local_models, base_model_fn, X_train, y_train,
+                                                           client_partitions)
 
     logging.info("HDPFTL hdpftl_training and personalization completed.")
     save(global_model, personalized_models)
