@@ -1,14 +1,13 @@
-import logging
-
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
 
 
 # acc = evaluate_global_model(global_model, X_test, y_test)
 def evaluate_global_model(model, X_test, y_test, batch_size=32):
-    logging.info("\n[4] Evaluating global model...")
+    safe_log("[4] Evaluating global model...")
     device = setup_device()
 
     # Ensure model is on correct device and in eval mode
@@ -40,6 +39,6 @@ def evaluate_global_model(model, X_test, y_test, batch_size=32):
             total += y.size(0)
 
     acc = correct / total if total > 0 else 0.0
-    logging.info(f"Global Accuracy{acc:.4f}")
+    safe_log(f"Global Accuracy{acc:.4f}")
 
     return acc

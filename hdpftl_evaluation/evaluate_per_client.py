@@ -3,11 +3,11 @@ To evaluate a trained model's accuracy on each client's local hdpftl_data.
 This helps in understanding client-specific performance,
 especially when hdpftl_data is non-IID (not identically distributed across clients).
 """
-import logging
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
 
 
@@ -70,6 +70,6 @@ def evaluate_per_client(global_model, X, y, client_partitions_test, batch_size=3
                 total += yb.size(0)
 
         accs[cid] = correct / total if total > 0 else 0.0
-        logging.info(f"Client {cid} Accuracy for Global Model: {accs[cid]:.4f}")
+        safe_log(f"Client {cid} Accuracy for Global Model: {accs[cid]:.4f}")
 
     return accs

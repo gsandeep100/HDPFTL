@@ -1,16 +1,11 @@
-import logging
-
 import numpy as np
 import torch
 
-from hdpftl_aggregation.hdpftl_bayesian import aggregate_bayesian
-from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
-from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, \
-    evaluate_per_client
+from hdpftl_aggregation.hdpftl_fedavg import aggregate_fed_avg
 from hdpftl_result.save_load_model import save
 from hdpftl_training.train_device_model import train_device_model
 from hdpftl_utility.config import NUM_CLIENTS
-from hdpftl_utility.utils import setup_device
+from hdpftl_utility.log import safe_log
 
 
 def dirichlet_partition(X, y, n_classes, alpha, seed=42):
@@ -89,18 +84,12 @@ def safe_split(tensor, proportions, dim=0):
 
 # --- Main HDPFTL pipeline ---
 
-def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn, alpha=0.5):
+def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn, client_partitions, client_partitions_test, device):
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     #######################  TRAINING  #########################
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
-    print("\n[1] Partitioning hdpftl_data using Dirichlet...")
-    device = setup_device()
-    num_classes = len(torch.unique(y_train))
-    client_partitions = dirichlet_partition(X_train, y_train, num_classes, alpha)
-    client_partitions_test = dirichlet_partition(X_test, y_test, num_classes, alpha)
-
-    print("\n[2] Fleet-level local hdpftl_training...")
+    safe_log("\n[5] Fleet-level local hdpftl_training...")
     local_models = []
     for cid in range(NUM_CLIENTS):
         model = base_model_fn.to(device)
@@ -108,7 +97,7 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn, alpha=0.5):
         # Check class balance per client (important to avoid ValueError: target has only one class):
         labels = y_train[idx]
         if len(np.unique(labels)) < 2:
-            print(f"Client {cid} has only one class. Skipping hdpftl_training or apply resampling.")
+            safe_log(f"Client {cid} has only one class. Skipping hdpftl_training or apply resampling.")
             continue
 
         X_val_tensor = X_train[idx].detach().clone().float()
@@ -128,60 +117,12 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn, alpha=0.5):
         )
         local_models.append(trained_model)
 
-    # global_model, personalized_models = aggregate_fed_avg(local_models, base_model_fn, X_train, y_train,client_partitions)
+    global_model, personalized_models = aggregate_fed_avg(local_models, base_model_fn, X_train, y_train,
+                                                          client_partitions)
 
-    global_model, personalized_models = aggregate_bayesian(local_models, base_model_fn, X_train, y_train,
-                                                           client_partitions)
+    # global_model, personalized_models = aggregate_bayesian(local_models, base_model_fn, X_train, y_train,client_partitions)
 
-    logging.info("HDPFTL hdpftl_training and personalization completed.")
+    safe_log("[8]HDPFTL hdpftl_training and personalization completed.")
     save(global_model, personalized_models)
-    logging.info("Models saved.")
-
-    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-    #######################  EVALUATION  #######################
-    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-    # evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
-    """During evaluation: Use  global model for generalization tests 
-    Use personalized models to report per - client performance"""
-
-    logging.info("\n[6] Evaluating personalized per client...")
-    for cid, model in personalized_models.items():
-        acc = evaluate_personalized_models_per_client(model, X_test[client_partitions_test[cid]],
-                                                      y_test[client_partitions_test[cid]], client_partitions_test)
-        logging.info(f"Client {cid} Accuracy for Personalised Model for clients: {acc[cid]:.4f}")
-
-    logging.info("\n[6] Evaluating global per client...")
-    acc = evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
-
-    logging.info("\n[6] Evaluating global model...")
-    acc = evaluate_global_model(global_model, X_test, y_test)
-
+    safe_log("[9]Models saved.")
     return global_model, personalized_models
-
-
-"""
-print("\n[3] Aggregating fleet models...")
-    # global_model = aggregate_models(local_models, base_model_fn)
-    global_model = bayesian_aggregate_models(local_models, base_model_fn)
-    print("\n[4] Evaluating global model...")
-    acc = evaluate_global_model(global_model, X_test, y_test)
-    print(f"Global Accuracy Before Personalization: {acc:.4f}")
-    logging.info(f"Global Accuracy Before Personalization: {acc:.4f}")
-
-    evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
-
-    print("\n[5] Personalizing each client...")
-    personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)
-
-    print("\n[6] Evaluating personalized hdpftl_models...")
-    for cid, model in personalized_models.items():
-        acc = evaluate_global_model(model, X_test[client_partitions_test[cid]], y_test[client_partitions_test[cid]],device)
-        print(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
-        logging.info(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
-
-        # print(f"Personalized Accuracy for Client {cid}: {acc:.4f}")
-
-    return global_model, personalized_models
-
-"""

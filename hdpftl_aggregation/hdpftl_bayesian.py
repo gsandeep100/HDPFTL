@@ -1,17 +1,17 @@
-import logging
-
 import torch
 
 from hdpftl_personalised_client.personalize_clients import personalize_clients
+from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
 
 
 def aggregate_bayesian(local_models, base_model_fn, X_train, y_train, client_partitions):
-    logging.info("##############Aggregating Bayesian fleet hdpftl_models...#################")
     global_model = hdpftl_bayesian(local_models, base_model_fn)
+    safe_log("[6] Aggregated Bayesian fleet hdpftl_models...")
 
-    logging.info("\n[5] Personalizing each client...")
     personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)
+    safe_log("[7] Personalizing each client...")
+
     return global_model, personalized_models
 
 
