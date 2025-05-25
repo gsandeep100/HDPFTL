@@ -67,8 +67,8 @@ def target_class():
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-        print(
-            f"Fine-tune Epoch [{epoch + 1}/10], Loss: {running_loss / len(target_loader):.4f}, Accuracy: {100 * correct / total:.2f}%")
+        # print(
+        #     f"Fine-tune Epoch [{epoch + 1}/10], Loss: {running_loss / len(target_loader):.4f}, Accuracy: {100 * correct / total:.2f}%")
     if os.path.exists("./trained-hdpftl_models/fine_tuned_tabular_model.pth"):
         print("✅ The file 'fine_tuned_tabular_model.pth' exists!")
         os.remove("./trained-hdpftl_models/fine_tuned_tabular_model.pth")

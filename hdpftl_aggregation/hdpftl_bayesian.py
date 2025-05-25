@@ -12,7 +12,7 @@ def aggregate_bayesian(local_models, base_model_fn, X_train, y_train, client_par
 
     logging.info("\n[5] Personalizing each client...")
     personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)
-    return personalized_models, global_model
+    return global_model, personalized_models
 
 
 def hdpftl_bayesian(models, base_model_fn, epsilon=1e-8):

@@ -40,4 +40,6 @@ def evaluate_global_model(model, X_test, y_test, batch_size=32):
             total += y.size(0)
 
     acc = correct / total if total > 0 else 0.0
+    logging.info(f"Global Accuracy{acc:.4f}")
+
     return acc
