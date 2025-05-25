@@ -7,7 +7,7 @@ from hdpftl_utility.utils import setup_device
 
 
 def aggregate_bayesian(local_models, base_model_fn, X_train, y_train, client_partitions):
-    logging.info("\n[3] Aggregating Bayesian fleet hdpftl_models...")
+    logging.info("##############Aggregating Bayesian fleet hdpftl_models...#################")
     global_model = hdpftl_bayesian(local_models, base_model_fn)
 
     logging.info("\n[5] Personalizing each client...")

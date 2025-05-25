@@ -21,7 +21,7 @@ def aggregate_models(models, base_model_fn):
 
 
 def aggregate_fed_avg(local_models, base_model_fn, X_train, y_train, client_partitions):
-    logging.info("\n[3] Aggregating FedAvg leet hdpftl_models...")
+    logging.info("###################Aggregating FedAvg leet hdpftl_models...################")
     global_model = aggregate_models(local_models, base_model_fn)
 
     logging.info("\n[5] Personalizing each client...")

@@ -6,7 +6,6 @@ from hdpftl_utility.utils import setup_device
 
 def save(global_model, personalized_models):
     torch.save(global_model, "./trained-hdpftl_models/global_model.pth")
-    print(type(personalized_models))
 
     # Save personalized hdpftl_models (if you have them)
     for i, (cid, model) in enumerate(personalized_models.items()):

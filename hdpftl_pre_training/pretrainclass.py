@@ -62,7 +62,7 @@ def pretrain_class():
 
             running_loss += loss.item()
 
-        #print(f"Pretrain Epoch [{epoch + 1}/5], Loss: {running_loss / len(pretrain_loader):.4f}")
+        # print(f"Pretrain Epoch [{epoch + 1}/5], Loss: {running_loss / len(pretrain_loader):.4f}")
         make_dir("./trained-hdpftl_models/")
     if os.path.exists("./trained-hdpftl_models/pretrained_tabular_model.pth"):
         print("✅ The file 'pretrained_tabular_model.pth' exists!")

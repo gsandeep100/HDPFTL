@@ -34,6 +34,7 @@ if __name__ == "__main__":
     # Step 3: Instantiate target model and train on device
     model = target_class()
     global_model, personalized_models = hdpftl_pipeline(X_train, y_train, X_test, y_test, model)
+    logging.info("========================Process Completed===================================")
 
 """ commented for now...need a way to get the evaluation on a different hdpftl_dataset
 

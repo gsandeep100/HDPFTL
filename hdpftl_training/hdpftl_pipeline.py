@@ -7,7 +7,7 @@ from hdpftl_aggregation.hdpftl_bayesian import aggregate_bayesian
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, \
     evaluate_per_client
-from hdpftl_result.final_model import save
+from hdpftl_result.save_load_model import save
 from hdpftl_training.train_device_model import train_device_model
 from hdpftl_utility.config import NUM_CLIENTS
 from hdpftl_utility.utils import setup_device

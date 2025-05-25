@@ -21,11 +21,11 @@ def evaluate_personalized_models_per_client(model, X, y, client_partitions_test,
             accs[cid] = 0.0
             continue
 
-        #model = personalized_models[cid].to(device)
+        # model = personalized_models[cid].to(device)
         model.eval()
 
-        #x_client = X[idx].to(device)
-        #y_client = y[idx].to(device)
+        # x_client = X[idx].to(device)
+        # y_client = y[idx].to(device)
 
         loader = DataLoader(TensorDataset(X, y), batch_size=batch_size)
 
