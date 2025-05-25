@@ -33,7 +33,7 @@ def target_class():
     target_loader = DataLoader(target_dataset, batch_size=32, shuffle=True)
 
     # Create new model instance for fine-tuning
-    transfer_model = TabularNet(input_dim, pretrain_classes).to(device)
+    transfer_model = TabularNet(input_dim, target_classes).to(device)
     try:
         transfer_model.load_state_dict(torch.load("./trained-hdpftl_models/pretrained_tabular_model.pth"))
     except:

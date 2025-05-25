@@ -6,6 +6,7 @@ from hdpftl_training.save_model import save
 from hdpftl_training.train_device_model import train_device_model
 from hdpftl_utility.config import NUM_CLIENTS
 from hdpftl_utility.log import safe_log
+from hdpftl_utility.utils import setup_device
 
 
 def dirichlet_partition(X, y, n_classes, alpha, seed=42):
@@ -83,12 +84,11 @@ def safe_split(tensor, proportions, dim=0):
 
 
 # --- Main HDPFTL pipeline ---
-
-def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn, client_partitions, client_partitions_test, device):
+def hdpftl_pipeline(X_train, y_train, base_model_fn,client_partitions):
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     #######################  TRAINING  #########################
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
+    device = setup_device()
     safe_log("\n[5] Fleet-level local hdpftl_training...")
     local_models = []
     for cid in range(NUM_CLIENTS):
@@ -117,7 +117,7 @@ def hdpftl_pipeline(X_train, y_train, X_test, y_test, base_model_fn, client_part
         )
         local_models.append(trained_model)
 
-    global_model, personalized_models = aggregate_fed_avg(local_models, base_model_fn, X_train, y_train,
+    global_model, personalized_models = aggregate_fed_avg(local_models, base_model_fn,X_train, y_train,
                                                           client_partitions)
 
     # global_model, personalized_models = aggregate_bayesian(local_models, base_model_fn, X_train, y_train,client_partitions)

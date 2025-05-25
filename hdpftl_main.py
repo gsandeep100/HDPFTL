@@ -16,12 +16,15 @@ import torch
 
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client
+from hdpftl_evaluation.load_model import load_global_model, load_personalized_model
 from hdpftl_plotting.plot import plot_client_accuracies, plot_personalized_vs_global
 from hdpftl_training.hdpftl_data.preprocess import preprocess_data
+from hdpftl_training.hdpftl_models.TabularNet import create_model_fn_global, create_model_fn_personalized
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_training.hdpftl_pre_training.targetclass import target_class
-from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA
+from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA, NUM_CLIENTS, PERSONALISED_MODEL_PATH_TEMPLATE, \
+    GLOBAL_MODEL_PATH
 from hdpftl_utility.log import setup_logging, safe_log
 from hdpftl_utility.utils import setup_device
 
@@ -37,10 +40,10 @@ if __name__ == "__main__":
     X_train, X_test, y_train, y_test = preprocess_data(OUTPUT_DATASET_ALL_DATA)
     safe_log("[1]Data preprocessing completed.")
     # Step 2: Pretrain global model
-    pre_model = pretrain_class()
+    model = pretrain_class()
     safe_log("[2]Pretraining completed.")
     # Step 3: Instantiate target model and train on device
-    model = target_class()
+    base_model = target_class()
     safe_log("[3]Fine Tuning completed.")
 
     device = setup_device()
@@ -49,8 +52,7 @@ if __name__ == "__main__":
     client_partitions_test = dirichlet_partition(X_test, y_test, num_classes, alpha=0.5)
     safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
 
-    global_model, personalized_models = hdpftl_pipeline(X_train, y_train, X_test, y_test, model,
-                                                        client_partitions, client_partitions_test, device)
+    global_model, personalized_models = hdpftl_pipeline(X_train, y_train, base_model,client_partitions)
 
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     #######################  EVALUATION  #######################
@@ -60,7 +62,7 @@ if __name__ == "__main__":
     Use personalized models to report per - client performance"""
 
     safe_log("\n[10]Evaluating personalized per client...")
-    personalised_acc = evaluate_personalized_models_per_client(model, X_test,y_test, client_partitions_test)
+    personalised_acc = evaluate_personalized_models_per_client(personalized_models, X_test,y_test, client_partitions_test)
     # for cid, model in personalized_models.items():
     #     acc = evaluate_personalized_models_per_client(model, X_test[client_partitions_test[cid]],
     #                                                   y_test[client_partitions_test[cid]], client_partitions_test)
@@ -77,6 +79,24 @@ if __name__ == "__main__":
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     plot_client_accuracies(client_accs, global_acc=global_acc, title="Per-Client vs Global Model Accuracy")
     plot_personalized_vs_global(personalised_acc, global_acc)
+
+
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    #######################  EVALUATION LOAD FROM FILE #########
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    # Load global model
+    global_model = load_global_model(create_model_fn_global(), GLOBAL_MODEL_PATH)
+
+    # Load personalized models
+    personalized_models = {}
+    for cid in range(0, NUM_CLIENTS):
+        path = PERSONALISED_MODEL_PATH_TEMPLATE.format(n=cid)
+        personalized_models[cid] = load_personalized_model(create_model_fn_personalized(), path)
+
+    # Evaluate
+    global_accs = evaluate_global_model(global_model, X, y, client_partitions_test)
+    personalized_accs = evaluate_personalized_models_per_client(personalized_models, X, y, client_partitions_test)
+
     safe_log("========================Process Completed===================================")
     safe_log("============================================================================")
     safe_log("============================================================================")

@@ -12,7 +12,7 @@ from hdpftl_utility.utils import setup_device
 
 
 # evaluate_personalized_models function! This version works for evaluate personalized models per client
-def evaluate_personalized_models_per_client(model, X, y, client_partitions_test, batch_size=32):
+def evaluate_personalized_models_per_client(personalized_models, X, y, client_partitions_test, batch_size=32):
     accs = {}
     device = setup_device()
 
@@ -21,13 +21,13 @@ def evaluate_personalized_models_per_client(model, X, y, client_partitions_test,
             accs[cid] = 0.0
             continue
 
-        # model = personalized_models[cid].to(device)
+        model = personalized_models[cid].to(device)
         model.eval()
 
-        # x_client = X[idx].to(device)
-        # y_client = y[idx].to(device)
+        x_client = X[idx].to(device)
+        y_client = y[idx].to(device)
 
-        loader = DataLoader(TensorDataset(X, y), batch_size=batch_size)
+        loader = DataLoader(TensorDataset(x_client, y_client), batch_size=batch_size)
 
         correct, total = 0, 0
         with torch.no_grad():
@@ -44,7 +44,9 @@ def evaluate_personalized_models_per_client(model, X, y, client_partitions_test,
 
 # evaluate_per_client function! This version works for evaluating a shared (global) model across all clients
 # accs = evaluate_per_client(global_model, X_train, y_train, client_partitions)
-
+"""
+    Evaluate the global model on each client's test data.
+"""
 def evaluate_per_client(global_model, X, y, client_partitions_test, batch_size=32):
     accs = {}
     device = setup_device()

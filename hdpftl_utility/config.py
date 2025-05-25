@@ -16,6 +16,7 @@
 # ├── evaluate.py
 # ├── hdpftl_main.py
 # └── utils.py
+from string import Template
 
 # Main Code Flow Based on the Diagrams
 # 🔁 Level 1: Device-Level Training (Personalized Learning)
@@ -128,3 +129,7 @@ NUM_ROUNDS = 5
 input_dim = 79  # Your feature size
 pretrain_classes = 5  # Suppose you pretrained with 5 classes
 target_classes = 10  # Suppose you pretrained with 5 classes
+
+GLOBAL_MODEL_PATH = "./trained-hdpftl_models/global_model.pth"
+PERSONALISED_MODEL_PATH_TEMPLATE = Template("./trained-hdpftl_models/personalized_model_client_${n}.pth")
+
