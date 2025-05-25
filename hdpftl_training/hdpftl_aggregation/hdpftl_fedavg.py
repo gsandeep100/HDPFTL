@@ -1,6 +1,6 @@
 import torch
 
-from hdpftl_personalised_client.personalize_clients import personalize_clients
+from hdpftl_training.hdpftl_personalised_client.personalize_clients import personalize_clients
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
 

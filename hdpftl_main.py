@@ -14,13 +14,13 @@ import warnings
 
 import torch
 
-from hdpftl_data.preprocess import preprocess_data
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client
-from hdpftl_pre_training.pretrainclass import pretrain_class
-from hdpftl_pre_training.targetclass import target_class
-from hdpftl_result.plot import plot_client_accuracies, plot_personalized_vs_global
+from hdpftl_plotting.plot import plot_client_accuracies, plot_personalized_vs_global
+from hdpftl_training.hdpftl_data.preprocess import preprocess_data
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition
+from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
+from hdpftl_training.hdpftl_pre_training.targetclass import target_class
 from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA
 from hdpftl_utility.log import setup_logging, safe_log
 from hdpftl_utility.utils import setup_device
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     # for cid, model in personalized_models.items():
     #     acc = evaluate_personalized_models_per_client(model, X_test[client_partitions_test[cid]],
     #                                                   y_test[client_partitions_test[cid]], client_partitions_test)
-    #     safe_log(f"Client {cid} Accuracy for Personalised Model for clients: {acc[cid]:.4f}")
+    #     safe_log(f"Client {cid} Accuracy for Personalized Model for clients: {acc[cid]:.4f}")
 
     safe_log("[11]Evaluating global per client...")
     client_accs = evaluate_per_client(global_model, X_test, y_test, client_partitions_test)

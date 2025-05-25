@@ -1,0 +1,64 @@
+2025-05-25 12:50:25 [INFO] ========================Process Started===================================
+2025-05-25 12:50:25 [INFO] ============================================================================
+2025-05-25 12:50:25 [INFO] ============================================================================
+2025-05-25 12:53:24 [INFO] [1]Data preprocessing completed.
+2025-05-25 12:53:27 [INFO] [2]Pretraining completed.
+2025-05-25 12:53:27 [INFO] [3]Fine Tuning completed.
+2025-05-25 12:53:27 [INFO] [4]Partitioning hdpftl_data using Dirichlet...
+2025-05-25 12:53:27 [INFO] 
+[5] Fleet-level local hdpftl_training...
+2025-05-25 12:54:25 [INFO] [6] Aggregated FedAvg fleet hdpftl_models...
+2025-05-25 12:54:29 [INFO] [7] Personalizing each client...
+2025-05-25 12:54:29 [INFO] [8]HDPFTL hdpftl_training and personalization completed.
+2025-05-25 12:54:29 [INFO] [9]Models saved.
+2025-05-25 12:54:29 [INFO] 
+[10]Evaluating personalized per client...
+2025-05-25 12:54:31 [INFO] [11]Evaluating global per client...
+2025-05-25 12:54:31 [INFO] Client 0 Accuracy for Global Model: 0.7554
+2025-05-25 12:54:31 [INFO] Client 1 Accuracy for Global Model: 0.0915
+2025-05-25 12:54:31 [INFO] Client 2 Accuracy for Global Model: 0.1656
+2025-05-25 12:54:31 [INFO] Client 3 Accuracy for Global Model: 0.9151
+2025-05-25 12:54:31 [INFO] Client 4 Accuracy for Global Model: 0.3696
+2025-05-25 12:54:31 [INFO] Client 5 Accuracy for Global Model: 0.6851
+2025-05-25 12:54:31 [INFO] Client 6 Accuracy for Global Model: 0.3246
+2025-05-25 12:54:31 [INFO] Client 7 Accuracy for Global Model: 0.5629
+2025-05-25 12:54:31 [INFO] Client 8 Accuracy for Global Model: 0.0321
+2025-05-25 12:54:31 [INFO] Client 9 Accuracy for Global Model: 0.9155
+2025-05-25 12:54:31 [INFO] [12] Evaluating global model...
+2025-05-25 12:54:31 [INFO] [4] Evaluating global model...
+2025-05-25 12:54:32 [INFO] Global Accuracy0.5121
+2025-05-25 13:07:58 [INFO] ========================Process Started===================================
+2025-05-25 13:07:58 [INFO] ============================================================================
+2025-05-25 13:07:58 [INFO] ============================================================================
+2025-05-25 13:10:19 [INFO] ========================Process Started===================================
+2025-05-25 13:10:19 [INFO] ============================================================================
+2025-05-25 13:10:19 [INFO] ============================================================================
+2025-05-25 13:13:19 [INFO] [1]Data preprocessing completed.
+2025-05-25 13:13:20 [INFO] [2]Pretraining completed.
+2025-05-25 13:13:20 [INFO] [3]Fine Tuning completed.
+2025-05-25 13:13:20 [INFO] [4]Partitioning hdpftl_data using Dirichlet...
+2025-05-25 13:13:20 [INFO] 
+[5] Fleet-level local hdpftl_training...
+2025-05-25 13:14:20 [INFO] [6] Aggregated FedAvg fleet hdpftl_models...
+2025-05-25 13:14:24 [INFO] [7] Personalizing each client...
+2025-05-25 13:14:24 [INFO] [8]HDPFTL hdpftl_training and personalization completed.
+2025-05-25 13:14:24 [INFO] [9]Models saved.
+2025-05-25 13:14:24 [INFO] 
+[10]Evaluating personalized per client...
+2025-05-25 13:14:27 [INFO] [11]Evaluating global per client...
+2025-05-25 13:14:27 [INFO] Client 0 Accuracy for Global Model: 0.7554
+2025-05-25 13:14:27 [INFO] Client 1 Accuracy for Global Model: 0.0898
+2025-05-25 13:14:27 [INFO] Client 2 Accuracy for Global Model: 0.1656
+2025-05-25 13:14:27 [INFO] Client 3 Accuracy for Global Model: 0.9138
+2025-05-25 13:14:27 [INFO] Client 4 Accuracy for Global Model: 0.3649
+2025-05-25 13:14:27 [INFO] Client 5 Accuracy for Global Model: 0.6811
+2025-05-25 13:14:27 [INFO] Client 6 Accuracy for Global Model: 0.3224
+2025-05-25 13:14:27 [INFO] Client 7 Accuracy for Global Model: 0.5619
+2025-05-25 13:14:27 [INFO] Client 8 Accuracy for Global Model: 0.0224
+2025-05-25 13:14:27 [INFO] Client 9 Accuracy for Global Model: 0.9160
+2025-05-25 13:14:27 [INFO] [12] Evaluating global model...
+2025-05-25 13:14:27 [INFO] [4] Evaluating global model...
+2025-05-25 13:14:27 [INFO] Global Accuracy0.5103
+2025-05-25 13:14:48 [INFO] ========================Process Completed===================================
+2025-05-25 13:14:48 [INFO] ============================================================================
+2025-05-25 13:14:48 [INFO] ============================================================================

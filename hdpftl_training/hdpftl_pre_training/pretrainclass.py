@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from hdpftl_models.TabularNet import TabularNet
+from hdpftl_training.hdpftl_models.TabularNet import TabularNet
 from hdpftl_utility.config import input_dim, pretrain_classes
 from hdpftl_utility.utils import setup_device, make_dir
 

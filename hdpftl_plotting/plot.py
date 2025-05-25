@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
-from hdpftl_result import predictions
+from hdpftl_plotting import predictions
 
 
 # Assuming you're tracking global_accuracies

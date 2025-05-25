@@ -22,7 +22,7 @@ from imblearn.over_sampling import SVMSMOTE
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
 
-from hdpftl_data.sampling import stratified_downsample
+from hdpftl_training.hdpftl_data.sampling import stratified_downsample
 
 
 def safe_smote(X, y):

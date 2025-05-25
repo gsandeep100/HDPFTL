@@ -1,8 +1,8 @@
 import numpy as np
 import torch
 
-from hdpftl_aggregation.hdpftl_fedavg import aggregate_fed_avg
-from hdpftl_result.save_load_model import save
+from hdpftl_training.hdpftl_aggregation.hdpftl_fedavg import aggregate_fed_avg
+from hdpftl_training.save_model import save
 from hdpftl_training.train_device_model import train_device_model
 from hdpftl_utility.config import NUM_CLIENTS
 from hdpftl_utility.log import safe_log
