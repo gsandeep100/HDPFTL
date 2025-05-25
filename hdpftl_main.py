@@ -19,6 +19,7 @@ from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client
 from hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_pre_training.targetclass import target_class
+from hdpftl_result.plot import plot_client_accuracies, plot_personalized_vs_global
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition
 from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA
 from hdpftl_utility.log import setup_logging, safe_log
@@ -59,17 +60,23 @@ if __name__ == "__main__":
     Use personalized models to report per - client performance"""
 
     safe_log("\n[10]Evaluating personalized per client...")
-    for cid, model in personalized_models.items():
-        acc = evaluate_personalized_models_per_client(model, X_test[client_partitions_test[cid]],
-                                                      y_test[client_partitions_test[cid]], client_partitions_test)
-        safe_log(f"Client {cid} Accuracy for Personalised Model for clients: {acc[cid]:.4f}")
+    personalised_acc = evaluate_personalized_models_per_client(model, X_test,y_test, client_partitions_test)
+    # for cid, model in personalized_models.items():
+    #     acc = evaluate_personalized_models_per_client(model, X_test[client_partitions_test[cid]],
+    #                                                   y_test[client_partitions_test[cid]], client_partitions_test)
+    #     safe_log(f"Client {cid} Accuracy for Personalised Model for clients: {acc[cid]:.4f}")
 
     safe_log("[11]Evaluating global per client...")
-    acc = evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
+    client_accs = evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
 
     safe_log("[12] Evaluating global model...")
-    acc = evaluate_global_model(global_model, X_test, y_test)
+    global_acc = evaluate_global_model(global_model, X_test, y_test)
 
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    #######################  PLOT  #######################
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    plot_client_accuracies(client_accs, global_acc=global_acc, title="Per-Client vs Global Model Accuracy")
+    plot_personalized_vs_global(personalised_acc, global_acc)
     safe_log("========================Process Completed===================================")
     safe_log("============================================================================")
     safe_log("============================================================================")

@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 from hdpftl_result import predictions
@@ -38,7 +39,7 @@ def plot_confusion_matrix(y_test):
     plt.title("Confusion Matrix")
     plt.show()
 
-    def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", save_path=None):
+def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", save_path=None):
         import matplotlib.pyplot as plt
 
         client_ids = list(accs.keys())
@@ -80,7 +81,7 @@ client_accs = evaluate_personalized_models(personalized_models, X_train, y_train
 plot_client_accuracies(client_accs, global_acc=global_acc, title="Per-Client vs Global Model Accuracy")
 """
 
-
+# plot_personalized_vs_global(personalized_accs, global_acc)
 def plot_personalized_vs_global(personalized_accs, global_acc, title="Client Accuracy: Personalized vs Global",
                                 save_path=None):
     client_ids = list(personalized_accs.keys())
@@ -120,4 +121,3 @@ def plot_personalized_vs_global(personalized_accs, global_acc, title="Client Acc
     plt.tight_layout()
     plt.show()
 
-# plot_personalized_vs_global(personalized_accs, global_acc)
