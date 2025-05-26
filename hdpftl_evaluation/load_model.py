@@ -2,8 +2,6 @@ import torch
 
 from hdpftl_utility.utils import setup_device
 
-import torch
-
 
 def load_global_model(base_model_fn, path):
     """
@@ -22,7 +20,7 @@ def load_global_model(base_model_fn, path):
     global_model = base_model_fn().to(device)
 
     # Load state dict with device map
-    global_model.load_state_dict(torch.load(path, map_location=device))
+    global_model = torch.load(path, map_location=device, weights_only=False)
 
     # Set to evaluation mode
     global_model.eval()
@@ -43,6 +41,6 @@ def load_personalized_model(base_model_fn, path):
     """
     device = setup_device()
     model = base_model_fn().to(device)
-    model.load_state_dict(torch.load(path, map_location=device))
+    model.load_state_dict(torch.load(path, map_location=device), weights_only=False)
     model.eval()
     return model

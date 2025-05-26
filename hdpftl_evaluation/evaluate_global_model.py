@@ -2,20 +2,17 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_evaluation.load_model import load_global_model
-from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import pretrain_classes, input_dim, GLOBAL_MODEL_PATH
+from hdpftl_training.hdpftl_models.TabularNet import create_model_fn_global
+from hdpftl_utility.config import GLOBAL_MODEL_PATH
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
 
-import torch
+
 def evaluate_global_model_fromfile():
-    device = setup_device()
-    tabular_model = TabularNet(input_dim, pretrain_classes).to(device)
-    global_model = load_global_model(tabular_model(), GLOBAL_MODEL_PATH)
+    global_model = load_global_model(create_model_fn_global(), GLOBAL_MODEL_PATH)
     global_model.eval()
     return global_model
-    #path = PERSONALISED_MODEL_PATH_TEMPLATE.format(n=5)
-    #print(path)
+
 
 def evaluate_global_model(model, X_test, y_test, batch_size=32):
     safe_log("[4] Evaluating global model...")

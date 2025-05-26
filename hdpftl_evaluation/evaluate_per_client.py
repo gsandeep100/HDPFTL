@@ -4,11 +4,40 @@ This helps in understanding client-specific performance,
 especially when hdpftl_data is non-IID (not identically distributed across clients).
 """
 
+import os
+
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+from hdpftl_training.hdpftl_models.TabularNet import create_model_fn_personalized
+from hdpftl_utility.config import PERSONALISED_MODEL_PATH_TEMPLATE, NUM_CLIENTS
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
+
+
+def load_personalized_models_fromfile():
+    personalized_models = []
+    device = setup_device()
+
+    for cid in range(NUM_CLIENTS):
+        model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)
+        model = create_model_fn_personalized()
+        model = model.to(device)
+
+        if os.path.exists(model_path):
+            try:
+                state_dict = torch.load(model_path, map_location=device)
+                model.load_state_dict(state_dict)
+                print(f"✅ Loaded model for client {cid} from {model_path}")
+            except Exception as e:
+                print(f"❌ Failed to load model for client {cid}: {e}")
+        else:
+            print(f"❌ Model file not found for client {cid}: {model_path}")
+
+        model.eval()
+        personalized_models.append(model)
+
+    return personalized_models
 
 
 # evaluate_personalized_models function! This version works for evaluate personalized models per client
@@ -47,6 +76,8 @@ def evaluate_personalized_models_per_client(personalized_models, X, y, client_pa
 """
     Evaluate the global model on each client's test data.
 """
+
+
 def evaluate_per_client(global_model, X, y, client_partitions_test, batch_size=32):
     accs = {}
     device = setup_device()

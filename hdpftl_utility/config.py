@@ -132,4 +132,3 @@ target_classes = 10  # Suppose you pretrained with 5 classes
 
 GLOBAL_MODEL_PATH = "./trained-hdpftl_models/global_model.pth"
 PERSONALISED_MODEL_PATH_TEMPLATE = Template("./trained-hdpftl_models/personalized_model_client_${n}.pth")
-

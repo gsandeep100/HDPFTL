@@ -84,7 +84,7 @@ def safe_split(tensor, proportions, dim=0):
 
 
 # --- Main HDPFTL pipeline ---
-def hdpftl_pipeline(X_train, y_train, base_model_fn,client_partitions):
+def hdpftl_pipeline(X_train, y_train, base_model_fn, client_partitions):
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     #######################  TRAINING  #########################
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -117,7 +117,7 @@ def hdpftl_pipeline(X_train, y_train, base_model_fn,client_partitions):
         )
         local_models.append(trained_model)
 
-    global_model, personalized_models = aggregate_fed_avg(local_models, base_model_fn,X_train, y_train,
+    global_model, personalized_models = aggregate_fed_avg(local_models, base_model_fn, X_train, y_train,
                                                           client_partitions)
 
     # global_model, personalized_models = aggregate_bayesian(local_models, base_model_fn, X_train, y_train,client_partitions)
