@@ -1,10 +1,12 @@
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
-from hdpftl_plotting import predictions
+from hdpftl_utility.config import PLOT_PATH
 
 
 # ✅ 1. Global vs Personalized Accuracy per Client
@@ -17,6 +19,9 @@ def plot_accuracy_comparison(global_accs, personalized_accs):
     x = np.arange(len(clients))
     width = 0.35
 
+    # Create plot directory if it doesn't exist
+    os.makedirs(PLOT_PATH, exist_ok=True)
+
     plt.figure(figsize=(10, 6))
     plt.bar(x - width / 2, global_values, width, label='Global Model')
     plt.bar(x + width / 2, personal_values, width, label='Personalized Model')
@@ -25,10 +30,15 @@ def plot_accuracy_comparison(global_accs, personalized_accs):
     plt.ylabel('Accuracy')
     plt.title('Global vs Personalized Model Accuracy per Client')
     plt.xticks(x, [f"Client {i}" for i in clients])
+    plt.ylim(0, 1.0)  # Assuming accuracy is between 0 and 1
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.tight_layout()
+
+    file_path = os.path.join(PLOT_PATH, 'glo_per_acc_per_client.png')
+    plt.savefig(file_path)
     plt.show()
+    print(f"✅ Accuracy comparison plot saved at: {file_path}")
 
 
 # Training Loss vs Epochs (Global or Local)
@@ -39,12 +49,24 @@ plot_training_loss(client_3_losses, label='Client 3 Loss')
 
 
 def plot_training_loss(losses, label='Loss'):
+    """
+    Plots training loss over epochs and saves the figure.
+
+    Args:
+        losses (list or array): List of loss values per epoch.
+        label (str): Label for the y-axis (default is 'Loss').
+    """
     plt.figure(figsize=(8, 5))
-    plt.plot(losses, marker='o')
+    plt.plot(range(1, len(losses) + 1), losses, marker='o', color='blue', label=label)
     plt.title('Training Loss Over Epochs')
     plt.xlabel('Epoch')
     plt.ylabel(label)
-    plt.grid(True)
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.legend()
+
+    file_path = os.path.join(PLOT_PATH, 'plot_training_loss.png')
+    plt.tight_layout()
+    plt.savefig(file_path)
     plt.show()
 
 
@@ -101,16 +123,23 @@ def plot(global_accuracies, personalized_accuracies):
     plt.show()
 
 
-def plot_confusion_matrix(y_test):
-    # Convert ground truth and preds to NumPy
-    y_true = y_test.cpu().numpy()
-    y_pred = predictions.cpu().numpy()
+def plot_confusion_matrix(y_true, y_pred, class_names=None):
+    """
+    Plots a confusion matrix.
 
-    # Compute and display
-    cm = confusion_matrix(y_true, y_pred)
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm)
-    disp.plot(cmap='Blues')
+    Args:
+        y_true (Tensor): Ground truth labels (PyTorch tensor).
+        y_pred (Tensor): Predicted labels (PyTorch tensor).
+        class_names (list, optional): List of class names for axis ticks.
+    """
+    y_true_np = y_true.cpu().numpy()
+    y_pred_np = y_pred.cpu().numpy()
+
+    cm = confusion_matrix(y_true_np, y_pred_np)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    disp.plot(cmap='Blues', values_format='d')
     plt.title("Confusion Matrix")
+    plt.tight_layout()
     plt.show()
 
 

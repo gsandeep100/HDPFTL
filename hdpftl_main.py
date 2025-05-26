@@ -18,7 +18,8 @@ import torch
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model, evaluate_global_model_fromfile
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client, \
     load_personalized_models_fromfile
-from hdpftl_plotting.plot import plot_client_accuracies, plot_personalized_vs_global, plot_confusion_matrix
+from hdpftl_plotting.plot import plot_client_accuracies, plot_personalized_vs_global, plot_confusion_matrix, \
+    plot_accuracy_comparison, plot_training_loss
 from hdpftl_training.hdpftl_data.preprocess import preprocess_data
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
@@ -31,8 +32,8 @@ warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 if __name__ == "__main__":
     setup_logging()
-    safe_log("========================Process Started===================================")
     safe_log("============================================================================")
+    safe_log("======================Process Started=======================================")
     safe_log("============================================================================")
 
     # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
@@ -90,12 +91,18 @@ if __name__ == "__main__":
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     #######################  PLOT  #######################
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-    plot_confusion_matrix(y_test)
+    with torch.no_grad():
+        outputs = global_model(X_test.to(device))
+        _, predictions = torch.max(outputs, 1)
+    plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
+
+    plot_training_loss(losses=client_accs, label='Client Accuracy')
+    plot_accuracy_comparison(client_accs, personalised_acc)
     plot_client_accuracies(client_accs, global_acc=global_acc, title="Per-Client vs Global Model Accuracy")
     plot_personalized_vs_global(personalised_acc, global_acc)
 
-    safe_log("========================Process Completed===================================")
-    safe_log("============================================================================")
+    safe_log("===========================================================================")
+    safe_log("===========================Process Completed===============================")
     safe_log("============================================================================")
 
 """

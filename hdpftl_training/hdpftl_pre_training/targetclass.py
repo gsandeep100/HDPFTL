@@ -35,7 +35,7 @@ def target_class():
     # Create new model instance for fine-tuning
     transfer_model = TabularNet(input_dim, target_classes).to(device)
     try:
-        transfer_model.load_state_dict(torch.load("./trained-hdpftl_models/pretrained_tabular_model.pth"))
+        transfer_model.load_state_dict(torch.load("./hdpftl_trained_models/pretrained_tabular_model.pth"))
     except:
         print("❌ Something went wrong")
     # Replace final classifier layer
@@ -69,12 +69,12 @@ def target_class():
 
         # print(
         #     f"Fine-tune Epoch [{epoch + 1}/10], Loss: {running_loss / len(target_loader):.4f}, Accuracy: {100 * correct / total:.2f}%")
-    if os.path.exists("./trained-hdpftl_models/fine_tuned_tabular_model.pth"):
+    if os.path.exists("./hdpftl_trained_models/fine_tuned_tabular_model.pth"):
         print("✅ The file 'fine_tuned_tabular_model.pth' exists!")
-        os.remove("./trained-hdpftl_models/fine_tuned_tabular_model.pth")
+        os.remove("./hdpftl_trained_models/fine_tuned_tabular_model.pth")
     else:
         print("❌ The file 'fine_tuned_tabular_model.pth' does not exist.")
 
     # Save fine-tuned model
-    torch.save(transfer_model.state_dict(), "./trained-hdpftl_models/fine_tuned_tabular_model.pth")
+    torch.save(transfer_model.state_dict(), "./hdpftl_trained_models/fine_tuned_tabular_model.pth")
     return transfer_model

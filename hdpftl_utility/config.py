@@ -130,5 +130,6 @@ input_dim = 79  # Your feature size
 pretrain_classes = 5  # Suppose you pretrained with 5 classes
 target_classes = 10  # Suppose you pretrained with 5 classes
 
-GLOBAL_MODEL_PATH = "./trained-hdpftl_models/global_model.pth"
-PERSONALISED_MODEL_PATH_TEMPLATE = Template("./trained-hdpftl_models/personalized_model_client_${n}.pth")
+GLOBAL_MODEL_PATH = "./hdpftl_trained_models/global_model.pth"
+PLOT_PATH = "./hdpftl_plot_outputs/"
+PERSONALISED_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/personalized_model_client_${n}.pth")

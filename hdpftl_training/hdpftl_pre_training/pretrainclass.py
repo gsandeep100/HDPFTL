@@ -63,12 +63,12 @@ def pretrain_class():
             running_loss += loss.item()
 
         # print(f"Pretrain Epoch [{epoch + 1}/5], Loss: {running_loss / len(pretrain_loader):.4f}")
-        make_dir("./trained-hdpftl_models/")
-    if os.path.exists("./trained-hdpftl_models/pretrained_tabular_model.pth"):
+        make_dir("./hdpftl_trained_models/")
+    if os.path.exists("./hdpftl_trained_models/pretrained_tabular_model.pth"):
         print("✅ The file 'pretrained_tabular_model.pth' exists!")
-        os.remove("./trained-hdpftl_models/pretrained_tabular_model.pth")
+        os.remove("./hdpftl_trained_models/pretrained_tabular_model.pth")
     else:
         print("❌ The file 'pretrained_tabular_model.pth' does not exist.")
 
     # Save pretrained model
-    torch.save(pretrain_model.state_dict(), "./trained-hdpftl_models/pretrained_tabular_model.pth")
+    torch.save(pretrain_model.state_dict(), "./hdpftl_trained_models/pretrained_tabular_model.pth")
