@@ -13,12 +13,13 @@
 
 import os
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import input_dim, pretrain_classes
+from hdpftl_utility.config import input_dim, pretrain_classes, EPOCH_DIR_PRE, EPOCH_FILE_PRE
 from hdpftl_utility.utils import setup_device, make_dir
 
 
@@ -46,6 +47,7 @@ def pretrain_class():
     optimizer = torch.optim.Adam(pretrain_model.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
+    epoch_losses = []
     # Train the model
     for epoch in range(5):
         pretrain_model.train()
@@ -62,13 +64,11 @@ def pretrain_class():
 
             running_loss += loss.item()
 
-        # print(f"Pretrain Epoch [{epoch + 1}/5], Loss: {running_loss / len(pretrain_loader):.4f}")
-        make_dir("./hdpftl_trained_models/")
-    if os.path.exists("./hdpftl_trained_models/pretrained_tabular_model.pth"):
-        print("✅ The file 'pretrained_tabular_model.pth' exists!")
-        os.remove("./hdpftl_trained_models/pretrained_tabular_model.pth")
-    else:
-        print("❌ The file 'pretrained_tabular_model.pth' does not exist.")
+        epoch_losses.append(running_loss / len(pretrain_loader))
+
+        # Save every epoch
+        os.makedirs(EPOCH_DIR_PRE, exist_ok=True)  # creates folder and any missing parents, no error if exists
+        np.save(EPOCH_FILE_PRE, np.array(epoch_losses))
 
     # Save pretrained model
     torch.save(pretrain_model.state_dict(), "./hdpftl_trained_models/pretrained_tabular_model.pth")

@@ -16,6 +16,7 @@
 # ├── evaluate.py
 # ├── hdpftl_main.py
 # └── utils.py
+import os
 from string import Template
 
 # Main Code Flow Based on the Diagrams
@@ -122,7 +123,7 @@ OUTPUT_DATASET_PATH_2024 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/"
 OUTPUT_DATASET_ALL_DATA = "./hdpftl_training/hdpftl_dataset/AllData/"
 
 BATCH_SIZE = 32
-NUM_CLIENTS = 10
+NUM_CLIENTS = 15
 NUM_DEVICE = 2
 CLIENTS_PER_AGGREGATOR = 5
 NUM_ROUNDS = 5
@@ -131,5 +132,11 @@ pretrain_classes = 5  # Suppose you pretrained with 5 classes
 target_classes = 10  # Suppose you pretrained with 5 classes
 
 GLOBAL_MODEL_PATH = "./hdpftl_trained_models/global_model.pth"
+FINETUNE_MODEL_PATH = "./hdpftl_trained_models/fine_tuned_tabular_model.pth"
+EPOCH_DIR_FINE = "./hdpftl_trained_models/epochs"
+EPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, "fine_tune_epoch_losses.npy")
+EPOCH_DIR_PRE = "./hdpftl_trained_models/epochs"
+EPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, "pre_epoch_losses.npy")
+
 PLOT_PATH = "./hdpftl_plot_outputs/"
 PERSONALISED_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/personalized_model_client_${n}.pth")

@@ -13,6 +13,7 @@
 import os
 import warnings
 
+import numpy as np
 import torch
 
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model, evaluate_global_model_fromfile
@@ -24,7 +25,7 @@ from hdpftl_training.hdpftl_data.preprocess import preprocess_data
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_training.hdpftl_pre_training.targetclass import target_class
-from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA, GLOBAL_MODEL_PATH
+from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA, GLOBAL_MODEL_PATH, EPOCH_FILE_FINE, EPOCH_FILE_PRE
 from hdpftl_utility.log import setup_logging, safe_log
 from hdpftl_utility.utils import setup_device
 
@@ -96,7 +97,8 @@ if __name__ == "__main__":
         _, predictions = torch.max(outputs, 1)
     plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
 
-    plot_training_loss(losses=client_accs, label='Client Accuracy')
+    plot_training_loss(losses=np.load(EPOCH_FILE_PRE), label='Pre Epoch Losses')
+    plot_training_loss(losses=np.load(EPOCH_FILE_FINE), label='Fine Tuning Epoch Losses')
     plot_accuracy_comparison(client_accs, personalised_acc)
     plot_client_accuracies(client_accs, global_acc=global_acc, title="Per-Client vs Global Model Accuracy")
     plot_personalized_vs_global(personalised_acc, global_acc)

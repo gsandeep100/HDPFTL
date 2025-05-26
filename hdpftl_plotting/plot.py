@@ -35,7 +35,7 @@ def plot_accuracy_comparison(global_accs, personalized_accs):
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.tight_layout()
 
-    file_path = os.path.join(PLOT_PATH, 'glo_per_acc_per_client.png')
+    file_path = os.path.join(PLOT_PATH, 'plot_accuracy_comparison_glo_personalized.png')
     plt.savefig(file_path)
     plt.show()
     print(f"✅ Accuracy comparison plot saved at: {file_path}")
@@ -79,6 +79,8 @@ def plot_accuracy_heatmap(accs_dict):
     plt.figure(figsize=(8, 6))
     sns.heatmap(df.set_index('Client').T, annot=True, cmap="YlGnBu", cbar=False)
     plt.title("Client-wise Accuracy Heatmap")
+    file_path = os.path.join(PLOT_PATH, 'plot_accuracy_heatmap.png')
+    plt.savefig(file_path)
     plt.show()
 
 
@@ -98,6 +100,8 @@ def plot_fine_tuning_improvement(pre_accs, post_accs):
     plt.ylabel("Accuracy Gain")
     plt.title("Accuracy Improvement After Fine-Tuning")
     plt.grid(True, linestyle="--", alpha=0.5)
+    file_path = os.path.join(PLOT_PATH, 'plot_fine_tuning_improvement.png')
+    plt.savefig(file_path)
     plt.show()
 
 
@@ -120,6 +124,8 @@ def plot(global_accuracies, personalized_accuracies):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
+    file_path = os.path.join(PLOT_PATH, 'plot_global_personalised.png')
+    plt.savefig(file_path)
     plt.show()
 
 
@@ -140,6 +146,8 @@ def plot_confusion_matrix(y_true, y_pred, class_names=None):
     disp.plot(cmap='Blues', values_format='d')
     plt.title("Confusion Matrix")
     plt.tight_layout()
+    file_path = os.path.join(PLOT_PATH, 'plot_confusion_matrix.png')
+    plt.savefig(file_path)
     plt.show()
 
 
@@ -171,6 +179,9 @@ def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", s
 
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
+
+    file_path = os.path.join(PLOT_PATH, 'plot_client_accuracies.png')
+    plt.savefig(file_path)
     plt.show()
 
 
@@ -224,4 +235,6 @@ def plot_personalized_vs_global(personalized_accs, global_acc, title="Client Acc
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
     plt.tight_layout()
+    file_path = os.path.join(PLOT_PATH, 'plot_personalized_vs_global.png')
+    plt.savefig(file_path)
     plt.show()
