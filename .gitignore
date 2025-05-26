@@ -153,6 +153,7 @@ dmypy.json
 # model files
 *.pth
 *.png
+*.npy
 # Pyre type checker
 .pyre/
 
