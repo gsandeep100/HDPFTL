@@ -28,7 +28,7 @@ def target_class():
     print("\n=== Fine-tuning Phase ===")
     device = setup_device()
 
-    # 1. Create synthetic target data
+    # 1. Generate target data (replace this with real data in production)
     target_features = torch.randn(1000, input_dim)
     target_labels = torch.randint(0, target_classes, (1000,))
 
@@ -36,22 +36,27 @@ def target_class():
     X_train, X_val, y_train, y_val = train_test_split(
         target_features, target_labels, test_size=0.2, random_state=42
     )
-
     train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=32, shuffle=True)
     val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=32, shuffle=False)
 
     # 3. Load pretrained model
     transfer_model = TabularNet(input_dim, target_classes).to(device)
     try:
-        transfer_model.load_state_dict(torch.load("./hdpftl_trained_models/pretrained_tabular_model.pth"))
-        print("✅ Loaded pretrained model")
-    except:
+        state_dict = torch.load(FINETUNE_MODEL_PATH)
+        missing, unexpected = transfer_model.load_state_dict(state_dict, strict=False)
+        print("✅ Loaded pretrained model (strict=False)")
+        if missing:
+            print(f"⚠️ Missing keys: {missing}")
+        if unexpected:
+            print(f"⚠️ Unexpected keys: {unexpected}")
+    except Exception as e:
         print("❌ Could not load pretrained model")
+        print(f"Error: {e}")
 
-    # 4. Replace final classifier layer
+    # 4. Replace classifier
     transfer_model.classifier = nn.Linear(64, target_classes).to(device)
 
-    # 5. Partially unfreeze shared layers (e.g., unfreeze layers 2 and 3)
+    # 5. Unfreeze specific shared layers
     for name, param in transfer_model.shared.named_parameters():
         param.requires_grad = '2' in name or '1' in name
 
@@ -62,6 +67,8 @@ def target_class():
     # 7. Fine-tuning loop
     best_val_acc = 0.0
     epoch_losses = []
+    os.makedirs(EPOCH_DIR_FINE, exist_ok=True)
+
     for epoch in range(10):
         transfer_model.train()
         running_loss, correct, total = 0.0, 0, 0
@@ -93,15 +100,18 @@ def target_class():
                 _, predicted = torch.max(outputs.data, 1)
                 val_total += labels.size(0)
                 val_correct += (predicted == labels).sum().item()
+
         val_acc = 100 * val_correct / val_total
         epoch_losses.append(avg_loss)
-        #print(f"Epoch [{epoch+1}/10] - Loss: {avg_loss:.4f} - Train Acc: {train_acc:.2f}% - Val Acc: {val_acc:.2f}%")
-        # Save epoch
-        os.makedirs(EPOCH_DIR_FINE, exist_ok=True)  # creates folder and any missing parents, no error if exists
-        np.save(EPOCH_FILE_FINE, np.array(epoch_losses))
 
-        # Save the fine-tuned model
+        print(f"Epoch [{epoch+1}/10] - Loss: {avg_loss:.4f} - Train Acc: {train_acc:.2f}% - Val Acc: {val_acc:.2f}%")
+
+        # Save best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             torch.save(transfer_model.state_dict(), FINETUNE_MODEL_PATH)
+
+        # Save every epoch
+        np.save(EPOCH_FILE_FINE, np.array(epoch_losses))
+
     return transfer_model

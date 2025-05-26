@@ -95,6 +95,8 @@ if __name__ == "__main__":
     with torch.no_grad():
         outputs = global_model(X_test.to(device))
         _, predictions = torch.max(outputs, 1)
+    num_classes = max(y_test.max(), predictions.max()).item() + 1
+
     plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
 
     plot_training_loss(losses=np.load(EPOCH_FILE_PRE), label='Pre Epoch Losses')
