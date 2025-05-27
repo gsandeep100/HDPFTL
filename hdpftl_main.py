@@ -98,7 +98,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         outputs = global_model(X_test.to(device))
         _, predictions = torch.max(outputs, 1)
-    num_classes = max(y_test.max(), predictions.max()).item() + 1
+    num_classes = max(y_test.max(), predictions.cpu().max()).item() + 1
 
     #plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
 
@@ -112,12 +112,12 @@ if __name__ == "__main__":
     # GUI setup
     root = tk.Tk()
     root.title("Select a Plot to View")
-    root.geometry("350x450")
+    root.geometry("750x750")
 
     tk.Label(root, text="Choose a Plot Type", font=("Arial", 16)).pack(pady=10)
 
     # Buttons for each plot type
-    tk.Button(root, text="Confusion Matrix", width=20, command=lambda: plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])).pack(pady=5)
+    tk.Button(root, text="Confusion Matrix", width=20, command=lambda: plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)], normalize=True)).pack(pady=5)
     tk.Button(root, text="Pre Epoch Losses", width=20, command=lambda: plot_training_loss(losses=np.load(EPOCH_FILE_PRE), name = 'epoch_loss_pre.png',label='Pre Epoch Losses')).pack(pady=5)
     tk.Button(root, text="Fine Tuning Epoch Losses", width=20, command=lambda: plot_training_loss(losses=np.load(EPOCH_FILE_FINE), name = 'epoch_loss_fine.png', label='Fine Tuning Epoch Losses')).pack(pady=5)
     tk.Button(root, text="Global/Personalized Acc/Client", width=20, command=lambda: plot_accuracy_comparison(client_accs, personalised_acc)).pack(pady=5)

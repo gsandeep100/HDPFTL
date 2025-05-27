@@ -5,9 +5,9 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import os
 
 from hdpftl_utility.config import PLOT_PATH
-
 
 # ✅ 1. Global vs Personalized Accuracy per Client
 
@@ -129,22 +129,34 @@ def plot(global_accuracies, personalized_accuracies):
     plt.show()
 
 
-def plot_confusion_matrix(y_true, y_pred, class_names=None):
+def plot_confusion_matrix(y_true, y_pred, class_names=None, normalize=False):
     """
-    Plots a confusion matrix.
+    Plots a confusion matrix with optional normalization.
+    A confusion matrix is a summary table used to evaluate the performance of a classification model.
+    It shows how well the predicted labels match the actual labels.
+    It’s especially useful for multi-class classification and imbalanced datasets.
+
 
     Args:
         y_true (Tensor): Ground truth labels (PyTorch tensor).
         y_pred (Tensor): Predicted labels (PyTorch tensor).
-        class_names (list, optional): List of class names for axis ticks.
+        class_names (list, optional): Class names for axis ticks.
+        normalize (bool): If True, normalize the confusion matrix.
     """
+
     y_true_np = y_true.cpu().numpy()
     y_pred_np = y_pred.cpu().numpy()
 
-    cm = confusion_matrix(y_true_np, y_pred_np)
+    if class_names is None:
+        class_names = [str(i) for i in range(len(np.unique(y_true_np)))]
+
+    norm = 'true' if normalize else None
+    cm = confusion_matrix(y_true_np, y_pred_np, normalize=norm)
+
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
-    disp.plot(cmap='Blues', values_format='d')
-    plt.title("Confusion Matrix")
+    disp.plot(cmap='Blues', values_format='.2f' if normalize else 'd')
+
+    plt.title("Normalized Confusion Matrix" if normalize else "Confusion Matrix")
     plt.tight_layout()
     file_path = os.path.join(PLOT_PATH, 'plot_confusion_matrix.png')
     plt.savefig(file_path)
