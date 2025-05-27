@@ -48,7 +48,7 @@ plot_training_loss(client_3_losses, label='Client 3 Loss')
 """
 
 
-def plot_training_loss(losses, label='Loss'):
+def plot_training_loss(losses, name, label='Loss'):
     """
     Plots training loss over epochs and saves the figure.
 
@@ -64,7 +64,7 @@ def plot_training_loss(losses, label='Loss'):
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend()
 
-    file_path = os.path.join(PLOT_PATH, 'plot_training_loss.png')
+    file_path = os.path.join(PLOT_PATH, name)
     plt.tight_layout()
     plt.savefig(file_path)
     plt.show()
