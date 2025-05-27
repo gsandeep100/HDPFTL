@@ -133,6 +133,7 @@ target_classes = 10  # Suppose you pretrained with 5 classes
 
 GLOBAL_MODEL_PATH = "./hdpftl_trained_models/global_model.pth"
 FINETUNE_MODEL_PATH = "./hdpftl_trained_models/fine_tuned_tabular_model.pth"
+PRE_MODEL_PATH = "./hdpftl_trained_models/pretrained_tabular_model.pth"
 EPOCH_DIR_FINE = "./hdpftl_trained_models/epochs"
 EPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, "fine_tune_epoch_losses.npy")
 EPOCH_DIR_PRE = "./hdpftl_trained_models/epochs"

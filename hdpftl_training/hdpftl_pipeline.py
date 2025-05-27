@@ -24,6 +24,7 @@ def dirichlet_partition(X, y, n_classes, alpha, seed=42):
     Returns:
         List of index lists, one per client.
     """
+    client_data_dict = {}
     if isinstance(y, torch.Tensor):
         y = y.numpy()
 
@@ -51,7 +52,12 @@ def dirichlet_partition(X, y, n_classes, alpha, seed=42):
         for i, split in enumerate(splits):
             client_indices[i].extend(split.tolist())
 
-    return client_indices
+        # Build client datasets
+        for client_id, indices in enumerate(client_indices):
+            indices = np.array(indices)
+            client_data_dict[client_id] = (X[indices], y[indices])
+
+    return client_indices, client_data_dict
 
 
 def safe_split(tensor, proportions, dim=0):

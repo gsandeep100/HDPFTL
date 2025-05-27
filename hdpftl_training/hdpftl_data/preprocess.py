@@ -77,6 +77,8 @@ def preprocess_data(path):
     features = df.columns.difference(['Label'])
     df[features] = scaler.fit_transform(df[features])
     X, y = df[features], df['Label']
+    
+    #downsampling
     X_small, y_small = stratified_downsample(X, y, fraction=0.2)
 
     # print(df.columns)

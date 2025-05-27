@@ -19,7 +19,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import input_dim, pretrain_classes, EPOCH_DIR_PRE, EPOCH_FILE_PRE
+from hdpftl_utility.config import input_dim, pretrain_classes, EPOCH_DIR_PRE, EPOCH_FILE_PRE, PRE_MODEL_PATH
 from hdpftl_utility.utils import setup_device
 
 
@@ -71,4 +71,8 @@ def pretrain_class():
         np.save(EPOCH_FILE_PRE, np.array(epoch_losses))
 
     # Save pretrained model
-    torch.save(pretrain_model.state_dict(), "./hdpftl_trained_models/pretrained_tabular_model.pth")
+    torch.save(pretrain_model.state_dict(), PRE_MODEL_PATH)
+    # Force flush to disk (optional)
+    with open(PRE_MODEL_PATH, 'rb') as f:
+        os.fsync(f.fileno())
+

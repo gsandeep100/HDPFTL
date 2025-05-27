@@ -1,10 +1,10 @@
 import os
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 
 from hdpftl_utility.config import PLOT_PATH
 
@@ -255,17 +255,26 @@ def plot_personalized_vs_global(personalized_accs, global_acc, title="Client Acc
     plt.show()
 
 
-# Visualize how labels are distributed for each client. Helps identify label skew.
+"""How to interpret this plot:
+Visualize how labels are distributed for each client. Helps identify label skew.
+IID data: Each client’s bar looks roughly the same (class proportions balanced).
+Non-IID data: Bars differ strongly — some clients have dominant classes, others very different mixes.
+"""
 
 def plot_class_distribution_per_client(client_data_dict):
     """
     client_data_dict: dict of client_id -> list of labels
+                      or dict of client_id -> (X, y) tuples
     """
-    import matplotlib.pyplot as plt
-    import seaborn as sns
 
     data = []
-    for client_id, labels in client_data_dict.items():
+    for client_id, labels_or_tuple in client_data_dict.items():
+        # If tuple, extract labels
+        if isinstance(labels_or_tuple, tuple):
+            labels = labels_or_tuple[1]
+        else:
+            labels = labels_or_tuple
+
         for label in labels:
             data.append((client_id, label))
 
@@ -275,6 +284,8 @@ def plot_class_distribution_per_client(client_data_dict):
     plt.title("Label Distribution per Client")
     plt.xticks(rotation=45)
     plt.tight_layout()
+    file_path = os.path.join(PLOT_PATH, 'plot_class_distribution_per_client.png')
+    plt.savefig(file_path)
     plt.show()
 
 

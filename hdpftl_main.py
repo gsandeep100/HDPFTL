@@ -21,7 +21,7 @@ from hdpftl_evaluation.evaluate_global_model import evaluate_global_model, evalu
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client, \
     load_personalized_models_fromfile
 from hdpftl_plotting.plot import plot_client_accuracies, plot_personalized_vs_global, plot_confusion_matrix, \
-    plot_accuracy_comparison, plot_training_loss
+    plot_accuracy_comparison, plot_training_loss, plot_class_distribution_per_client
 from hdpftl_training.hdpftl_data.preprocess import preprocess_data
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
@@ -47,9 +47,11 @@ if __name__ == "__main__":
     dirichlet_partition is a standard technique to simulate non-IID data — 
     and it's commonly used in federated learning experiments to control the degree of 
     heterogeneity among clients.
+    Smaller alpha → more skewed, clients have few classes dominating.
+    Larger alpha → more uniform data distribution across clients.
     """
-    client_partitions = dirichlet_partition(X_train, y_train, num_classes, alpha=0.5)
-    client_partitions_test = dirichlet_partition(X_test, y_test, num_classes, alpha=0.5)
+    client_partitions,client_data_dict = dirichlet_partition(X_train, y_train, num_classes, alpha=0.3)
+    client_partitions_test, client_data_dict_test = dirichlet_partition(X_test, y_test, num_classes, alpha=0.3)
     safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
 
     # If fine-tuned model exists, load and return it
@@ -102,7 +104,7 @@ if __name__ == "__main__":
         outputs = global_model(X_test.to(device))
         _, predictions = torch.max(outputs, 1)
     num_classes = max(y_test.max(), predictions.cpu().max()).item() + 1
-    print("Number of classes:::" + num_classes)
+    print("Number of classes:::", num_classes)
     # plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
 
     # plot_training_loss(losses=np.load(EPOCH_FILE_PRE), label='Pre Epoch Losses')
@@ -119,6 +121,9 @@ if __name__ == "__main__":
     tk.Label(root, text="Choose a Plot Type", font=("Arial", 16)).pack(pady=10)
 
     # Buttons for each plot type
+    tk.Button(root, text="Client Labels Distribution", width=20,
+              command=lambda: plot_class_distribution_per_client(client_data_dict)).pack(pady=5)
+
     tk.Button(root, text="Confusion Matrix", width=20,
               command=lambda: plot_confusion_matrix(y_true=y_test, y_pred=predictions,
                                                     class_names=[str(i) for i in range(num_classes)],
