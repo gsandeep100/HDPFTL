@@ -5,9 +5,9 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-import os
 
 from hdpftl_utility.config import PLOT_PATH
+
 
 # ✅ 1. Global vs Personalized Accuracy per Client
 
@@ -136,7 +136,10 @@ def plot_confusion_matrix(y_true, y_pred, class_names=None, normalize=False):
     It shows how well the predicted labels match the actual labels.
     It’s especially useful for multi-class classification and imbalanced datasets.
 
-
+🔲 Structure of a Confusion Matrix (for 2 classes)
+                        Predicted: Positive	    Predicted:Negative
+    Actual: Positive	True Positive (TP)	    False Negative (FN)
+    Actual: Negative	False Positive (FP)	    True Negative (TN)
     Args:
         y_true (Tensor): Ground truth labels (PyTorch tensor).
         y_pred (Tensor): Predicted labels (PyTorch tensor).
@@ -249,4 +252,68 @@ def plot_personalized_vs_global(personalized_accs, global_acc, title="Client Acc
     plt.tight_layout()
     file_path = os.path.join(PLOT_PATH, 'plot_personalized_vs_global.png')
     plt.savefig(file_path)
+    plt.show()
+
+
+# Visualize how labels are distributed for each client. Helps identify label skew.
+
+def plot_class_distribution_per_client(client_data_dict):
+    """
+    client_data_dict: dict of client_id -> list of labels
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    data = []
+    for client_id, labels in client_data_dict.items():
+        for label in labels:
+            data.append((client_id, label))
+
+    df = pd.DataFrame(data, columns=["Client", "Label"])
+    plt.figure(figsize=(10, 6))
+    sns.countplot(data=df, x="Client", hue="Label", palette="tab10")
+    plt.title("Label Distribution per Client")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+
+# Track how global or personalized accuracy improves over federated rounds.
+
+def plot_accuracy_over_rounds(global_accs, personalized_accs=None):
+    rounds = list(range(1, len(global_accs) + 1))
+    plt.plot(rounds, global_accs, label="Global Accuracy", marker='o')
+    if personalized_accs:
+        plt.plot(rounds, personalized_accs, label="Personalized Accuracy", marker='x')
+    plt.title("Accuracy over Communication Rounds")
+    plt.xlabel("Round")
+    plt.ylabel("Accuracy")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+# Track the loss over each round to observe convergence.
+
+def plot_loss_over_rounds(losses):
+    rounds = list(range(1, len(losses) + 1))
+    plt.plot(rounds, losses, label="Training Loss", color='red', marker='o')
+    plt.title("Loss over Rounds")
+    plt.xlabel("Round")
+    plt.ylabel("Loss")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+# Helps visualize quantity skew among clients.
+
+def plot_client_sample_counts(client_data_dict):
+    counts = {client: len(data) for client, data in client_data_dict.items()}
+    plt.bar(counts.keys(), counts.values(), color='skyblue')
+    plt.title("Samples per Client")
+    plt.ylabel("Number of Samples")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
     plt.show()

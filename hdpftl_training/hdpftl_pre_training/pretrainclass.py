@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
 from hdpftl_utility.config import input_dim, pretrain_classes, EPOCH_DIR_PRE, EPOCH_FILE_PRE
-from hdpftl_utility.utils import setup_device, make_dir
+from hdpftl_utility.utils import setup_device
 
 
 def extract_priors(model):

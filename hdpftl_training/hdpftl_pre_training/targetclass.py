@@ -15,14 +15,13 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
+from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
 from hdpftl_utility.config import input_dim, target_classes, FINETUNE_MODEL_PATH, EPOCH_DIR_FINE, EPOCH_FILE_FINE
 from hdpftl_utility.utils import setup_device
 
-
-from sklearn.model_selection import train_test_split
 
 def target_class():
     print("\n=== Fine-tuning Phase ===")
@@ -104,7 +103,7 @@ def target_class():
         val_acc = 100 * val_correct / val_total
         epoch_losses.append(avg_loss)
 
-        print(f"Epoch [{epoch+1}/10] - Loss: {avg_loss:.4f} - Train Acc: {train_acc:.2f}% - Val Acc: {val_acc:.2f}%")
+        print(f"Epoch [{epoch + 1}/10] - Loss: {avg_loss:.4f} - Train Acc: {train_acc:.2f}% - Val Acc: {val_acc:.2f}%")
 
         # Save best model
         if val_acc > best_val_acc:

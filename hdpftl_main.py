@@ -11,13 +11,11 @@
 -------------------------------------------------
 """
 import os
+import tkinter as tk
 import warnings
 
 import numpy as np
 import torch
-import tkinter as tk
-from tkinter import messagebox
-import matplotlib.pyplot as plt
 
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model, evaluate_global_model_fromfile
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client, \
@@ -45,6 +43,11 @@ if __name__ == "__main__":
     safe_log("[1]Data preprocessing completed.")
     device = setup_device()
     num_classes = len(torch.unique(y_train))
+    """
+    dirichlet_partition is a standard technique to simulate non-IID data — 
+    and it's commonly used in federated learning experiments to control the degree of 
+    heterogeneity among clients.
+    """
     client_partitions = dirichlet_partition(X_train, y_train, num_classes, alpha=0.5)
     client_partitions_test = dirichlet_partition(X_test, y_test, num_classes, alpha=0.5)
     safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
@@ -99,15 +102,14 @@ if __name__ == "__main__":
         outputs = global_model(X_test.to(device))
         _, predictions = torch.max(outputs, 1)
     num_classes = max(y_test.max(), predictions.cpu().max()).item() + 1
+    print("Number of classes:::" + num_classes)
+    # plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
 
-    #plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
-
-    #plot_training_loss(losses=np.load(EPOCH_FILE_PRE), label='Pre Epoch Losses')
-    #plot_training_loss(losses=np.load(EPOCH_FILE_FINE), label='Fine Tuning Epoch Losses')
-    #plot_accuracy_comparison(client_accs, personalised_acc)
-    #plot_client_accuracies(client_accs, global_acc=global_acc, title="Per-Client vs Global Model Accuracy")
-    #plot_personalized_vs_global(personalised_acc, global_acc)
-
+    # plot_training_loss(losses=np.load(EPOCH_FILE_PRE), label='Pre Epoch Losses')
+    # plot_training_loss(losses=np.load(EPOCH_FILE_FINE), label='Fine Tuning Epoch Losses')
+    # plot_accuracy_comparison(client_accs, personalised_acc)
+    # plot_client_accuracies(client_accs, global_acc=global_acc, title="Per-Client vs Global Model Accuracy")
+    # plot_personalized_vs_global(personalised_acc, global_acc)
 
     # GUI setup
     root = tk.Tk()
@@ -117,12 +119,23 @@ if __name__ == "__main__":
     tk.Label(root, text="Choose a Plot Type", font=("Arial", 16)).pack(pady=10)
 
     # Buttons for each plot type
-    tk.Button(root, text="Confusion Matrix", width=20, command=lambda: plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)], normalize=True)).pack(pady=5)
-    tk.Button(root, text="Pre Epoch Losses", width=20, command=lambda: plot_training_loss(losses=np.load(EPOCH_FILE_PRE), name = 'epoch_loss_pre.png',label='Pre Epoch Losses')).pack(pady=5)
-    tk.Button(root, text="Fine Tuning Epoch Losses", width=20, command=lambda: plot_training_loss(losses=np.load(EPOCH_FILE_FINE), name = 'epoch_loss_fine.png', label='Fine Tuning Epoch Losses')).pack(pady=5)
-    tk.Button(root, text="Global/Personalized Acc/Client", width=20, command=lambda: plot_accuracy_comparison(client_accs, personalised_acc)).pack(pady=5)
-    tk.Button(root, text="Per-Client Accuracy", width=20, command=lambda: plot_client_accuracies(client_accs, global_acc=global_acc, title="Per-Client vs Global Model Accuracy")).pack(pady=5)
-    tk.Button(root, text="Client Acc: Personalized/Global", width=20, command=lambda: plot_personalized_vs_global(personalised_acc, global_acc)).pack(pady=5)
+    tk.Button(root, text="Confusion Matrix", width=20,
+              command=lambda: plot_confusion_matrix(y_true=y_test, y_pred=predictions,
+                                                    class_names=[str(i) for i in range(num_classes)],
+                                                    normalize=True)).pack(pady=5)
+    tk.Button(root, text="Pre Epoch Losses", width=20,
+              command=lambda: plot_training_loss(losses=np.load(EPOCH_FILE_PRE), name='epoch_loss_pre.png',
+                                                 label='Pre Epoch Losses')).pack(pady=5)
+    tk.Button(root, text="Fine Tuning Epoch Losses", width=20,
+              command=lambda: plot_training_loss(losses=np.load(EPOCH_FILE_FINE), name='epoch_loss_fine.png',
+                                                 label='Fine Tuning Epoch Losses')).pack(pady=5)
+    tk.Button(root, text="Global/Personalized Acc/Client", width=20,
+              command=lambda: plot_accuracy_comparison(client_accs, personalised_acc)).pack(pady=5)
+    tk.Button(root, text="Per-Client Accuracy", width=20,
+              command=lambda: plot_client_accuracies(client_accs, global_acc=global_acc,
+                                                     title="Per-Client vs Global Model Accuracy")).pack(pady=5)
+    tk.Button(root, text="Client Acc: Personalized/Global", width=20,
+              command=lambda: plot_personalized_vs_global(personalised_acc, global_acc)).pack(pady=5)
 
     root.mainloop()
     safe_log("===========================================================================")
