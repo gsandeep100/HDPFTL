@@ -75,4 +75,3 @@ def pretrain_class():
     # Force flush to disk (optional)
     with open(PRE_MODEL_PATH, 'rb') as f:
         os.fsync(f.fileno())
-

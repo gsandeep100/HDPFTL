@@ -1,10 +1,8 @@
-import numpy as np
 import torch
 from sklearn.model_selection import train_test_split
 
-
 # ✅ Reduce to 10% of the original hdpftl_data:
-import numpy as np
+
 
 def random_downsample(X, y, fraction=0.1, seed=None):
     """
@@ -32,7 +30,6 @@ def random_downsample(X, y, fraction=0.1, seed=None):
     return X[indices], y[indices]
 
 
-
 # Useful when you want the subset to maintain the same class proportions.
 def stratified_downsample(X, y, fraction=0.1):
     X_small, _, y_small, _ = train_test_split(
@@ -53,7 +50,6 @@ def class_specific_downsample(X, y, max_per_class=1000):
 
 
 import numpy as np
-from collections import defaultdict
 
 
 def create_non_iid_partitions(X, y, num_clients=5, fraction=0.5, seed=None):
@@ -101,4 +97,3 @@ def create_non_iid_partitions(X, y, num_clients=5, fraction=0.5, seed=None):
         client_data_dict[client_id] = (X_client, y_client)
 
     return client_data_dict
-

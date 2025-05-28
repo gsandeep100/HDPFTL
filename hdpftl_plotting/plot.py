@@ -1,10 +1,10 @@
 import os
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-import matplotlib.pyplot as plt
 
 from hdpftl_utility.config import PLOT_PATH
 
@@ -260,6 +260,7 @@ Visualize how labels are distributed for each client. Helps identify label skew.
 IID data: Each client’s bar looks roughly the same (class proportions balanced).
 Non-IID data: Bars differ strongly — some clients have dominant classes, others very different mixes.
 """
+
 
 def plot_class_distribution_per_client(client_data_dict):
     """

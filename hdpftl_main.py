@@ -50,7 +50,7 @@ if __name__ == "__main__":
     Smaller alpha → more skewed, clients have few classes dominating.
     Larger alpha → more uniform data distribution across clients.
     """
-    client_partitions,client_data_dict = dirichlet_partition(X_train, y_train, num_classes, alpha=0.3)
+    client_partitions, client_data_dict = dirichlet_partition(X_train, y_train, num_classes, alpha=0.3)
     client_partitions_test, client_data_dict_test = dirichlet_partition(X_test, y_test, num_classes, alpha=0.3)
     safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
 
@@ -83,7 +83,7 @@ if __name__ == "__main__":
     """During evaluation: Use  global model for generalization tests 
     Use personalized models to report per - client performance"""
 
-    safe_log("\n[10]Evaluating personalized per client...")
+    safe_log("\n[10]Evaluating personalized models per client on client partitioned data...")
     personalised_acc = evaluate_personalized_models_per_client(personalized_models, X_test, y_test,
                                                                client_partitions_test)
     # for cid, model in personalized_models.items():
