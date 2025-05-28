@@ -77,7 +77,7 @@ def evaluate_personalized_models_per_client(personalized_models, X, y, client_pa
     Evaluate the global model on each client's test data.
 """
 
-
+#Client accuracy for Global model
 def evaluate_per_client(global_model, X, y, client_partitions_test, batch_size=32):
     accs = {}
     device = setup_device()

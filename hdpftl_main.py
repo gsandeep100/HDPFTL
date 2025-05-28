@@ -91,10 +91,10 @@ if __name__ == "__main__":
     #                                                   y_test[client_partitions_test[cid]], client_partitions_test)
     #     safe_log(f"Client {cid} Accuracy for Personalized Model for clients: {acc[cid]:.4f}")
 
-    safe_log("[11]Evaluating global per client...")
+    safe_log("[11]Evaluating global model on client partitioned dataset per client...")
     client_accs = evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
 
-    safe_log("[12] Evaluating global model...")
+    safe_log("[12] Evaluating global model on global dataset...")
     global_acc = evaluate_global_model(global_model, X_test, y_test)
 
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
