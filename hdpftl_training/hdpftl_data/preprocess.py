@@ -10,6 +10,7 @@
    Python3 Version:   3.12.8
 -------------------------------------------------
 """
+import gc
 import glob
 import os
 from collections import Counter
@@ -44,9 +45,10 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
     print(f"Found {len(all_files)} CSV files in '{folder_path}'")
     combined_df = []
 
-    for file in all_files:
+    for count, file in enumerate(all_files, start=1):
         df = pd.read_csv(file)
         filename = os.path.basename(file).lower()
+        print(f"Count: {count}, Processing File: {file}")
 
         # Determine label from filename
         if any(kw in filename for kw in benign_keywords):
@@ -54,25 +56,81 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
         else:
             df['Label'] = 1  # assume attack if not explicitly benign
 
+        """
+        df = safe_clean_dataframe(
+            df,
+            chunk_size=5000,
+            invalid_values=[-999, '?'],
+            replace_with=np.nan,
+            log_progress=True
+        )
+        """
+        pd.set_option('future.no_silent_downcasting', True)
+        df.replace([np.inf, -np.inf], np.nan, inplace=True)
+        # df.replace([np.inf, -np.inf], np.nan, inplace=True)
+        # df.infer_objects(copy=False)
+        df.dropna(inplace=True)
+        df.drop_duplicates(inplace=True)
+        df.drop(['Flow ID', 'Source IP', 'Destination IP', 'Timestamp'], axis=1, inplace=True, errors="ignore")
+        df.columns = df.columns.str.strip()
+        # label_encoder = LabelEncoder()
+        # df['Label'] = label_encoder.fit_transform(df['Label'])
+        # label = 0 if 'benign' in os.path.basename(path).lower() else 1
+        # df['Label'] = label
+        df = df.select_dtypes(include=[np.number]).dropna(axis=1)
         combined_df.append(df)
+
     final_df = pd.concat(combined_df, ignore_index=True)
     return final_df
 
+def safe_clean_dataframe(df: pd.DataFrame,
+                         chunk_size: int = 10000,
+                         invalid_values=None,
+                         replace_with=np.nan,
+                         log_progress: bool = True,
+                         auto_gc: bool = True) -> pd.DataFrame:
+    """
+    Safely replaces infinities and other specified invalid values in a large DataFrame.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame to clean.
+        chunk_size (int): Rows to process per chunk (default: 10000).
+        invalid_values (list): Additional values to replace (e.g., [-999, '?']).
+        replace_with: Value to replace with (default: np.nan).
+        log_progress (bool): If True, print progress updates.
+        auto_gc (bool): If True, run garbage collection after each chunk.
+
+    Returns:
+        pd.DataFrame: Cleaned DataFrame.
+    """
+    # Default values to clean
+    if invalid_values is None:
+        invalid_values = []
+    values_to_replace = [np.inf, -np.inf] + invalid_values
+
+    df = df.copy()
+    total_rows = len(df)
+
+    for start in range(0, total_rows, chunk_size):
+        end = min(start + chunk_size, total_rows)
+        if log_progress:
+            print(f"Processing rows {start} to {end - 1}...")
+
+        df.iloc[start:end] = df.iloc[start:end].replace(values_to_replace, replace_with)
+
+        if auto_gc:
+            gc.collect()
+
+    if log_progress:
+        print("Cleaning complete.")
+
+    return df
 
 def preprocess_data(path):
     # all_files = glob.glob(path + "*.csv")
     # df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)
     df = load_and_label_all(path)
-    df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df.dropna(inplace=True)
-    df.drop_duplicates(inplace=True)
-    df.drop(['Flow ID', 'Source IP', 'Destination IP', 'Timestamp'], axis=1, inplace=True, errors="ignore")
-    df.columns = df.columns.str.strip()
-    # label_encoder = LabelEncoder()
-    # df['Label'] = label_encoder.fit_transform(df['Label'])
-    # label = 0 if 'benign' in os.path.basename(path).lower() else 1
-    # df['Label'] = label
-    df = df.select_dtypes(include=[np.number]).dropna(axis=1)
+    # Replace infinities and -999 or '?' with NaN
     scaler = MinMaxScaler()
     features = df.columns.difference(['Label'])
     df[features] = scaler.fit_transform(df[features])
