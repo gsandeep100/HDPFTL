@@ -1,21 +1,21 @@
-import logging
-
 import torch
 
-from hdpftl_personalised_client.personalize_clients import personalize_clients
+from hdpftl_training.hdpftl_personalised_client.personalize_clients import personalize_clients
+from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
 
 
-def hdpftl_bayesian(local_models, base_model_fn, X_train, y_train, client_partitions):
-    logging.info("\n[3] Aggregating Bayesian fleet hdpftl_models...")
-    global_model = aggregate_bayesian(local_models, base_model_fn)
+def aggregate_bayesian(local_models, base_model_fn, X_train, y_train, client_partitions):
+    global_model = hdpftl_bayesian(local_models, base_model_fn)
+    safe_log("[6] Aggregated Bayesian fleet hdpftl_models...")
 
-    logging.info("\n[5] Personalizing each client...")
     personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)
-    return personalized_models, global_model
+    safe_log("[7] Personalizing each client...")
+
+    return global_model, personalized_models
 
 
-def aggregate_bayesian(models, base_model_fn, epsilon=1e-8):
+def hdpftl_bayesian(models, base_model_fn, epsilon=1e-8):
     """
     Perform Bayesian aggregation of multiple PyTorch hdpftl_models using inverse variance weighting.
 
@@ -38,7 +38,7 @@ def aggregate_bayesian(models, base_model_fn, epsilon=1e-8):
     all_states = [{k: v.float().to(device) for k, v in m.state_dict().items()} for m in models]
 
     # Initialize new model
-    new_model = base_model_fn().to(device)
+    new_model = base_model_fn.to(device)
     new_state_dict = {}
 
     with torch.no_grad():

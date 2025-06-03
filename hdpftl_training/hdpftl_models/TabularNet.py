@@ -12,6 +12,16 @@
 """
 import torch.nn as nn
 
+from hdpftl_utility.config import input_dim, pretrain_classes, target_classes
+
+
+def create_model_fn_global():
+    return lambda: TabularNet(input_dim=input_dim, num_classes=pretrain_classes)
+
+
+def create_model_fn_personalized():
+    return TabularNet(input_dim=input_dim, num_classes=target_classes)
+
 
 class TabularNet(nn.Module):
     def __init__(self, input_dim, num_classes):

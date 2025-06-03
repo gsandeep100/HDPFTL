@@ -10,5 +10,4 @@ def personalize_clients(global_model, X, y, client_partitions, epochs=2, batch_s
     for cid, idx in enumerate(client_partitions):
         local_model = deepcopy(global_model).to(device)
         models[cid] = train_device_model(local_model, X[idx], y[idx], epochs=epochs, batch_size=batch_size)
-        # print(f"Personalized model trained for Client {cid}")
     return models

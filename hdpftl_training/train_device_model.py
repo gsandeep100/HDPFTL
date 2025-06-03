@@ -93,8 +93,8 @@ def train_device_model(
                     break
         else:
             # No validation
-            if verbose:
-                print(f"Epoch [{epoch + 1}/{epochs}] Train Loss: {avg_train_loss:.4f}")
+            # if verbose:
+            #     print(f"Epoch [{epoch + 1}/{epochs}] Train Loss: {avg_train_loss:.4f}")
             scheduler.step(avg_train_loss)
 
     return model

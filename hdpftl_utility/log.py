@@ -10,3 +10,8 @@ def setup_logging(log_to_file=True):
         format=log_format,
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+def safe_log(message):
+    if message and message.strip():
+        logging.info(message)
