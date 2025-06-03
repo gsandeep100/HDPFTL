@@ -103,7 +103,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         outputs = global_model(X_test.to(device))
         _, predictions = torch.max(outputs, 1)
-    num_classes = max(y_test.max(), predictions.cpu().max()).item() + 1
+    num_classes = int(max(y_test.max().item(), predictions.cpu().max().item()) + 1)
     print("Number of classes:::", num_classes)
     # plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
 
@@ -126,7 +126,7 @@ if __name__ == "__main__":
 
     tk.Button(root, text="Confusion Matrix", width=20,
               command=lambda: plot_confusion_matrix(y_true=y_test, y_pred=predictions,
-                                                    class_names=[str(i) for i in range(num_classes)],
+                                                    class_names=[str(i) for i in range(int(num_classes))],
                                                     normalize=True)).pack(pady=5)
     tk.Button(root, text="Pre Epoch Losses", width=20,
               command=lambda: plot_training_loss(losses=np.load(EPOCH_FILE_PRE), name='epoch_loss_pre.png',

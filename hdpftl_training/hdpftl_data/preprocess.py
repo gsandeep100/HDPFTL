@@ -150,9 +150,17 @@ def preprocess_data(path):
     #     ('svm_smote', SVMSMOTE(random_state=42)),
     #     ('smote_enn', SMOTEENN(random_state=42))
     # ])
-    X_final, y_final = safe_smote(X_small, y_small)
+    smote_result = safe_smote(X_small, y_small)
+    if smote_result is None:
+        X_final, y_final = X_small, y_small
+    elif isinstance(smote_result, tuple) and len(smote_result) >= 2:
+        X_final, y_final = smote_result[:2]
+    else:
+        X_final, y_final = X_small, y_small
     # Scale features
     scaler = StandardScaler()
+    if isinstance(X_final, pd.Series):
+        X_final = X_final.to_frame()
     X = scaler.fit_transform(X_final)
     X_train, X_test, y_train, y_test = train_test_split(X, y_final, test_size=0.2, random_state=42, stratify=y_final)
     # Convert to PyTorch tensors
@@ -163,6 +171,7 @@ def preprocess_data(path):
     return X_train_tensor, X_test_tensor, y_train_tensor, y_test_tensor
 
 
+"""
 def preprocess_data_small(csv_path, test_size=0.2):
     # Load hdpftl_dataset
     df = pd.read_csv(csv_path + "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv", low_memory=False)
@@ -186,7 +195,7 @@ def preprocess_data_small(csv_path, test_size=0.2):
     y_encoded = le.fit_transform(y)
 
     # Optional: show label mapping
-    print("Label mapping:", dict(zip(le.classes_, le.transform(le.classes_))))
+    print("Label mapping:", dict(zip(le.classes_, le.transform(le.classes_).tolist())))
 
     # Feature scaling
     scaler = StandardScaler()
@@ -204,3 +213,4 @@ def preprocess_data_small(csv_path, test_size=0.2):
     y_test = torch.tensor(y_test, dtype=torch.long)
 
     return X_train, X_test, y_train, y_test
+    """
