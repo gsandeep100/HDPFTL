@@ -100,9 +100,17 @@ def hybrid_balance(X, y):
         warnings.warn(f"Hybrid balancing failed: {e}")
         return X, y
 
-
 # 🎯 Master Function
 # 🎯 Master function with pre-sampling
+
+    """AI is creating summary for 
+    Summary Table
+'pca_smote'	PCA + SMOTE (faster, low-dimensional)
+'hybrid'	Undersample + SMOTE (original features)
+'smote_only'	SMOTE only (no PCA)
+'none'	No resampling, just profiling    """
+
+
 def prepare_data(X, y, strategy='pca_smote', n_components=30, pre_sample=False, sample_fraction=0.1):
     print("📊 Running prepare_data with strategy:", strategy)
 
@@ -189,11 +197,11 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
 
 
 def safe_clean_dataframe(df: pd.DataFrame,
-                         chunk_size: int = 10000,
+                         chunk_size: int=10000,
                          invalid_values=None,
                          replace_with=np.nan,
-                         log_progress: bool = True,
-                         auto_gc: bool = True) -> pd.DataFrame:
+                         log_progress: bool=True,
+                         auto_gc: bool=True) -> pd.DataFrame:
     """
     Safely replaces infinities and other specified invalid values in a large DataFrame.
 
@@ -244,8 +252,8 @@ def preprocess_data(path, writer=None):
     X, y = df[features], df['Label']
 
     # downsampling
-    with named_timer("downsample", writer, tag="downsample"):
-        X_small, y_small = stratified_downsample(X, y, fraction=0.2)
+    # with named_timer("downsample", writer, tag="downsample"):
+     #   X_small, y_small = stratified_downsample(X, y, fraction=0.2)
 
     # print(df.columns)
 
@@ -260,7 +268,7 @@ def preprocess_data(path, writer=None):
     # ])
     with named_timer("safe_smote", writer, tag="safe_smote"):
         # Call the function with your dataset
-        X_final, y_final = prepare_data(X, y, strategy='hybrid', pre_sample=True, sample_fraction=0.2)
+        X_final, y_final = prepare_data(X, y, strategy='hybrid')
         """
         smote_result = safe_smote(X_small, y_small)
         if smote_result is None:
@@ -284,7 +292,6 @@ def preprocess_data(path, writer=None):
     y_train_tensor = torch.tensor(y_train, dtype=torch.long)
     y_test_tensor = torch.tensor(y_test.to_numpy(), dtype=torch.long)
     return X_train_tensor, X_test_tensor, y_train_tensor, y_test_tensor
-
 
 """
 def preprocess_data_small(csv_path, test_size=0.2):

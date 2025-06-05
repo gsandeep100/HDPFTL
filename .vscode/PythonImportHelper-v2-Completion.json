@@ -1,49 +1,5 @@
 [
     {
-        "label": "runpy",
-        "kind": 6,
-        "isExtraImport": true,
-        "importPath": "runpy",
-        "description": "runpy",
-        "detail": "runpy",
-        "documentation": {}
-    },
-    {
-        "label": "annotations",
-        "importPath": "__future__",
-        "description": "__future__",
-        "isExtraImport": true,
-        "detail": "__future__",
-        "documentation": {}
-    },
-    {
-        "label": "os",
-        "kind": 6,
-        "isExtraImport": true,
-        "importPath": "os",
-        "description": "os",
-        "detail": "os",
-        "documentation": {}
-    },
-    {
-        "label": "site",
-        "kind": 6,
-        "isExtraImport": true,
-        "importPath": "site",
-        "description": "site",
-        "detail": "site",
-        "documentation": {}
-    },
-    {
-        "label": "sys",
-        "kind": 6,
-        "isExtraImport": true,
-        "importPath": "sys",
-        "description": "sys",
-        "detail": "sys",
-        "documentation": {}
-    },
-    {
         "label": "torch",
         "kind": 6,
         "isExtraImport": true,
@@ -158,38 +114,6 @@
     },
     {
         "label": "DataLoader",
-        "importPath": "torch.utils.data",
-        "description": "torch.utils.data",
-        "isExtraImport": true,
-        "detail": "torch.utils.data",
-        "documentation": {}
-    },
-    {
-        "label": "DataLoader",
-        "importPath": "torch.utils.data",
-        "description": "torch.utils.data",
-        "isExtraImport": true,
-        "detail": "torch.utils.data",
-        "documentation": {}
-    },
-    {
-        "label": "TensorDataset",
-        "importPath": "torch.utils.data",
-        "description": "torch.utils.data",
-        "isExtraImport": true,
-        "detail": "torch.utils.data",
-        "documentation": {}
-    },
-    {
-        "label": "DataLoader",
-        "importPath": "torch.utils.data",
-        "description": "torch.utils.data",
-        "isExtraImport": true,
-        "detail": "torch.utils.data",
-        "documentation": {}
-    },
-    {
-        "label": "TensorDataset",
         "importPath": "torch.utils.data",
         "description": "torch.utils.data",
         "isExtraImport": true,
@@ -629,6 +553,15 @@
         "documentation": {}
     },
     {
+        "label": "os",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "os",
+        "description": "os",
+        "detail": "os",
+        "documentation": {}
+    },
+    {
         "label": "matplotlib.pyplot",
         "kind": 6,
         "isExtraImport": true,
@@ -829,14 +762,6 @@
         "documentation": {}
     },
     {
-        "label": "StandardScaler",
-        "importPath": "sklearn.preprocessing",
-        "description": "sklearn.preprocessing",
-        "isExtraImport": true,
-        "detail": "sklearn.preprocessing",
-        "documentation": {}
-    },
-    {
         "label": "stratified_downsample",
         "importPath": "hdpftl_training.hdpftl_data.sampling",
         "description": "hdpftl_training.hdpftl_data.sampling",
@@ -929,15 +854,6 @@
         "documentation": {}
     },
     {
-        "label": "copy",
-        "kind": 6,
-        "isExtraImport": true,
-        "importPath": "copy",
-        "description": "copy",
-        "detail": "copy",
-        "documentation": {}
-    },
-    {
         "label": "deepcopy",
         "importPath": "copy",
         "description": "copy",
@@ -1010,15 +926,6 @@
         "documentation": {}
     },
     {
-        "label": "torch.optim",
-        "kind": 6,
-        "isExtraImport": true,
-        "importPath": "torch.optim",
-        "description": "torch.optim",
-        "detail": "torch.optim",
-        "documentation": {}
-    },
-    {
         "label": "Adam",
         "importPath": "torch.optim",
         "description": "torch.optim",
@@ -1066,15 +973,6 @@
         "description": "datetime",
         "isExtraImport": true,
         "detail": "datetime",
-        "documentation": {}
-    },
-    {
-        "label": "random",
-        "kind": 6,
-        "isExtraImport": true,
-        "importPath": "random",
-        "description": "random",
-        "detail": "random",
         "documentation": {}
     },
     {
@@ -1204,95 +1102,6 @@
         "description": "hdpftl_training.hdpftl_pre_training.targetclass",
         "isExtraImport": true,
         "detail": "hdpftl_training.hdpftl_pre_training.targetclass",
-        "documentation": {}
-    },
-    {
-        "label": "IsolationForest",
-        "importPath": "sklearn.ensemble",
-        "description": "sklearn.ensemble",
-        "isExtraImport": true,
-        "detail": "sklearn.ensemble",
-        "documentation": {}
-    },
-    {
-        "label": "bin_dir",
-        "kind": 5,
-        "importPath": ".venv.bin.activate_this",
-        "description": ".venv.bin.activate_this",
-        "peekOfCode": "bin_dir = os.path.dirname(abs_file)\nbase = bin_dir[: -len('bin') - 1]  # strip away the bin part from the __file__, plus the path separator\n# prepend bin to PATH (this file is inside the bin directory)\nos.environ[\"PATH\"] = os.pathsep.join([bin_dir, *os.environ.get(\"PATH\", \"\").split(os.pathsep)])\nos.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = '' or os.path.basename(base)\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))",
-        "detail": ".venv.bin.activate_this",
-        "documentation": {}
-    },
-    {
-        "label": "base",
-        "kind": 5,
-        "importPath": ".venv.bin.activate_this",
-        "description": ".venv.bin.activate_this",
-        "peekOfCode": "base = bin_dir[: -len('bin') - 1]  # strip away the bin part from the __file__, plus the path separator\n# prepend bin to PATH (this file is inside the bin directory)\nos.environ[\"PATH\"] = os.pathsep.join([bin_dir, *os.environ.get(\"PATH\", \"\").split(os.pathsep)])\nos.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = '' or os.path.basename(base)\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path.decode(\"utf-8\") if '' else path)",
-        "detail": ".venv.bin.activate_this",
-        "documentation": {}
-    },
-    {
-        "label": "os.environ[\"PATH\"]",
-        "kind": 5,
-        "importPath": ".venv.bin.activate_this",
-        "description": ".venv.bin.activate_this",
-        "peekOfCode": "os.environ[\"PATH\"] = os.pathsep.join([bin_dir, *os.environ.get(\"PATH\", \"\").split(os.pathsep)])\nos.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = '' or os.path.basename(base)\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path.decode(\"utf-8\") if '' else path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix",
-        "detail": ".venv.bin.activate_this",
-        "documentation": {}
-    },
-    {
-        "label": "os.environ[\"VIRTUAL_ENV\"]",
-        "kind": 5,
-        "importPath": ".venv.bin.activate_this",
-        "description": ".venv.bin.activate_this",
-        "peekOfCode": "os.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = '' or os.path.basename(base)\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path.decode(\"utf-8\") if '' else path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
-        "detail": ".venv.bin.activate_this",
-        "documentation": {}
-    },
-    {
-        "label": "os.environ[\"VIRTUAL_ENV_PROMPT\"]",
-        "kind": 5,
-        "importPath": ".venv.bin.activate_this",
-        "description": ".venv.bin.activate_this",
-        "peekOfCode": "os.environ[\"VIRTUAL_ENV_PROMPT\"] = '' or os.path.basename(base)\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path.decode(\"utf-8\") if '' else path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
-        "detail": ".venv.bin.activate_this",
-        "documentation": {}
-    },
-    {
-        "label": "prev_length",
-        "kind": 5,
-        "importPath": ".venv.bin.activate_this",
-        "description": ".venv.bin.activate_this",
-        "peekOfCode": "prev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path.decode(\"utf-8\") if '' else path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
-        "detail": ".venv.bin.activate_this",
-        "documentation": {}
-    },
-    {
-        "label": "sys.path[:]",
-        "kind": 5,
-        "importPath": ".venv.bin.activate_this",
-        "description": ".venv.bin.activate_this",
-        "peekOfCode": "sys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
-        "detail": ".venv.bin.activate_this",
-        "documentation": {}
-    },
-    {
-        "label": "sys.real_prefix",
-        "kind": 5,
-        "importPath": ".venv.bin.activate_this",
-        "description": ".venv.bin.activate_this",
-        "peekOfCode": "sys.real_prefix = sys.prefix\nsys.prefix = base",
-        "detail": ".venv.bin.activate_this",
-        "documentation": {}
-    },
-    {
-        "label": "sys.prefix",
-        "kind": 5,
-        "importPath": ".venv.bin.activate_this",
-        "description": ".venv.bin.activate_this",
-        "peekOfCode": "sys.prefix = base",
-        "detail": ".venv.bin.activate_this",
         "documentation": {}
     },
     {
@@ -1615,7 +1424,7 @@
         "kind": 2,
         "importPath": "hdpftl_training.hdpftl_data.preprocess",
         "description": "hdpftl_training.hdpftl_data.preprocess",
-        "peekOfCode": "def safe_clean_dataframe(df: pd.DataFrame,\n                         chunk_size: int = 10000,\n                         invalid_values=None,\n                         replace_with=np.nan,\n                         log_progress: bool = True,\n                         auto_gc: bool = True) -> pd.DataFrame:\n    \"\"\"\n    Safely replaces infinities and other specified invalid values in a large DataFrame.\n    Args:\n        df (pd.DataFrame): The input DataFrame to clean.",
+        "peekOfCode": "def safe_clean_dataframe(df: pd.DataFrame,\n                         chunk_size: int=10000,\n                         invalid_values=None,\n                         replace_with=np.nan,\n                         log_progress: bool=True,\n                         auto_gc: bool=True) -> pd.DataFrame:\n    \"\"\"\n    Safely replaces infinities and other specified invalid values in a large DataFrame.\n    Args:\n        df (pd.DataFrame): The input DataFrame to clean.",
         "detail": "hdpftl_training.hdpftl_data.preprocess",
         "documentation": {}
     },
@@ -2085,159 +1894,6 @@
         "description": "hdpftl_utility.utils",
         "peekOfCode": "def time_resampling(smote_type, X, y, k=5):\n    smote_classes = {\n        'smote': SMOTE,\n        'svm': SVMSMOTE,\n        'kmeans': KMeansSMOTE\n    }\n    sampler = smote_classes[smote_type](k_neighbors=k, random_state=42)\n    start = time.time()\n    X_res, y_res = sampler.fit_resample(X, y)\n    print(f\"⏱ {smote_type.upper()} took {time.time() - start:.2f} seconds\")",
         "detail": "hdpftl_utility.utils",
-        "documentation": {}
-    },
-    {
-        "label": "TabularNet",
-        "kind": 6,
-        "importPath": "full_flow_tobedeleted",
-        "description": "full_flow_tobedeleted",
-        "peekOfCode": "class TabularNet(nn.Module):\n    def __init__(self, input_dim=3, output_dim=2):\n        super(TabularNet, self).__init__()\n        self.net = nn.Sequential(\n            nn.Linear(input_dim, 16),\n            nn.ReLU(),\n            nn.Linear(16, output_dim)\n        )\n    def forward(self, x):\n        return self.net(x)",
-        "detail": "full_flow_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "train_device_model",
-        "kind": 2,
-        "importPath": "full_flow_tobedeleted",
-        "description": "full_flow_tobedeleted",
-        "peekOfCode": "def train_device_model(base_model_fn, dataloader, device):\n    model = base_model_fn().to(device)\n    model.train()\n    optimizer = optim.Adam(model.parameters(), lr=0.005)\n    criterion = nn.CrossEntropyLoss()\n    for epoch in range(2):  # Tune as needed\n        for X, y in dataloader:\n            X, y = X.to(device), y.to(device)\n            optimizer.zero_grad()\n            loss = criterion(model(X), y)",
-        "detail": "full_flow_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "aggregate_fleet_models",
-        "kind": 2,
-        "importPath": "full_flow_tobedeleted",
-        "description": "full_flow_tobedeleted",
-        "peekOfCode": "def aggregate_fleet_models(models):\n    avg_model = copy.deepcopy(models[0])\n    for key in avg_model:\n        for i in range(1, len(models)):\n            avg_model[key] += models[i][key]\n        avg_model[key] = avg_model[key] / len(models)\n    return avg_model\n# ========== 4. Transfer + Personalize ==========\ndef transfer_and_personalize(global_model_weights, target_loader, base_model_fn, device):\n    model = base_model_fn().to(device)",
-        "detail": "full_flow_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "transfer_and_personalize",
-        "kind": 2,
-        "importPath": "full_flow_tobedeleted",
-        "description": "full_flow_tobedeleted",
-        "peekOfCode": "def transfer_and_personalize(global_model_weights, target_loader, base_model_fn, device):\n    model = base_model_fn().to(device)\n    model.load_state_dict(global_model_weights)\n    # Freeze all layers except last\n    for param in list(model.parameters())[:-2]:  # Freeze early layers\n        param.requires_grad = False\n    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001)\n    criterion = nn.CrossEntropyLoss()\n    model.train()\n    for epoch in range(1):  # Fine-tuning",
-        "detail": "full_flow_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "hdpftl_pipeline",
-        "kind": 2,
-        "importPath": "full_flow_tobedeleted",
-        "description": "full_flow_tobedeleted",
-        "peekOfCode": "def hdpftl_pipeline(fleet_dataloaders, base_model_fn, device):\n    fleet_models = []\n    for fleet_id, device_loaders in enumerate(fleet_dataloaders):\n        print(f\"\\n🚛 Fleet {fleet_id + 1} - Aggregating Device Models\")\n        device_models = []\n        for loader in device_loaders:\n            weights = train_device_model(base_model_fn, loader, device)\n            device_models.append(weights)\n        fleet_model = aggregate_fleet_models(device_models)\n        fleet_models.append(fleet_model)",
-        "detail": "full_flow_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "create_fleet_data",
-        "kind": 2,
-        "importPath": "full_flow_tobedeleted",
-        "description": "full_flow_tobedeleted",
-        "peekOfCode": "def create_fleet_data(num_fleets=200, devices_per_fleet=300, samples_per_device=200):\n    fleet_dataloaders = []\n    for _ in range(num_fleets):\n        fleet = []\n        for _ in range(devices_per_fleet):\n            X = torch.tensor(np.random.normal(0, 1, (samples_per_device, 3)), dtype=torch.float32)\n            y = torch.tensor(np.random.choice([0, 1], size=(samples_per_device,), p=[0.9, 0.1]), dtype=torch.long)\n            dataset = TensorDataset(X, y)\n            loader = DataLoader(dataset, batch_size=32, shuffle=True)\n            fleet.append(loader)",
-        "detail": "full_flow_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "evaluate",
-        "kind": 2,
-        "importPath": "full_flow_tobedeleted",
-        "description": "full_flow_tobedeleted",
-        "peekOfCode": "def evaluate(model, device):\n    model.eval()\n    with torch.no_grad():\n        X = torch.tensor(np.random.normal(0, 1, (100, 3)), dtype=torch.float32).to(device)\n        y = torch.tensor(np.random.choice([0, 1], size=(100,)), dtype=torch.long).to(device)\n        outputs = model(X)\n        preds = torch.argmax(outputs, dim=1)\n        acc = (preds == y).float().mean()\n        print(f\"\\n✅ Personalized Model Test Accuracy: {acc.item():.2f}\")\n# ========== 8. Main ==========",
-        "detail": "full_flow_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "main",
-        "kind": 2,
-        "importPath": "full_flow_tobedeleted",
-        "description": "full_flow_tobedeleted",
-        "peekOfCode": "def main():\n    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\n    print(\"📡 Running HDPFTL Pipeline for IIoT...\\n\")\n    fleet_dataloaders = create_fleet_data()\n    personalized_model = hdpftl_pipeline(fleet_dataloaders, TabularNet, device)\n    evaluate(personalized_model, device)\nif __name__ == \"__main__\":\n    main()",
-        "detail": "full_flow_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "TabularNet",
-        "kind": 6,
-        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
-        "description": "hdpftl_pipeline_dummy_tobedeleted",
-        "peekOfCode": "class TabularNet(nn.Module):\n    def __init__(self, input_dim=3, output_dim=2):\n        super(TabularNet, self).__init__()\n        self.net = nn.Sequential(\n            nn.Linear(input_dim, 16),\n            nn.ReLU(),\n            nn.Linear(16, output_dim)\n        )\n    def forward(self, x):\n        return self.net(x)",
-        "detail": "hdpftl_pipeline_dummy_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "train_device_model",
-        "kind": 2,
-        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
-        "description": "hdpftl_pipeline_dummy_tobedeleted",
-        "peekOfCode": "def train_device_model(base_model_fn, dataloader, device):\n    model = base_model_fn().to(device)\n    model.train()\n    optimizer = optim.Adam(model.parameters(), lr=0.005)\n    criterion = nn.CrossEntropyLoss()\n    for epoch in range(2):  # Tune as needed\n        for X, y in dataloader:\n            X, y = X.to(device), y.to(device)\n            optimizer.zero_grad()\n            loss = criterion(model(X), y)",
-        "detail": "hdpftl_pipeline_dummy_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "aggregate_fleet_models",
-        "kind": 2,
-        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
-        "description": "hdpftl_pipeline_dummy_tobedeleted",
-        "peekOfCode": "def aggregate_fleet_models(models):\n    avg_model = copy.deepcopy(models[0])\n    for key in avg_model:\n        for i in range(1, len(models)):\n            avg_model[key] += models[i][key]\n        avg_model[key] = avg_model[key] / len(models)\n    return avg_model\n# ========== 4. Transfer + Personalize ==========\ndef transfer_and_personalize(global_model_weights, target_loader, base_model_fn, device):\n    model = base_model_fn().to(device)",
-        "detail": "hdpftl_pipeline_dummy_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "transfer_and_personalize",
-        "kind": 2,
-        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
-        "description": "hdpftl_pipeline_dummy_tobedeleted",
-        "peekOfCode": "def transfer_and_personalize(global_model_weights, target_loader, base_model_fn, device):\n    model = base_model_fn().to(device)\n    model.load_state_dict(global_model_weights)\n    # Freeze all layers except last\n    for param in list(model.parameters())[:-2]:  # Freeze early layers\n        param.requires_grad = False\n    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001)\n    criterion = nn.CrossEntropyLoss()\n    model.train()\n    for epoch in range(1):  # Fine-tuning",
-        "detail": "hdpftl_pipeline_dummy_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "hdpftl_pipeline_dummy",
-        "kind": 2,
-        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
-        "description": "hdpftl_pipeline_dummy_tobedeleted",
-        "peekOfCode": "def hdpftl_pipeline_dummy(fleet_dataloaders, base_model_fn, device):\n    fleet_models = []\n    for fleet_id, device_loaders in enumerate(fleet_dataloaders):\n        print(f\"\\n🚛 Fleet {fleet_id + 1} - Aggregating Device Models\")\n        device_models = []\n        for loader in device_loaders:\n            weights = train_device_model(base_model_fn, loader, device)\n            device_models.append(weights)\n        fleet_model = aggregate_fleet_models(device_models)\n        fleet_models.append(fleet_model)",
-        "detail": "hdpftl_pipeline_dummy_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "detect_anomalies_isolation_forest",
-        "kind": 2,
-        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
-        "description": "hdpftl_pipeline_dummy_tobedeleted",
-        "peekOfCode": "def detect_anomalies_isolation_forest(X_np):\n    scaler = StandardScaler()\n    X_scaled = scaler.fit_transform(X_np)\n    iso_forest = IsolationForest(contamination=0.05, random_state=42)\n    preds = iso_forest.fit_predict(X_scaled)\n    # Keep only normal samples (pred = 1)\n    mask = preds == 1\n    return X_np[mask], mask\ndef create_fleet_data(num_fleets=2, devices_per_fleet=3, samples_per_device=200, input_dim=3):\n    fleet_dataloaders = []",
-        "detail": "hdpftl_pipeline_dummy_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "create_fleet_data",
-        "kind": 2,
-        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
-        "description": "hdpftl_pipeline_dummy_tobedeleted",
-        "peekOfCode": "def create_fleet_data(num_fleets=2, devices_per_fleet=3, samples_per_device=200, input_dim=3):\n    fleet_dataloaders = []\n    for _ in range(num_fleets):\n        fleet = []\n        for _ in range(devices_per_fleet):\n            # Simulate device hdpftl_data\n            X_np = np.random.normal(0, 1, (samples_per_device, input_dim))\n            y_np = np.random.choice([0, 1], size=(samples_per_device,), p=[0.9, 0.1])  # Simulated labels\n            # Apply anomaly detection\n            X_clean, valid_mask = detect_anomalies_isolation_forest(X_np)",
-        "detail": "hdpftl_pipeline_dummy_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "evaluate",
-        "kind": 2,
-        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
-        "description": "hdpftl_pipeline_dummy_tobedeleted",
-        "peekOfCode": "def evaluate(model, device):\n    model.eval()\n    with torch.no_grad():\n        X = torch.tensor(np.random.normal(0, 1, (100, 3)), dtype=torch.float32).to(device)\n        y = torch.tensor(np.random.choice([0, 1], size=(100,)), dtype=torch.long).to(device)\n        outputs = model(X)\n        preds = torch.argmax(outputs, dim=1)\n        acc = (preds == y).float().mean()\n        print(f\"\\n✅ Personalized Model Test Accuracy: {acc.item():.2f}\")\n# ========== 8. Main ==========",
-        "detail": "hdpftl_pipeline_dummy_tobedeleted",
-        "documentation": {}
-    },
-    {
-        "label": "main",
-        "kind": 2,
-        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
-        "description": "hdpftl_pipeline_dummy_tobedeleted",
-        "peekOfCode": "def main():\n    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\n    print(\"📡 Running HDPFTL Pipeline for IIoT...\\n\")\n    fleet_dataloaders = create_fleet_data()\n    personalized_model = hdpftl_pipeline_dummy(fleet_dataloaders, TabularNet, device)\n    evaluate(personalized_model, device)\nif __name__ == \"__main__\":\n    main()",
-        "detail": "hdpftl_pipeline_dummy_tobedeleted",
         "documentation": {}
     }
 ]
