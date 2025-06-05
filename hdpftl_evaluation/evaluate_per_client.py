@@ -56,7 +56,7 @@ def evaluate_personalized_models_per_client(personalized_models, X, y, client_pa
         x_client = X[idx].to(device)
         y_client = y[idx].to(device)
 
-        loader = DataLoader(TensorDataset(x_client, y_client),BATCH_SIZE)
+        loader = DataLoader(TensorDataset(x_client, y_client), BATCH_SIZE)
 
         correct, total = 0, 0
         with torch.no_grad():

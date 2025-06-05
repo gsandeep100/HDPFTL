@@ -19,7 +19,8 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import BATCH_SIZE, input_dim, target_classes, FINETUNE_MODEL_PATH, EPOCH_DIR_FINE, EPOCH_FILE_FINE
+from hdpftl_utility.config import BATCH_SIZE, input_dim, target_classes, FINETUNE_MODEL_PATH, EPOCH_DIR_FINE, \
+    EPOCH_FILE_FINE
 from hdpftl_utility.utils import setup_device
 
 

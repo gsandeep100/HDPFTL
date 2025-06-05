@@ -95,7 +95,7 @@ if __name__ == "__main__":
     safe_log("\n[10]Evaluating personalized models per client on client partitioned data...")
     with named_timer("Evaluate Personalized Models", writer, tag="PersonalizedEval"):
         personalised_acc = evaluate_personalized_models_per_client(personalized_models, X_test, y_test,
-                                                               client_partitions_test)
+                                                                   client_partitions_test)
     # for cid, model in personalized_models.items():
     #     acc = evaluate_personalized_models_per_client(model, X_test[client_partitions_test[cid]],
     #                                                   y_test[client_partitions_test[cid]], client_partitions_test)

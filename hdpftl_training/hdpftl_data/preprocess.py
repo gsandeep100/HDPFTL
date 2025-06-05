@@ -13,25 +13,16 @@
 import gc
 import glob
 import os
-from collections import Counter
 from glob import glob
-import warnings
 
 import numpy as np
-import pandas as pd
 import torch
 from imblearn.over_sampling import SVMSMOTE
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
 from hdpftl_training.hdpftl_data.sampling import stratified_downsample
 from hdpftl_utility.utils import named_timer
-from imblearn.under_sampling import RandomUnderSampler
-from imblearn.pipeline import Pipeline
-from imblearn.over_sampling import SMOTE
-
-import pandas as pd
-import numpy as np
-from collections import Counter
 
 """
 🎯 What is PCA (Principal Component Analysis)?
@@ -42,7 +33,6 @@ Compressing data — like converting a full HD photo into a smaller version whil
 
 """
 
-
 from sklearn.decomposition import PCA
 from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import RandomUnderSampler
@@ -51,27 +41,30 @@ from collections import Counter
 import pandas as pd
 import warnings
 
+
 # 🔍 Step 0: Profile
 def profile_dataset(X, y):
     print("📐 Feature shape:")
     print(f"  ➤ X shape: {X.shape}")
-    
+
     print("\n📊 Class distribution:")
     counts = Counter(y)
     for label, count in counts.items():
         print(f"  ➤ Class {label}: {count} samples")
-    
+
     imbalance_ratio = max(counts.values()) / min(counts.values())
     print(f"\n⚖️  Imbalance Ratio: {imbalance_ratio:.2f}")
-    
+
     print("\n🔍 Data type inspection:")
     print(pd.DataFrame(X).dtypes.value_counts())
+
 
 # 🧪 Step 1: PCA
 def reduce_dim(X, n_components=30):
     print(f"\n🔧 Reducing dimensions from {X.shape[1]} → {n_components} using PCA")
     pca = PCA(n_components=n_components, random_state=42)
     return pca.fit_transform(X)
+
 
 # ⚖️ Step 2: SMOTE
 def fast_safe_smote(X, y, k_neighbors=5):
@@ -88,6 +81,7 @@ def fast_safe_smote(X, y, k_neighbors=5):
     if isinstance(result, tuple) and len(result) >= 2:
         return result[0], result[1]
     return result
+
 
 # 🌀 Step 3: Hybrid
 def hybrid_balance(X, y):
@@ -106,17 +100,18 @@ def hybrid_balance(X, y):
         warnings.warn(f"Hybrid balancing failed: {e}")
         return X, y
 
+
 # 🎯 Master Function
 # 🎯 Master function with pre-sampling
 def prepare_data(X, y, strategy='pca_smote', n_components=30, pre_sample=False, sample_fraction=0.1):
     print("📊 Running prepare_data with strategy:", strategy)
-    
+
     # Optional downsampling
     if pre_sample:
         X, y = stratified_downsample(X, y, fraction=sample_fraction)
-    
+
     profile_dataset(X, y)
-    
+
     if strategy == 'pca_smote':
         X_reduced = reduce_dim(X, n_components=n_components)
         X_final, y_final = fast_safe_smote(X_reduced, y)
@@ -129,10 +124,11 @@ def prepare_data(X, y, strategy='pca_smote', n_components=30, pre_sample=False, 
         X_final, y_final = X, y
     else:
         raise ValueError("❌ Invalid strategy. Choose from 'pca_smote', 'hybrid', 'smote_only', or 'none'.")
-    
+
     print("\n✅ Final shape:", X_final.shape)
     print("✅ Final class distribution:", Counter(y_final))
     return X_final, y_final
+
 
 def safe_smote(X, y):
     counts = Counter(y)
@@ -191,6 +187,7 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
     final_df = pd.concat(combined_df, ignore_index=True)
     return final_df
 
+
 def safe_clean_dataframe(df: pd.DataFrame,
                          chunk_size: int = 10000,
                          invalid_values=None,
@@ -233,6 +230,7 @@ def safe_clean_dataframe(df: pd.DataFrame,
         print("Cleaning complete.")
 
     return df
+
 
 def preprocess_data(path, writer=None):
     # all_files = glob.glob(path + "*.csv")
@@ -278,7 +276,8 @@ def preprocess_data(path, writer=None):
         X_final = X_final.to_frame()
     X = scaler.fit_transform(X_final)
     with named_timer("train_test_split", writer, tag="train_test_split"):
-        X_train, X_test, y_train, y_test = train_test_split(X, y_final, test_size=0.2, random_state=42, stratify=y_final)
+        X_train, X_test, y_train, y_test = train_test_split(X, y_final, test_size=0.2, random_state=42,
+                                                            stratify=y_final)
     # Convert to PyTorch tensors
     X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
     X_test_tensor = torch.tensor(X_test, dtype=torch.float32)

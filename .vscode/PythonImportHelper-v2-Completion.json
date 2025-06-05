@@ -1,0 +1,2243 @@
+[
+    {
+        "label": "runpy",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "runpy",
+        "description": "runpy",
+        "detail": "runpy",
+        "documentation": {}
+    },
+    {
+        "label": "annotations",
+        "importPath": "__future__",
+        "description": "__future__",
+        "isExtraImport": true,
+        "detail": "__future__",
+        "documentation": {}
+    },
+    {
+        "label": "os",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "os",
+        "description": "os",
+        "detail": "os",
+        "documentation": {}
+    },
+    {
+        "label": "site",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "site",
+        "description": "site",
+        "detail": "site",
+        "documentation": {}
+    },
+    {
+        "label": "sys",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "sys",
+        "description": "sys",
+        "detail": "sys",
+        "documentation": {}
+    },
+    {
+        "label": "torch",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch",
+        "description": "torch",
+        "detail": "torch",
+        "documentation": {}
+    },
+    {
+        "label": "nn",
+        "importPath": "torch",
+        "description": "torch",
+        "isExtraImport": true,
+        "detail": "torch",
+        "documentation": {}
+    },
+    {
+        "label": "nn",
+        "importPath": "torch",
+        "description": "torch",
+        "isExtraImport": true,
+        "detail": "torch",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "TensorDataset",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "TensorDataset",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "TensorDataset",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "TensorDataset",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "TensorDataset",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "TensorDataset",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "TensorDataset",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "TensorDataset",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "load_global_model",
+        "importPath": "hdpftl_evaluation.load_model",
+        "description": "hdpftl_evaluation.load_model",
+        "isExtraImport": true,
+        "detail": "hdpftl_evaluation.load_model",
+        "documentation": {}
+    },
+    {
+        "label": "create_model_fn_global",
+        "importPath": "hdpftl_training.hdpftl_models.TabularNet",
+        "description": "hdpftl_training.hdpftl_models.TabularNet",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_models.TabularNet",
+        "documentation": {}
+    },
+    {
+        "label": "create_model_fn_personalized",
+        "importPath": "hdpftl_training.hdpftl_models.TabularNet",
+        "description": "hdpftl_training.hdpftl_models.TabularNet",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_models.TabularNet",
+        "documentation": {}
+    },
+    {
+        "label": "TabularNet",
+        "importPath": "hdpftl_training.hdpftl_models.TabularNet",
+        "description": "hdpftl_training.hdpftl_models.TabularNet",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_models.TabularNet",
+        "documentation": {}
+    },
+    {
+        "label": "TabularNet",
+        "importPath": "hdpftl_training.hdpftl_models.TabularNet",
+        "description": "hdpftl_training.hdpftl_models.TabularNet",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_models.TabularNet",
+        "documentation": {}
+    },
+    {
+        "label": "GLOBAL_MODEL_PATH",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "BATCH_SIZE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "PERSONALISED_MODEL_PATH_TEMPLATE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "NUM_CLIENTS",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "PLOT_PATH",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "BATCH_SIZE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "input_dim",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "pretrain_classes",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "target_classes",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "BATCH_SIZE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "input_dim",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "pretrain_classes",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "EPOCH_DIR_PRE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "EPOCH_FILE_PRE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "PRE_MODEL_PATH",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "BATCH_SIZE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "input_dim",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "target_classes",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "FINETUNE_MODEL_PATH",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "EPOCH_DIR_FINE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "\\",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "NUM_CLIENTS",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "BATCH_SIZE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "OUTPUT_DATASET_ALL_DATA",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "GLOBAL_MODEL_PATH",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "EPOCH_FILE_FINE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "EPOCH_FILE_PRE",
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "safe_log",
+        "importPath": "hdpftl_utility.log",
+        "description": "hdpftl_utility.log",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.log",
+        "documentation": {}
+    },
+    {
+        "label": "safe_log",
+        "importPath": "hdpftl_utility.log",
+        "description": "hdpftl_utility.log",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.log",
+        "documentation": {}
+    },
+    {
+        "label": "safe_log",
+        "importPath": "hdpftl_utility.log",
+        "description": "hdpftl_utility.log",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.log",
+        "documentation": {}
+    },
+    {
+        "label": "safe_log",
+        "importPath": "hdpftl_utility.log",
+        "description": "hdpftl_utility.log",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.log",
+        "documentation": {}
+    },
+    {
+        "label": "safe_log",
+        "importPath": "hdpftl_utility.log",
+        "description": "hdpftl_utility.log",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.log",
+        "documentation": {}
+    },
+    {
+        "label": "setup_logging",
+        "importPath": "hdpftl_utility.log",
+        "description": "hdpftl_utility.log",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.log",
+        "documentation": {}
+    },
+    {
+        "label": "safe_log",
+        "importPath": "hdpftl_utility.log",
+        "description": "hdpftl_utility.log",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.log",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "named_timer",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "named_timer",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "named_timer",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "isExtraImport": true,
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "matplotlib.pyplot",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "matplotlib.pyplot",
+        "description": "matplotlib.pyplot",
+        "detail": "matplotlib.pyplot",
+        "documentation": {}
+    },
+    {
+        "label": "numpy",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "numpy",
+        "description": "numpy",
+        "detail": "numpy",
+        "documentation": {}
+    },
+    {
+        "label": "pandas",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "pandas",
+        "description": "pandas",
+        "detail": "pandas",
+        "documentation": {}
+    },
+    {
+        "label": "seaborn",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "seaborn",
+        "description": "seaborn",
+        "detail": "seaborn",
+        "documentation": {}
+    },
+    {
+        "label": "confusion_matrix",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "ConfusionMatrixDisplay",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "torch.nn.functional",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch.nn.functional",
+        "description": "torch.nn.functional",
+        "detail": "torch.nn.functional",
+        "documentation": {}
+    },
+    {
+        "label": "predictions",
+        "importPath": "result",
+        "description": "result",
+        "isExtraImport": true,
+        "detail": "result",
+        "documentation": {}
+    },
+    {
+        "label": "personalize_clients",
+        "importPath": "hdpftl_training.hdpftl_personalised_client.personalize_clients",
+        "description": "hdpftl_training.hdpftl_personalised_client.personalize_clients",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_personalised_client.personalize_clients",
+        "documentation": {}
+    },
+    {
+        "label": "personalize_clients",
+        "importPath": "hdpftl_training.hdpftl_personalised_client.personalize_clients",
+        "description": "hdpftl_training.hdpftl_personalised_client.personalize_clients",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_personalised_client.personalize_clients",
+        "documentation": {}
+    },
+    {
+        "label": "requests",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "requests",
+        "description": "requests",
+        "detail": "requests",
+        "documentation": {}
+    },
+    {
+        "label": "gc",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "gc",
+        "description": "gc",
+        "detail": "gc",
+        "documentation": {}
+    },
+    {
+        "label": "glob",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "glob",
+        "description": "glob",
+        "detail": "glob",
+        "documentation": {}
+    },
+    {
+        "label": "glob",
+        "importPath": "glob",
+        "description": "glob",
+        "isExtraImport": true,
+        "detail": "glob",
+        "documentation": {}
+    },
+    {
+        "label": "SVMSMOTE",
+        "importPath": "imblearn.over_sampling",
+        "description": "imblearn.over_sampling",
+        "isExtraImport": true,
+        "detail": "imblearn.over_sampling",
+        "documentation": {}
+    },
+    {
+        "label": "SMOTE",
+        "importPath": "imblearn.over_sampling",
+        "description": "imblearn.over_sampling",
+        "isExtraImport": true,
+        "detail": "imblearn.over_sampling",
+        "documentation": {}
+    },
+    {
+        "label": "SMOTE",
+        "importPath": "imblearn.over_sampling",
+        "description": "imblearn.over_sampling",
+        "isExtraImport": true,
+        "detail": "imblearn.over_sampling",
+        "documentation": {}
+    },
+    {
+        "label": "SVMSMOTE",
+        "importPath": "imblearn.over_sampling",
+        "description": "imblearn.over_sampling",
+        "isExtraImport": true,
+        "detail": "imblearn.over_sampling",
+        "documentation": {}
+    },
+    {
+        "label": "KMeansSMOTE",
+        "importPath": "imblearn.over_sampling",
+        "description": "imblearn.over_sampling",
+        "isExtraImport": true,
+        "detail": "imblearn.over_sampling",
+        "documentation": {}
+    },
+    {
+        "label": "train_test_split",
+        "importPath": "sklearn.model_selection",
+        "description": "sklearn.model_selection",
+        "isExtraImport": true,
+        "detail": "sklearn.model_selection",
+        "documentation": {}
+    },
+    {
+        "label": "train_test_split",
+        "importPath": "sklearn.model_selection",
+        "description": "sklearn.model_selection",
+        "isExtraImport": true,
+        "detail": "sklearn.model_selection",
+        "documentation": {}
+    },
+    {
+        "label": "train_test_split",
+        "importPath": "sklearn.model_selection",
+        "description": "sklearn.model_selection",
+        "isExtraImport": true,
+        "detail": "sklearn.model_selection",
+        "documentation": {}
+    },
+    {
+        "label": "MinMaxScaler",
+        "importPath": "sklearn.preprocessing",
+        "description": "sklearn.preprocessing",
+        "isExtraImport": true,
+        "detail": "sklearn.preprocessing",
+        "documentation": {}
+    },
+    {
+        "label": "StandardScaler",
+        "importPath": "sklearn.preprocessing",
+        "description": "sklearn.preprocessing",
+        "isExtraImport": true,
+        "detail": "sklearn.preprocessing",
+        "documentation": {}
+    },
+    {
+        "label": "StandardScaler",
+        "importPath": "sklearn.preprocessing",
+        "description": "sklearn.preprocessing",
+        "isExtraImport": true,
+        "detail": "sklearn.preprocessing",
+        "documentation": {}
+    },
+    {
+        "label": "stratified_downsample",
+        "importPath": "hdpftl_training.hdpftl_data.sampling",
+        "description": "hdpftl_training.hdpftl_data.sampling",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_data.sampling",
+        "documentation": {}
+    },
+    {
+        "label": "PCA",
+        "importPath": "sklearn.decomposition",
+        "description": "sklearn.decomposition",
+        "isExtraImport": true,
+        "detail": "sklearn.decomposition",
+        "documentation": {}
+    },
+    {
+        "label": "RandomUnderSampler",
+        "importPath": "imblearn.under_sampling",
+        "description": "imblearn.under_sampling",
+        "isExtraImport": true,
+        "detail": "imblearn.under_sampling",
+        "documentation": {}
+    },
+    {
+        "label": "Pipeline",
+        "importPath": "imblearn.pipeline",
+        "description": "imblearn.pipeline",
+        "isExtraImport": true,
+        "detail": "imblearn.pipeline",
+        "documentation": {}
+    },
+    {
+        "label": "Counter",
+        "importPath": "collections",
+        "description": "collections",
+        "isExtraImport": true,
+        "detail": "collections",
+        "documentation": {}
+    },
+    {
+        "label": "warnings",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "warnings",
+        "description": "warnings",
+        "detail": "warnings",
+        "documentation": {}
+    },
+    {
+        "label": "pyro",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "pyro",
+        "description": "pyro",
+        "detail": "pyro",
+        "documentation": {}
+    },
+    {
+        "label": "pyro.distributions",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "pyro.distributions",
+        "description": "pyro.distributions",
+        "detail": "pyro.distributions",
+        "documentation": {}
+    },
+    {
+        "label": "PyroSample",
+        "importPath": "pyro.nn",
+        "description": "pyro.nn",
+        "isExtraImport": true,
+        "detail": "pyro.nn",
+        "documentation": {}
+    },
+    {
+        "label": "PyroModule",
+        "importPath": "pyro.nn",
+        "description": "pyro.nn",
+        "isExtraImport": true,
+        "detail": "pyro.nn",
+        "documentation": {}
+    },
+    {
+        "label": "torch.nn",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch.nn",
+        "description": "torch.nn",
+        "detail": "torch.nn",
+        "documentation": {}
+    },
+    {
+        "label": "copy",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "copy",
+        "description": "copy",
+        "detail": "copy",
+        "documentation": {}
+    },
+    {
+        "label": "deepcopy",
+        "importPath": "copy",
+        "description": "copy",
+        "isExtraImport": true,
+        "detail": "copy",
+        "documentation": {}
+    },
+    {
+        "label": "train_device_model",
+        "importPath": "hdpftl_training.train_device_model",
+        "description": "hdpftl_training.train_device_model",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.train_device_model",
+        "documentation": {}
+    },
+    {
+        "label": "train_device_model",
+        "importPath": "hdpftl_training.train_device_model",
+        "description": "hdpftl_training.train_device_model",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.train_device_model",
+        "documentation": {}
+    },
+    {
+        "label": "aggregate_fed_avg",
+        "importPath": "hdpftl_training.hdpftl_aggregation.hdpftl_fedavg",
+        "description": "hdpftl_training.hdpftl_aggregation.hdpftl_fedavg",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_aggregation.hdpftl_fedavg",
+        "documentation": {}
+    },
+    {
+        "label": "save",
+        "importPath": "hdpftl_training.save_model",
+        "description": "hdpftl_training.save_model",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.save_model",
+        "documentation": {}
+    },
+    {
+        "label": "BayesianTabularNet",
+        "importPath": "models.BayesianTabularNet",
+        "description": "models.BayesianTabularNet",
+        "isExtraImport": true,
+        "detail": "models.BayesianTabularNet",
+        "documentation": {}
+    },
+    {
+        "label": "Trace_ELBO",
+        "importPath": "pyro.infer",
+        "description": "pyro.infer",
+        "isExtraImport": true,
+        "detail": "pyro.infer",
+        "documentation": {}
+    },
+    {
+        "label": "SVI",
+        "importPath": "pyro.infer",
+        "description": "pyro.infer",
+        "isExtraImport": true,
+        "detail": "pyro.infer",
+        "documentation": {}
+    },
+    {
+        "label": "AutoDiagonalNormal",
+        "importPath": "pyro.infer.autoguide",
+        "description": "pyro.infer.autoguide",
+        "isExtraImport": true,
+        "detail": "pyro.infer.autoguide",
+        "documentation": {}
+    },
+    {
+        "label": "torch.optim",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch.optim",
+        "description": "torch.optim",
+        "detail": "torch.optim",
+        "documentation": {}
+    },
+    {
+        "label": "Adam",
+        "importPath": "torch.optim",
+        "description": "torch.optim",
+        "isExtraImport": true,
+        "detail": "torch.optim",
+        "documentation": {}
+    },
+    {
+        "label": "Template",
+        "importPath": "string",
+        "description": "string",
+        "isExtraImport": true,
+        "detail": "string",
+        "documentation": {}
+    },
+    {
+        "label": "logging",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "logging",
+        "description": "logging",
+        "detail": "logging",
+        "documentation": {}
+    },
+    {
+        "label": "time",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "time",
+        "description": "time",
+        "detail": "time",
+        "documentation": {}
+    },
+    {
+        "label": "contextmanager",
+        "importPath": "contextlib",
+        "description": "contextlib",
+        "isExtraImport": true,
+        "detail": "contextlib",
+        "documentation": {}
+    },
+    {
+        "label": "datetime",
+        "importPath": "datetime",
+        "description": "datetime",
+        "isExtraImport": true,
+        "detail": "datetime",
+        "documentation": {}
+    },
+    {
+        "label": "random",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "random",
+        "description": "random",
+        "detail": "random",
+        "documentation": {}
+    },
+    {
+        "label": "tkinter",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "tkinter",
+        "description": "tkinter",
+        "detail": "tkinter",
+        "documentation": {}
+    },
+    {
+        "label": "SummaryWriter",
+        "importPath": "torch.utils.tensorboard",
+        "description": "torch.utils.tensorboard",
+        "isExtraImport": true,
+        "detail": "torch.utils.tensorboard",
+        "documentation": {}
+    },
+    {
+        "label": "evaluate_global_model",
+        "importPath": "hdpftl_evaluation.evaluate_global_model",
+        "description": "hdpftl_evaluation.evaluate_global_model",
+        "isExtraImport": true,
+        "detail": "hdpftl_evaluation.evaluate_global_model",
+        "documentation": {}
+    },
+    {
+        "label": "evaluate_global_model_fromfile",
+        "importPath": "hdpftl_evaluation.evaluate_global_model",
+        "description": "hdpftl_evaluation.evaluate_global_model",
+        "isExtraImport": true,
+        "detail": "hdpftl_evaluation.evaluate_global_model",
+        "documentation": {}
+    },
+    {
+        "label": "evaluate_personalized_models_per_client",
+        "importPath": "hdpftl_evaluation.evaluate_per_client",
+        "description": "hdpftl_evaluation.evaluate_per_client",
+        "isExtraImport": true,
+        "detail": "hdpftl_evaluation.evaluate_per_client",
+        "documentation": {}
+    },
+    {
+        "label": "evaluate_per_client",
+        "importPath": "hdpftl_evaluation.evaluate_per_client",
+        "description": "hdpftl_evaluation.evaluate_per_client",
+        "isExtraImport": true,
+        "detail": "hdpftl_evaluation.evaluate_per_client",
+        "documentation": {}
+    },
+    {
+        "label": "\\",
+        "importPath": "hdpftl_evaluation.evaluate_per_client",
+        "description": "hdpftl_evaluation.evaluate_per_client",
+        "isExtraImport": true,
+        "detail": "hdpftl_evaluation.evaluate_per_client",
+        "documentation": {}
+    },
+    {
+        "label": "plot_client_accuracies",
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "isExtraImport": true,
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_personalized_vs_global",
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "isExtraImport": true,
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_confusion_matrix",
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "isExtraImport": true,
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "\\",
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "isExtraImport": true,
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "preprocess_data",
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "hdpftl_pipeline",
+        "importPath": "hdpftl_training.hdpftl_pipeline",
+        "description": "hdpftl_training.hdpftl_pipeline",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_pipeline",
+        "documentation": {}
+    },
+    {
+        "label": "dirichlet_partition",
+        "importPath": "hdpftl_training.hdpftl_pipeline",
+        "description": "hdpftl_training.hdpftl_pipeline",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_pipeline",
+        "documentation": {}
+    },
+    {
+        "label": "pretrain_class",
+        "importPath": "hdpftl_training.hdpftl_pre_training.pretrainclass",
+        "description": "hdpftl_training.hdpftl_pre_training.pretrainclass",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_pre_training.pretrainclass",
+        "documentation": {}
+    },
+    {
+        "label": "target_class",
+        "importPath": "hdpftl_training.hdpftl_pre_training.targetclass",
+        "description": "hdpftl_training.hdpftl_pre_training.targetclass",
+        "isExtraImport": true,
+        "detail": "hdpftl_training.hdpftl_pre_training.targetclass",
+        "documentation": {}
+    },
+    {
+        "label": "IsolationForest",
+        "importPath": "sklearn.ensemble",
+        "description": "sklearn.ensemble",
+        "isExtraImport": true,
+        "detail": "sklearn.ensemble",
+        "documentation": {}
+    },
+    {
+        "label": "bin_dir",
+        "kind": 5,
+        "importPath": ".venv.bin.activate_this",
+        "description": ".venv.bin.activate_this",
+        "peekOfCode": "bin_dir = os.path.dirname(abs_file)\nbase = bin_dir[: -len('bin') - 1]  # strip away the bin part from the __file__, plus the path separator\n# prepend bin to PATH (this file is inside the bin directory)\nos.environ[\"PATH\"] = os.pathsep.join([bin_dir, *os.environ.get(\"PATH\", \"\").split(os.pathsep)])\nos.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = '' or os.path.basename(base)\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))",
+        "detail": ".venv.bin.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "base",
+        "kind": 5,
+        "importPath": ".venv.bin.activate_this",
+        "description": ".venv.bin.activate_this",
+        "peekOfCode": "base = bin_dir[: -len('bin') - 1]  # strip away the bin part from the __file__, plus the path separator\n# prepend bin to PATH (this file is inside the bin directory)\nos.environ[\"PATH\"] = os.pathsep.join([bin_dir, *os.environ.get(\"PATH\", \"\").split(os.pathsep)])\nos.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = '' or os.path.basename(base)\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path.decode(\"utf-8\") if '' else path)",
+        "detail": ".venv.bin.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "os.environ[\"PATH\"]",
+        "kind": 5,
+        "importPath": ".venv.bin.activate_this",
+        "description": ".venv.bin.activate_this",
+        "peekOfCode": "os.environ[\"PATH\"] = os.pathsep.join([bin_dir, *os.environ.get(\"PATH\", \"\").split(os.pathsep)])\nos.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = '' or os.path.basename(base)\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path.decode(\"utf-8\") if '' else path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix",
+        "detail": ".venv.bin.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "os.environ[\"VIRTUAL_ENV\"]",
+        "kind": 5,
+        "importPath": ".venv.bin.activate_this",
+        "description": ".venv.bin.activate_this",
+        "peekOfCode": "os.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = '' or os.path.basename(base)\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path.decode(\"utf-8\") if '' else path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
+        "detail": ".venv.bin.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "os.environ[\"VIRTUAL_ENV_PROMPT\"]",
+        "kind": 5,
+        "importPath": ".venv.bin.activate_this",
+        "description": ".venv.bin.activate_this",
+        "peekOfCode": "os.environ[\"VIRTUAL_ENV_PROMPT\"] = '' or os.path.basename(base)\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path.decode(\"utf-8\") if '' else path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
+        "detail": ".venv.bin.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "prev_length",
+        "kind": 5,
+        "importPath": ".venv.bin.activate_this",
+        "description": ".venv.bin.activate_this",
+        "peekOfCode": "prev_length = len(sys.path)\nfor lib in '../lib/python3.12/site-packages'.split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path.decode(\"utf-8\") if '' else path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
+        "detail": ".venv.bin.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "sys.path[:]",
+        "kind": 5,
+        "importPath": ".venv.bin.activate_this",
+        "description": ".venv.bin.activate_this",
+        "peekOfCode": "sys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
+        "detail": ".venv.bin.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "sys.real_prefix",
+        "kind": 5,
+        "importPath": ".venv.bin.activate_this",
+        "description": ".venv.bin.activate_this",
+        "peekOfCode": "sys.real_prefix = sys.prefix\nsys.prefix = base",
+        "detail": ".venv.bin.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "sys.prefix",
+        "kind": 5,
+        "importPath": ".venv.bin.activate_this",
+        "description": ".venv.bin.activate_this",
+        "peekOfCode": "sys.prefix = base",
+        "detail": ".venv.bin.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "evaluate_global_model_fromfile",
+        "kind": 2,
+        "importPath": "hdpftl_evaluation.evaluate_global_model",
+        "description": "hdpftl_evaluation.evaluate_global_model",
+        "peekOfCode": "def evaluate_global_model_fromfile():\n    global_model = load_global_model(create_model_fn_global(), GLOBAL_MODEL_PATH)\n    global_model.eval()\n    return global_model\ndef evaluate_global_model(model, X_test, y_test):\n    safe_log(\"[4] Evaluating global model...\")\n    device = setup_device()\n    # Ensure model is on correct device and in eval mode\n    model = model.to(device)\n    model.eval()",
+        "detail": "hdpftl_evaluation.evaluate_global_model",
+        "documentation": {}
+    },
+    {
+        "label": "evaluate_global_model",
+        "kind": 2,
+        "importPath": "hdpftl_evaluation.evaluate_global_model",
+        "description": "hdpftl_evaluation.evaluate_global_model",
+        "peekOfCode": "def evaluate_global_model(model, X_test, y_test):\n    safe_log(\"[4] Evaluating global model...\")\n    device = setup_device()\n    # Ensure model is on correct device and in eval mode\n    model = model.to(device)\n    model.eval()\n    # Ensure inputs are tensors\n    if not torch.is_tensor(X_test):\n        X_test = torch.tensor(X_test, dtype=torch.float32)\n    if not torch.is_tensor(y_test):",
+        "detail": "hdpftl_evaluation.evaluate_global_model",
+        "documentation": {}
+    },
+    {
+        "label": "load_personalized_models_fromfile",
+        "kind": 2,
+        "importPath": "hdpftl_evaluation.evaluate_per_client",
+        "description": "hdpftl_evaluation.evaluate_per_client",
+        "peekOfCode": "def load_personalized_models_fromfile():\n    personalized_models = []\n    device = setup_device()\n    for cid in range(NUM_CLIENTS):\n        model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)\n        model = create_model_fn_personalized()\n        model = model.to(device)\n        if os.path.exists(model_path):\n            try:\n                state_dict = torch.load(model_path, map_location=device)",
+        "detail": "hdpftl_evaluation.evaluate_per_client",
+        "documentation": {}
+    },
+    {
+        "label": "evaluate_personalized_models_per_client",
+        "kind": 2,
+        "importPath": "hdpftl_evaluation.evaluate_per_client",
+        "description": "hdpftl_evaluation.evaluate_per_client",
+        "peekOfCode": "def evaluate_personalized_models_per_client(personalized_models, X, y, client_partitions_test):\n    accs = {}\n    device = setup_device()\n    for cid, idx in enumerate(client_partitions_test):\n        if not idx:\n            accs[cid] = 0.0\n            continue\n        model = personalized_models[cid].to(device)\n        model.eval()\n        x_client = X[idx].to(device)",
+        "detail": "hdpftl_evaluation.evaluate_per_client",
+        "documentation": {}
+    },
+    {
+        "label": "evaluate_per_client",
+        "kind": 2,
+        "importPath": "hdpftl_evaluation.evaluate_per_client",
+        "description": "hdpftl_evaluation.evaluate_per_client",
+        "peekOfCode": "def evaluate_per_client(global_model, X, y, client_partitions_test):\n    accs = {}\n    device = setup_device()\n    model = global_model.to(device)\n    model.eval()\n    for cid, idx in enumerate(client_partitions_test):\n        if not idx:  # Skip clients with no data\n            accs[cid] = 0.0\n            continue\n        x_client = X[idx].to(device)",
+        "detail": "hdpftl_evaluation.evaluate_per_client",
+        "documentation": {}
+    },
+    {
+        "label": "load_global_model",
+        "kind": 2,
+        "importPath": "hdpftl_evaluation.load_model",
+        "description": "hdpftl_evaluation.load_model",
+        "peekOfCode": "def load_global_model(base_model_fn, path):\n    \"\"\"\n    Loads a global model from a .pth file using a factory function.\n    Args:\n        base_model_fn (function): A function that returns an instance of the model.\n        path (str): Path to the .pth file.\n    Returns:\n        nn.Module: The loaded model in eval mode on the correct device.\n    \"\"\"\n    device = setup_device()",
+        "detail": "hdpftl_evaluation.load_model",
+        "documentation": {}
+    },
+    {
+        "label": "load_personalized_model",
+        "kind": 2,
+        "importPath": "hdpftl_evaluation.load_model",
+        "description": "hdpftl_evaluation.load_model",
+        "peekOfCode": "def load_personalized_model(base_model_fn, path):\n    \"\"\"\n    Loads a personalized model for a client.\n    Args:\n        base_model_fn (function): Returns an instance of the model.\n        path (str): Path to the personalized model's .pth file.\n    Returns:\n        nn.Module: The loaded model in eval mode.\n    \"\"\"\n    device = setup_device()",
+        "detail": "hdpftl_evaluation.load_model",
+        "documentation": {}
+    },
+    {
+        "label": "plot_accuracy_comparison",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_accuracy_comparison(global_accs, personalized_accs):\n    clients = list(global_accs.keys())\n    global_values = [global_accs[cid] for cid in clients]\n    personal_values = [personalized_accs[cid] for cid in clients]\n    x = np.arange(len(clients))\n    width = 0.35\n    # Create plot directory if it doesn't exist\n    os.makedirs(PLOT_PATH, exist_ok=True)\n    plt.figure(figsize=(10, 6))\n    plt.bar(x - width / 2, global_values, width, label='Global Model')",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_training_loss",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_training_loss(losses, name, label='Loss'):\n    \"\"\"\n    Plots training loss over epochs and saves the figure.\n    Args:\n        losses (list or array): List of loss values per epoch.\n        label (str): Label for the y-axis (default is 'Loss').\n    \"\"\"\n    plt.figure(figsize=(8, 5))\n    plt.plot(range(1, len(losses) + 1), losses, marker='o', color='blue', label=label)\n    plt.title('Training Loss Over Epochs')",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_accuracy_heatmap",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_accuracy_heatmap(accs_dict):\n    df = pd.DataFrame(list(accs_dict.items()), columns=['Client', 'Accuracy'])\n    df['Client'] = df['Client'].astype(str)\n    plt.figure(figsize=(8, 6))\n    sns.heatmap(df.set_index('Client').T, annot=True, cmap=\"YlGnBu\", cbar=False)\n    plt.title(\"Client-wise Accuracy Heatmap\")\n    file_path = os.path.join(PLOT_PATH, 'plot_accuracy_heatmap.png')\n    plt.savefig(file_path)\n    plt.show()\n\"\"\"",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_fine_tuning_improvement",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_fine_tuning_improvement(pre_accs, post_accs):\n    clients = list(pre_accs.keys())\n    improvements = [post_accs[cid] - pre_accs[cid] for cid in clients]\n    plt.figure(figsize=(8, 5))\n    plt.bar(clients, improvements, color='green')\n    plt.xlabel(\"Client ID\")\n    plt.ylabel(\"Accuracy Gain\")\n    plt.title(\"Accuracy Improvement After Fine-Tuning\")\n    plt.grid(True, linestyle=\"--\", alpha=0.5)\n    file_path = os.path.join(PLOT_PATH, 'plot_fine_tuning_improvement.png')",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot(global_accuracies, personalized_accuracies):\n    rounds = list(range(1, len(global_accuracies) + 1))\n    plt.figure(figsize=(8, 5))\n    plt.plot(rounds, global_accuracies, label=\"Global Model\", marker='o')\n    # Optional: plot personalized accuracy per client\n    for i, client_acc in enumerate(personalized_accuracies):  # list of lists\n        plt.plot(rounds, client_acc, label=f'Client {i}', linestyle='--', alpha=0.6)\n    plt.title(\"Accuracy over Federated Rounds\")\n    plt.xlabel(\"Rounds\")\n    plt.ylabel(\"Accuracy\")",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_confusion_matrix",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_confusion_matrix(y_true, y_pred, class_names=None, normalize=False):\n    \"\"\"\n    Plots a confusion matrix with optional normalization.\n    A confusion matrix is a summary table used to evaluate the performance of a classification model.\n    It shows how well the predicted labels match the actual labels.\n    It’s especially useful for multi-class classification and imbalanced datasets.\n🔲 Structure of a Confusion Matrix (for 2 classes)\n                        Predicted: Positive\t    Predicted:Negative\n    Actual: Positive\tTrue Positive (TP)\t    False Negative (FN)\n    Actual: Negative\tFalse Positive (FP)\t    True Negative (TN)",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_client_accuracies",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_client_accuracies(accs, global_acc=None, title=\"Per-Client Accuracy\", save_path=None):\n    import matplotlib.pyplot as plt\n    client_ids = list(accs.keys())\n    accuracies = [accs[cid] for cid in client_ids]\n    plt.figure(figsize=(12, 6))\n    bars = plt.bar(client_ids, accuracies, color='skyblue', edgecolor='black')\n    plt.xlabel(\"Client ID\")\n    plt.ylabel(\"Accuracy\")\n    plt.title(title)\n    plt.ylim(0, 1.0)",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_personalized_vs_global",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_personalized_vs_global(personalized_accs, global_acc, title=\"Client Accuracy: Personalized vs Global\",\n                                save_path=None):\n    client_ids = list(personalized_accs.keys())\n    personalized = [personalized_accs[cid] for cid in client_ids]\n    global_all = [global_acc for _ in client_ids]  # Same global acc for all clients\n    x = np.arange(len(client_ids))  # the label locations\n    width = 0.35  # the width of the bars\n    fig, ax = plt.subplots(figsize=(12, 6))\n    bars1 = ax.bar(x - width / 2, personalized, width, label='Personalized', color='skyblue', edgecolor='black')\n    bars2 = ax.bar(x + width / 2, global_all, width, label='Global', color='lightcoral', edgecolor='black')",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_class_distribution_per_client",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_class_distribution_per_client(client_data_dict):\n    \"\"\"\n    client_data_dict: dict of client_id -> list of labels\n                      or dict of client_id -> (X, y) tuples\n    \"\"\"\n    data = []\n    for client_id, labels_or_tuple in client_data_dict.items():\n        # If tuple, extract labels\n        if isinstance(labels_or_tuple, tuple):\n            labels = labels_or_tuple[1]",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_accuracy_over_rounds",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_accuracy_over_rounds(global_accs, personalized_accs=None):\n    rounds = list(range(1, len(global_accs) + 1))\n    plt.plot(rounds, global_accs, label=\"Global Accuracy\", marker='o')\n    if personalized_accs:\n        plt.plot(rounds, personalized_accs, label=\"Personalized Accuracy\", marker='x')\n    plt.title(\"Accuracy over Communication Rounds\")\n    plt.xlabel(\"Round\")\n    plt.ylabel(\"Accuracy\")\n    plt.legend()\n    plt.grid(True)",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_loss_over_rounds",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_loss_over_rounds(losses):\n    rounds = list(range(1, len(losses) + 1))\n    plt.plot(rounds, losses, label=\"Training Loss\", color='red', marker='o')\n    plt.title(\"Loss over Rounds\")\n    plt.xlabel(\"Round\")\n    plt.ylabel(\"Loss\")\n    plt.grid(True)\n    plt.tight_layout()\n    plt.show()\n# Helps visualize quantity skew among clients.",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "plot_client_sample_counts",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "def plot_client_sample_counts(client_data_dict):\n    counts = {client: len(data) for client, data in client_data_dict.items()}\n    plt.bar(counts.keys(), counts.values(), color='skyblue')\n    plt.title(\"Samples per Client\")\n    plt.ylabel(\"Number of Samples\")\n    plt.xticks(rotation=45)\n    plt.tight_layout()\n    plt.show()",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "global_acc",
+        "kind": 5,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "global_acc = evaluate_global_model(global_model, X_test, y_test)\n# Evaluate personalized models\nclient_accs = evaluate_personalized_models(personalized_models, X_train, y_train, client_partitions)\n# Plot\nplot_client_accuracies(client_accs, global_acc=global_acc, title=\"Per-Client vs Global Model Accuracy\")\n\"\"\"\n# plot_personalized_vs_global(personalized_accs, global_acc)\ndef plot_personalized_vs_global(personalized_accs, global_acc, title=\"Client Accuracy: Personalized vs Global\",\n                                save_path=None):\n    client_ids = list(personalized_accs.keys())",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "client_accs",
+        "kind": 5,
+        "importPath": "hdpftl_plotting.plot",
+        "description": "hdpftl_plotting.plot",
+        "peekOfCode": "client_accs = evaluate_personalized_models(personalized_models, X_train, y_train, client_partitions)\n# Plot\nplot_client_accuracies(client_accs, global_acc=global_acc, title=\"Per-Client vs Global Model Accuracy\")\n\"\"\"\n# plot_personalized_vs_global(personalized_accs, global_acc)\ndef plot_personalized_vs_global(personalized_accs, global_acc, title=\"Client Accuracy: Personalized vs Global\",\n                                save_path=None):\n    client_ids = list(personalized_accs.keys())\n    personalized = [personalized_accs[cid] for cid in client_ids]\n    global_all = [global_acc for _ in client_ids]  # Same global acc for all clients",
+        "detail": "hdpftl_plotting.plot",
+        "documentation": {}
+    },
+    {
+        "label": "predict",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.predictions",
+        "description": "hdpftl_plotting.predictions",
+        "peekOfCode": "def predict(new_data, global_model, label_map=None, return_proba=False, device=None):\n    \"\"\"\n    Predicts classes (and optionally probabilities) using a trained PyTorch model.\n    Args:\n        new_data (array-like or tensor): Input hdpftl_data of shape (n_samples, n_features).\n        global_model (torch.nn.Module): Trained model.\n        label_map (dict, optional): Mapping from class indices to labels.\n        return_proba (bool): Whether to return class probabilities.\n        device (torch.device or None): Device to run on. Auto-detects if None.\n    Returns:",
+        "detail": "hdpftl_plotting.predictions",
+        "documentation": {}
+    },
+    {
+        "label": "prediction_csv",
+        "kind": 2,
+        "importPath": "hdpftl_plotting.predictions_csv",
+        "description": "hdpftl_plotting.predictions_csv",
+        "peekOfCode": "def prediction_csv(new_data):\n    # Convert predictions to NumPy\n    preds_np = predictions.cpu().numpy()\n    # Save to CSV\n    df_output = pd.DataFrame(preds_np, columns=[\"Predicted_Label\"])\n    df_output.to_csv(\"predictions.csv\", index=False)\n    df_input = pd.DataFrame(new_data.cpu().numpy())\n    df_input[\"Predicted_Label\"] = preds_np\n    df_input.to_csv(\"input_with_predictions.csv\", index=False)\n    print(\"Predictions saved to predictions.csv\")",
+        "detail": "hdpftl_plotting.predictions_csv",
+        "documentation": {}
+    },
+    {
+        "label": "aggregate_bayesian",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_aggregation.hdpftl_bayesian",
+        "description": "hdpftl_training.hdpftl_aggregation.hdpftl_bayesian",
+        "peekOfCode": "def aggregate_bayesian(local_models, base_model_fn, X_train, y_train, client_partitions):\n    global_model = hdpftl_bayesian(local_models, base_model_fn)\n    safe_log(\"[6] Aggregated Bayesian fleet hdpftl_models...\")\n    personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)\n    safe_log(\"[7] Personalizing each client...\")\n    return global_model, personalized_models\ndef hdpftl_bayesian(models, base_model_fn, epsilon=1e-8):\n    \"\"\"\n    Perform Bayesian aggregation of multiple PyTorch hdpftl_models using inverse variance weighting.\n    Args:",
+        "detail": "hdpftl_training.hdpftl_aggregation.hdpftl_bayesian",
+        "documentation": {}
+    },
+    {
+        "label": "hdpftl_bayesian",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_aggregation.hdpftl_bayesian",
+        "description": "hdpftl_training.hdpftl_aggregation.hdpftl_bayesian",
+        "peekOfCode": "def hdpftl_bayesian(models, base_model_fn, epsilon=1e-8):\n    \"\"\"\n    Perform Bayesian aggregation of multiple PyTorch hdpftl_models using inverse variance weighting.\n    Args:\n        models (List[torch.nn.Module]): List of trained hdpftl_models with identical architectures.\n        base_model_fn (torch.nn.Module): An untrained model instance (used for structure).\n        epsilon (float): Small constant to prevent division by zero in variance.\n    Returns:\n        torch.nn.Module: Aggregated model with Bayesian-weighted parameters.\n    \"\"\"",
+        "detail": "hdpftl_training.hdpftl_aggregation.hdpftl_bayesian",
+        "documentation": {}
+    },
+    {
+        "label": "aggregate_models",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_aggregation.hdpftl_fedavg",
+        "description": "hdpftl_training.hdpftl_aggregation.hdpftl_fedavg",
+        "peekOfCode": "def aggregate_models(models, base_model_fn):\n    device = setup_device()\n    new_model = base_model_fn.to(device)\n    new_state_dict = {}\n    with torch.no_grad():\n        for key in models[0].state_dict().keys():\n            # Average the parameters across all hdpftl_models\n            new_state_dict[key] = torch.stack([m.state_dict()[key].float() for m in models], dim=0).mean(dim=0)\n    # Load the averaged weights into the new model\n    new_model.load_state_dict(new_state_dict)",
+        "detail": "hdpftl_training.hdpftl_aggregation.hdpftl_fedavg",
+        "documentation": {}
+    },
+    {
+        "label": "aggregate_fed_avg",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_aggregation.hdpftl_fedavg",
+        "description": "hdpftl_training.hdpftl_aggregation.hdpftl_fedavg",
+        "peekOfCode": "def aggregate_fed_avg(local_models, base_model_fn, X_train, y_train, client_partitions):\n    global_model = aggregate_models(local_models, base_model_fn)\n    safe_log(\"[6] Aggregated FedAvg fleet hdpftl_models...\")\n    personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)\n    safe_log(\"[7] Personalizing each client...\")\n    return global_model, personalized_models",
+        "detail": "hdpftl_training.hdpftl_aggregation.hdpftl_fedavg",
+        "documentation": {}
+    },
+    {
+        "label": "download_dataset",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.downloader",
+        "description": "hdpftl_training.hdpftl_data.downloader",
+        "peekOfCode": "def download_dataset(input_dir, output_dir):\n    # Create output directory if it doesn't exist\n    os.makedirs(output_dir, exist_ok=True)\n    # Fake browser headers\n    # Send a GET request to the URL\n    response = requests.get(input_dir)\n    # Check if the request was successful\n    if response.status_code == 200:\n        # Save the content to a local file\n        with open('CIC_IoT_Dataset_2023.html', 'wb') as file:",
+        "detail": "hdpftl_training.hdpftl_data.downloader",
+        "documentation": {}
+    },
+    {
+        "label": "profile_dataset",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "peekOfCode": "def profile_dataset(X, y):\n    print(\"📐 Feature shape:\")\n    print(f\"  ➤ X shape: {X.shape}\")\n    print(\"\\n📊 Class distribution:\")\n    counts = Counter(y)\n    for label, count in counts.items():\n        print(f\"  ➤ Class {label}: {count} samples\")\n    imbalance_ratio = max(counts.values()) / min(counts.values())\n    print(f\"\\n⚖️  Imbalance Ratio: {imbalance_ratio:.2f}\")\n    print(\"\\n🔍 Data type inspection:\")",
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "reduce_dim",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "peekOfCode": "def reduce_dim(X, n_components=30):\n    print(f\"\\n🔧 Reducing dimensions from {X.shape[1]} → {n_components} using PCA\")\n    pca = PCA(n_components=n_components, random_state=42)\n    return pca.fit_transform(X)\n# ⚖️ Step 2: SMOTE\ndef fast_safe_smote(X, y, k_neighbors=5):\n    counts = Counter(y)\n    min_class_size = min(counts.values())\n    k = min(k_neighbors, min_class_size - 1)\n    if k < 1:",
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "fast_safe_smote",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "peekOfCode": "def fast_safe_smote(X, y, k_neighbors=5):\n    counts = Counter(y)\n    min_class_size = min(counts.values())\n    k = min(k_neighbors, min_class_size - 1)\n    if k < 1:\n        warnings.warn(\"Too few samples for SMOTE; skipping.\")\n        return X, y\n    print(f\"\\n⚡ Applying SMOTE with k={k}\")\n    sm = SMOTE(k_neighbors=k, random_state=42)\n    result = sm.fit_resample(X, y)",
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "hybrid_balance",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "peekOfCode": "def hybrid_balance(X, y):\n    print(\"\\n🌀 Applying hybrid balancing (undersample + SMOTE)\")\n    under = RandomUnderSampler(sampling_strategy='auto', random_state=42)\n    over = SMOTE(k_neighbors=5, random_state=42)\n    pipeline = Pipeline([('under', under), ('over', over)])\n    try:\n        result = pipeline.fit_resample(X, y)\n        if result is None:\n            warnings.warn(\"Pipeline fit_resample returned None.\")\n            return X, y",
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "prepare_data",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "peekOfCode": "def prepare_data(X, y, strategy='pca_smote', n_components=30, pre_sample=False, sample_fraction=0.1):\n    print(\"📊 Running prepare_data with strategy:\", strategy)\n    # Optional downsampling\n    if pre_sample:\n        X, y = stratified_downsample(X, y, fraction=sample_fraction)\n    profile_dataset(X, y)\n    if strategy == 'pca_smote':\n        X_reduced = reduce_dim(X, n_components=n_components)\n        X_final, y_final = fast_safe_smote(X_reduced, y)\n    elif strategy == 'hybrid':",
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "safe_smote",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "peekOfCode": "def safe_smote(X, y):\n    counts = Counter(y)\n    min_class_size = min(counts.values())\n    k = min(5, min_class_size - 1)\n    if k < 1:\n        print(\"Too few samples for SMOTE; skipping.\")\n        return X, y\n    smote = SVMSMOTE(k_neighbors=k, random_state=42)\n    return smote.fit_resample(X, y)\ndef load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=None):",
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "load_and_label_all",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "peekOfCode": "def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=None):\n    all_files = glob(os.path.join(folder_path, \"*.csv\")) + glob(os.path.join(folder_path, \"*.CSV\"))\n    if not all_files:\n        raise FileNotFoundError(f\"No CSV files found in: {os.path.abspath(folder_path)}\")\n    print(f\"Found {len(all_files)} CSV files in '{folder_path}'\")\n    combined_df = []\n    for count, file in enumerate(all_files, start=1):\n        df = pd.read_csv(file)\n        filename = os.path.basename(file).lower()\n        print(f\"Count: {count}, Processing File: {file}\")",
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "safe_clean_dataframe",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "peekOfCode": "def safe_clean_dataframe(df: pd.DataFrame,\n                         chunk_size: int = 10000,\n                         invalid_values=None,\n                         replace_with=np.nan,\n                         log_progress: bool = True,\n                         auto_gc: bool = True) -> pd.DataFrame:\n    \"\"\"\n    Safely replaces infinities and other specified invalid values in a large DataFrame.\n    Args:\n        df (pd.DataFrame): The input DataFrame to clean.",
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "preprocess_data",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "peekOfCode": "def preprocess_data(path, writer=None):\n    # all_files = glob.glob(path + \"*.csv\")\n    # df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)\n    with named_timer(\"load_and_label_all\", writer, tag=\"load_and_label_all\"):\n        df = load_and_label_all(path)\n    # Replace infinities and -999 or '?' with NaN\n    scaler = MinMaxScaler()\n    features = df.columns.difference(['Label'])\n    df[features] = scaler.fit_transform(df[features])\n    X, y = df[features], df['Label']",
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "preprocess_data_small",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.preprocess",
+        "description": "hdpftl_training.hdpftl_data.preprocess",
+        "peekOfCode": "def preprocess_data_small(csv_path, test_size=0.2):\n    # Load hdpftl_dataset\n    df = pd.read_csv(csv_path + \"Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv\", low_memory=False)\n    # Drop unnamed or constant columns\n    df.drop(columns=[col for col in df.columns if 'Unnamed' in col or df[col].nunique() <= 1], inplace=True)\n    # Drop rows with NaN or inf\n    df.replace([np.inf, -np.inf], np.nan, inplace=True)\n    df.dropna(inplace=True)\n    # Separate label\n    y = df[' Label']",
+        "detail": "hdpftl_training.hdpftl_data.preprocess",
+        "documentation": {}
+    },
+    {
+        "label": "random_downsample",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.sampling",
+        "description": "hdpftl_training.hdpftl_data.sampling",
+        "peekOfCode": "def random_downsample(X, y, fraction=0.1, seed=None):\n    \"\"\"\n    Randomly downsample dataset to a fraction of original size.\n    Args:\n        X (np.array or similar): Input features\n        y (np.array or similar): Labels\n        fraction (float): Fraction of samples to keep (0 < fraction <= 1)\n        seed (int, optional): Random seed for reproducibility\n    Returns:\n        (X_downsampled, y_downsampled): Downsampled data and labels",
+        "detail": "hdpftl_training.hdpftl_data.sampling",
+        "documentation": {}
+    },
+    {
+        "label": "stratified_downsample",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.sampling",
+        "description": "hdpftl_training.hdpftl_data.sampling",
+        "peekOfCode": "def stratified_downsample(X, y, fraction=0.1):\n    X_small, _, y_small, _ = train_test_split(\n        X, y, train_size=fraction, stratify=y, random_state=42\n    )\n    return X_small, y_small\n# If one class is too large, reduce it to balance the hdpftl_dataset.\ndef class_specific_downsample(X, y, max_per_class=1000):\n    indices = []\n    for cls in torch.unique(y):\n        cls_idx = (y == cls).nonzero(as_tuple=True)[0]",
+        "detail": "hdpftl_training.hdpftl_data.sampling",
+        "documentation": {}
+    },
+    {
+        "label": "class_specific_downsample",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.sampling",
+        "description": "hdpftl_training.hdpftl_data.sampling",
+        "peekOfCode": "def class_specific_downsample(X, y, max_per_class=1000):\n    indices = []\n    for cls in torch.unique(y):\n        cls_idx = (y == cls).nonzero(as_tuple=True)[0]\n        selected = cls_idx[torch.randperm(len(cls_idx))[:max_per_class]]\n        indices.append(selected)\n    all_selected = torch.cat(indices)\n    return X[all_selected], y[all_selected]\nimport numpy as np\ndef create_non_iid_partitions(X, y, num_clients=5, fraction=0.5, seed=None):",
+        "detail": "hdpftl_training.hdpftl_data.sampling",
+        "documentation": {}
+    },
+    {
+        "label": "create_non_iid_partitions",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_data.sampling",
+        "description": "hdpftl_training.hdpftl_data.sampling",
+        "peekOfCode": "def create_non_iid_partitions(X, y, num_clients=5, fraction=0.5, seed=None):\n    \"\"\"\n    Create non-IID partitions of data by downsampling different classes for each client.\n    Args:\n        X (np.array): Features\n        y (np.array): Labels (integer classes)\n        num_clients (int): Number of clients\n        fraction (float): Fraction of samples per client (relative to total dataset size)\n        seed (int): Random seed\n    Returns:",
+        "detail": "hdpftl_training.hdpftl_data.sampling",
+        "documentation": {}
+    },
+    {
+        "label": "create_fleet_data",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_dataset.dummy",
+        "description": "hdpftl_training.hdpftl_dataset.dummy",
+        "peekOfCode": "def create_fleet_data(num_fleets=20, devices_per_fleet=30, samples_per_device=200):\n    fleets_dataloaders = []\n    for _ in range(num_fleets):\n        fleet = []\n        for _ in range(devices_per_fleet):\n            X = torch.tensor(np.random.normal(0, 1, (samples_per_device, 3)), dtype=torch.float32)\n            y = torch.tensor(np.random.choice([0, 1], size=(samples_per_device,), p=[0.9, 0.1]), dtype=torch.long)\n            dataset = TensorDataset(X, y)\n            loader = DataLoader(dataset, BATCH_SIZE, shuffle=True)\n            fleet.append(loader)",
+        "detail": "hdpftl_training.hdpftl_dataset.dummy",
+        "documentation": {}
+    },
+    {
+        "label": "BayesianTabularNet",
+        "kind": 6,
+        "importPath": "hdpftl_training.hdpftl_models.BayesianTabularNet",
+        "description": "hdpftl_training.hdpftl_models.BayesianTabularNet",
+        "peekOfCode": "class BayesianTabularNet(PyroModule):\n    def __init__(self, input_dim, num_classes, prior_std=0.1):\n        super().__init__()\n        self.fc1 = PyroModule[nn.Linear](input_dim, 128)\n        self.fc1.weight = PyroSample(dist.Normal(0., prior_std).expand([128, input_dim]).to_event(2))\n        self.fc1.bias = PyroSample(dist.Normal(0., prior_std).expand([128]).to_event(1))\n        self.fc2 = PyroModule[nn.Linear](128, num_classes)\n        self.fc2.weight = PyroSample(dist.Normal(0., prior_std).expand([num_classes, 128]).to_event(2))\n        self.fc2.bias = PyroSample(dist.Normal(0., prior_std).expand([num_classes]).to_event(1))\n    def forward(self, x, y=None):",
+        "detail": "hdpftl_training.hdpftl_models.BayesianTabularNet",
+        "documentation": {}
+    },
+    {
+        "label": "TabularNet",
+        "kind": 6,
+        "importPath": "hdpftl_training.hdpftl_models.TabularNet",
+        "description": "hdpftl_training.hdpftl_models.TabularNet",
+        "peekOfCode": "class TabularNet(nn.Module):\n    def __init__(self, input_dim, num_classes):\n        super(TabularNet, self).__init__()\n        self.shared = nn.Sequential(\n            nn.Linear(input_dim, 128),\n            nn.ReLU(),\n            nn.LayerNorm(128),\n            nn.Linear(128, 64),\n            nn.ReLU(),\n            nn.LayerNorm(64)",
+        "detail": "hdpftl_training.hdpftl_models.TabularNet",
+        "documentation": {}
+    },
+    {
+        "label": "create_model_fn_global",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_models.TabularNet",
+        "description": "hdpftl_training.hdpftl_models.TabularNet",
+        "peekOfCode": "def create_model_fn_global():\n    return lambda: TabularNet(input_dim=input_dim, num_classes=pretrain_classes)\ndef create_model_fn_personalized():\n    return TabularNet(input_dim=input_dim, num_classes=target_classes)\nclass TabularNet(nn.Module):\n    def __init__(self, input_dim, num_classes):\n        super(TabularNet, self).__init__()\n        self.shared = nn.Sequential(\n            nn.Linear(input_dim, 128),\n            nn.ReLU(),",
+        "detail": "hdpftl_training.hdpftl_models.TabularNet",
+        "documentation": {}
+    },
+    {
+        "label": "create_model_fn_personalized",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_models.TabularNet",
+        "description": "hdpftl_training.hdpftl_models.TabularNet",
+        "peekOfCode": "def create_model_fn_personalized():\n    return TabularNet(input_dim=input_dim, num_classes=target_classes)\nclass TabularNet(nn.Module):\n    def __init__(self, input_dim, num_classes):\n        super(TabularNet, self).__init__()\n        self.shared = nn.Sequential(\n            nn.Linear(input_dim, 128),\n            nn.ReLU(),\n            nn.LayerNorm(128),\n            nn.Linear(128, 64),",
+        "detail": "hdpftl_training.hdpftl_models.TabularNet",
+        "documentation": {}
+    },
+    {
+        "label": "personalize_clients",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_personalised_client.personalize_clients",
+        "description": "hdpftl_training.hdpftl_personalised_client.personalize_clients",
+        "peekOfCode": "def personalize_clients(global_model, X, y, client_partitions, epochs=2):\n    models = {}\n    device = setup_device()\n    for cid, idx in enumerate(client_partitions):\n        local_model = deepcopy(global_model).to(device)\n        models[cid] = train_device_model(local_model, X[idx], y[idx], BATCH_SIZE, epochs=epochs)\n    return models",
+        "detail": "hdpftl_training.hdpftl_personalised_client.personalize_clients",
+        "documentation": {}
+    },
+    {
+        "label": "extract_priors",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_pre_training.pretrainclass",
+        "description": "hdpftl_training.hdpftl_pre_training.pretrainclass",
+        "peekOfCode": "def extract_priors(model):\n    return {\n        'fc1.weight': model.fc1.weight.detach(),\n        'fc1.bias': model.fc1.bias.detach(),\n        'fc2.weight': model.fc2.weight.detach(),\n        'fc2.bias': model.fc2.bias.detach(),\n    }\ndef pretrain_class():\n    print(\"\\n=== Pretraining Phase ===\")\n    device = setup_device()",
+        "detail": "hdpftl_training.hdpftl_pre_training.pretrainclass",
+        "documentation": {}
+    },
+    {
+        "label": "pretrain_class",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_pre_training.pretrainclass",
+        "description": "hdpftl_training.hdpftl_pre_training.pretrainclass",
+        "peekOfCode": "def pretrain_class():\n    print(\"\\n=== Pretraining Phase ===\")\n    device = setup_device()\n    # Create random pretraining hdpftl_data\n    pretrain_features = torch.randn(2000, input_dim)\n    pretrain_labels = torch.randint(0, pretrain_classes, (2000,))\n    pretrain_dataset = TensorDataset(pretrain_features, pretrain_labels)\n    pretrain_loader = DataLoader(pretrain_dataset, shuffle=True)\n    # Create model for pretraining\n    pretrain_model = TabularNet(input_dim, pretrain_classes).to(device)",
+        "detail": "hdpftl_training.hdpftl_pre_training.pretrainclass",
+        "documentation": {}
+    },
+    {
+        "label": "target_class",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_pre_training.targetclass",
+        "description": "hdpftl_training.hdpftl_pre_training.targetclass",
+        "peekOfCode": "def target_class():\n    print(\"\\n=== Fine-tuning Phase ===\")\n    device = setup_device()\n    # 1. Generate target data (replace this with real data in production)\n    target_features = torch.randn(1000, input_dim)\n    target_labels = torch.randint(0, target_classes, (1000,))\n    # 2. Train/Validation split\n    X_train, X_val, y_train, y_val = train_test_split(\n        target_features, target_labels, test_size=0.2, random_state=42\n    )",
+        "detail": "hdpftl_training.hdpftl_pre_training.targetclass",
+        "documentation": {}
+    },
+    {
+        "label": "dirichlet_partition",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_pipeline",
+        "description": "hdpftl_training.hdpftl_pipeline",
+        "peekOfCode": "def dirichlet_partition(X, y, n_classes, alpha, seed=42):\n    \"\"\"\n    Partition hdpftl_data indices using Dirichlet distribution.\n    Args:\n        X: Dataset features (unused, only y matters here for indexing).\n        y: Dataset labels (1D numpy array or torch tensor).\n        alpha: Dirichlet concentration parameter.\n        n_clients: Number of partitions/clients.\n        n_classes: Number of unique classes (optional).\n        seed: Random seed for reproducibility.",
+        "detail": "hdpftl_training.hdpftl_pipeline",
+        "documentation": {}
+    },
+    {
+        "label": "safe_split",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_pipeline",
+        "description": "hdpftl_training.hdpftl_pipeline",
+        "peekOfCode": "def safe_split(tensor, proportions, dim=0):\n    \"\"\"\n    Safely splits a tensor along any dimension using proportions that sum to 1.0.\n    Args:\n        tensor (torch.Tensor): The tensor to split.\n        proportions (list or torch.Tensor): Proportions (floats), ideally summing to 1.0.\n        dim (int): The dimension along which to split.\n    Returns:\n        list of torch.Tensor: Split tensor chunks.\n    \"\"\"",
+        "detail": "hdpftl_training.hdpftl_pipeline",
+        "documentation": {}
+    },
+    {
+        "label": "hdpftl_pipeline",
+        "kind": 2,
+        "importPath": "hdpftl_training.hdpftl_pipeline",
+        "description": "hdpftl_training.hdpftl_pipeline",
+        "peekOfCode": "def hdpftl_pipeline(X_train, y_train, base_model_fn, client_partitions, writer=None):\n    \"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\n    #######################  TRAINING  #########################\n    \"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\n    device = setup_device()\n    safe_log(\"\\n[5] Fleet-level local hdpftl_training...\")\n    local_models = []\n    for cid in range(NUM_CLIENTS):\n        model = base_model_fn.to(device)\n        idx = client_partitions[cid]",
+        "detail": "hdpftl_training.hdpftl_pipeline",
+        "documentation": {}
+    },
+    {
+        "label": "save",
+        "kind": 2,
+        "importPath": "hdpftl_training.save_model",
+        "description": "hdpftl_training.save_model",
+        "peekOfCode": "def save(global_model, personalized_models):\n    torch.save(global_model, \"./hdpftl_trained_models/global_model.pth\")\n    # Save personalized hdpftl_models (if you have them)\n    for i, (cid, model) in enumerate(personalized_models.items()):\n        # print(f\"Client {cid} -> type: {type(entry)}, content: {entry}\")\n        if not isinstance(model, torch.nn.Module):\n            raise TypeError(f\"Expected a model at index {i}, but got {type(model)}\")\n        torch.save(model.state_dict(), f\"./hdpftl_trained_models/personalized_model_client_{cid}.pth\")",
+        "detail": "hdpftl_training.save_model",
+        "documentation": {}
+    },
+    {
+        "label": "extract_priors",
+        "kind": 2,
+        "importPath": "hdpftl_training.train_bayesian_local",
+        "description": "hdpftl_training.train_bayesian_local",
+        "peekOfCode": "def extract_priors(model):\n    return {\n        'fc1.weight': model.fc1.weight.detach(),\n        'fc1.bias': model.fc1.bias.detach(),\n        'fc2.weight': model.fc2.weight.detach(),\n        'fc2.bias': model.fc2.bias.detach(),\n    }\n\"\"\"\ndef train_bayesian_local(X_train, y_train, input_dim, num_classes, prior_params, device='cpu'):\n    model = BayesianTabularNet(input_dim, num_classes, prior_params=prior_params).to(device)",
+        "detail": "hdpftl_training.train_bayesian_local",
+        "documentation": {}
+    },
+    {
+        "label": "train_bayesian_local",
+        "kind": 2,
+        "importPath": "hdpftl_training.train_bayesian_local",
+        "description": "hdpftl_training.train_bayesian_local",
+        "peekOfCode": "def train_bayesian_local(X_train, y_train, input_dim, num_classes, prior_params, device='cpu'):\n    model = BayesianTabularNet(input_dim, num_classes, prior_params=prior_params).to(device)\n    guide = AutoDiagonalNormal(model)\n    svi = SVI(model, guide, Adam({\"lr\": 1e-3}), loss=Trace_ELBO())\n    for step in range(200):\n        svi.step(X_train, y_train)\n    return guide\n\"\"\"\ndef train_bayesian_local(X_train, y_train, input_dim, num_classes, prior_params, device='cpu'):\n    model = BayesianTabularNet(input_dim, num_classes, prior_params=prior_params).to(device)",
+        "detail": "hdpftl_training.train_bayesian_local",
+        "documentation": {}
+    },
+    {
+        "label": "train_bayesian_local",
+        "kind": 2,
+        "importPath": "hdpftl_training.train_bayesian_local",
+        "description": "hdpftl_training.train_bayesian_local",
+        "peekOfCode": "def train_bayesian_local(X_train, y_train, input_dim, num_classes, prior_params, device='cpu'):\n    model = BayesianTabularNet(input_dim, num_classes, prior_params=prior_params).to(device)\n    guide = AutoDiagonalNormal(model)\n    svi = SVI(model, guide, Adam({\"lr\": 1e-3}), loss=Trace_ELBO())\n    for step in range(200):\n        svi.step(X_train, y_train)\n    return guide\ndef aggregate_guides(guides):\n    avg_loc = {}\n    count = len(guides)",
+        "detail": "hdpftl_training.train_bayesian_local",
+        "documentation": {}
+    },
+    {
+        "label": "aggregate_guides",
+        "kind": 2,
+        "importPath": "hdpftl_training.train_bayesian_local",
+        "description": "hdpftl_training.train_bayesian_local",
+        "peekOfCode": "def aggregate_guides(guides):\n    avg_loc = {}\n    count = len(guides)\n    for name in guides[0].locs:\n        avg_loc[name] = sum([g.locs[name] for g in guides]) / count\n    return avg_loc",
+        "detail": "hdpftl_training.train_bayesian_local",
+        "documentation": {}
+    },
+    {
+        "label": "train_device_model",
+        "kind": 2,
+        "importPath": "hdpftl_training.train_device_model",
+        "description": "hdpftl_training.train_device_model",
+        "peekOfCode": "def train_device_model(\n        model,\n        train_data,\n        train_labels,\n        val_data=None,\n        val_labels=None,\n        epochs=20,\n        lr=0.001,\n        early_stopping_patience=5,\n        verbose=True",
+        "detail": "hdpftl_training.train_device_model",
+        "documentation": {}
+    },
+    {
+        "label": "INPUT_DATASET_PATH_2023",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "INPUT_DATASET_PATH_2023 = 'https://www.unb.ca/cic/datasets/iotdataset-2023.html'\nINPUT_DATASET_PATH_2024 = 'https://www.unb.ca/cic/datasets/iotdataset-2024.html'\nOUTPUT_DATASET_PATH_2023 = \"./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2023/\"\nOUTPUT_DATASET_PATH_2024 = \"./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/\"\nOUTPUT_DATASET_ALL_DATA = \"./hdpftl_training/hdpftl_dataset/AllData/\"\nBATCH_SIZE = 5\nNUM_CLIENTS = 7\nNUM_DEVICE = 2\nCLIENTS_PER_AGGREGATOR = 5\nNUM_ROUNDS = 5",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "INPUT_DATASET_PATH_2024",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "INPUT_DATASET_PATH_2024 = 'https://www.unb.ca/cic/datasets/iotdataset-2024.html'\nOUTPUT_DATASET_PATH_2023 = \"./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2023/\"\nOUTPUT_DATASET_PATH_2024 = \"./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/\"\nOUTPUT_DATASET_ALL_DATA = \"./hdpftl_training/hdpftl_dataset/AllData/\"\nBATCH_SIZE = 5\nNUM_CLIENTS = 7\nNUM_DEVICE = 2\nCLIENTS_PER_AGGREGATOR = 5\nNUM_ROUNDS = 5\ninput_dim = 79  # Your feature size",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "OUTPUT_DATASET_PATH_2023",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "OUTPUT_DATASET_PATH_2023 = \"./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2023/\"\nOUTPUT_DATASET_PATH_2024 = \"./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/\"\nOUTPUT_DATASET_ALL_DATA = \"./hdpftl_training/hdpftl_dataset/AllData/\"\nBATCH_SIZE = 5\nNUM_CLIENTS = 7\nNUM_DEVICE = 2\nCLIENTS_PER_AGGREGATOR = 5\nNUM_ROUNDS = 5\ninput_dim = 79  # Your feature size\npretrain_classes = 5  # Suppose you pretrained with 5 classes",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "OUTPUT_DATASET_PATH_2024",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "OUTPUT_DATASET_PATH_2024 = \"./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/\"\nOUTPUT_DATASET_ALL_DATA = \"./hdpftl_training/hdpftl_dataset/AllData/\"\nBATCH_SIZE = 5\nNUM_CLIENTS = 7\nNUM_DEVICE = 2\nCLIENTS_PER_AGGREGATOR = 5\nNUM_ROUNDS = 5\ninput_dim = 79  # Your feature size\npretrain_classes = 5  # Suppose you pretrained with 5 classes\ntarget_classes = 10  # Suppose you pretrained with 5 classes",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "OUTPUT_DATASET_ALL_DATA",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "OUTPUT_DATASET_ALL_DATA = \"./hdpftl_training/hdpftl_dataset/AllData/\"\nBATCH_SIZE = 5\nNUM_CLIENTS = 7\nNUM_DEVICE = 2\nCLIENTS_PER_AGGREGATOR = 5\nNUM_ROUNDS = 5\ninput_dim = 79  # Your feature size\npretrain_classes = 5  # Suppose you pretrained with 5 classes\ntarget_classes = 10  # Suppose you pretrained with 5 classes\nGLOBAL_MODEL_PATH = \"./hdpftl_trained_models/global_model.pth\"",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "BATCH_SIZE",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "BATCH_SIZE = 5\nNUM_CLIENTS = 7\nNUM_DEVICE = 2\nCLIENTS_PER_AGGREGATOR = 5\nNUM_ROUNDS = 5\ninput_dim = 79  # Your feature size\npretrain_classes = 5  # Suppose you pretrained with 5 classes\ntarget_classes = 10  # Suppose you pretrained with 5 classes\nGLOBAL_MODEL_PATH = \"./hdpftl_trained_models/global_model.pth\"\nFINETUNE_MODEL_PATH = \"./hdpftl_trained_models/fine_tuned_tabular_model.pth\"",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "NUM_CLIENTS",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "NUM_CLIENTS = 7\nNUM_DEVICE = 2\nCLIENTS_PER_AGGREGATOR = 5\nNUM_ROUNDS = 5\ninput_dim = 79  # Your feature size\npretrain_classes = 5  # Suppose you pretrained with 5 classes\ntarget_classes = 10  # Suppose you pretrained with 5 classes\nGLOBAL_MODEL_PATH = \"./hdpftl_trained_models/global_model.pth\"\nFINETUNE_MODEL_PATH = \"./hdpftl_trained_models/fine_tuned_tabular_model.pth\"\nPRE_MODEL_PATH = \"./hdpftl_trained_models/pretrained_tabular_model.pth\"",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "NUM_DEVICE",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "NUM_DEVICE = 2\nCLIENTS_PER_AGGREGATOR = 5\nNUM_ROUNDS = 5\ninput_dim = 79  # Your feature size\npretrain_classes = 5  # Suppose you pretrained with 5 classes\ntarget_classes = 10  # Suppose you pretrained with 5 classes\nGLOBAL_MODEL_PATH = \"./hdpftl_trained_models/global_model.pth\"\nFINETUNE_MODEL_PATH = \"./hdpftl_trained_models/fine_tuned_tabular_model.pth\"\nPRE_MODEL_PATH = \"./hdpftl_trained_models/pretrained_tabular_model.pth\"\nEPOCH_DIR_FINE = \"./hdpftl_trained_models/epochs\"",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "CLIENTS_PER_AGGREGATOR",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "CLIENTS_PER_AGGREGATOR = 5\nNUM_ROUNDS = 5\ninput_dim = 79  # Your feature size\npretrain_classes = 5  # Suppose you pretrained with 5 classes\ntarget_classes = 10  # Suppose you pretrained with 5 classes\nGLOBAL_MODEL_PATH = \"./hdpftl_trained_models/global_model.pth\"\nFINETUNE_MODEL_PATH = \"./hdpftl_trained_models/fine_tuned_tabular_model.pth\"\nPRE_MODEL_PATH = \"./hdpftl_trained_models/pretrained_tabular_model.pth\"\nEPOCH_DIR_FINE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, \"fine_tune_epoch_losses.npy\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "NUM_ROUNDS",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "NUM_ROUNDS = 5\ninput_dim = 79  # Your feature size\npretrain_classes = 5  # Suppose you pretrained with 5 classes\ntarget_classes = 10  # Suppose you pretrained with 5 classes\nGLOBAL_MODEL_PATH = \"./hdpftl_trained_models/global_model.pth\"\nFINETUNE_MODEL_PATH = \"./hdpftl_trained_models/fine_tuned_tabular_model.pth\"\nPRE_MODEL_PATH = \"./hdpftl_trained_models/pretrained_tabular_model.pth\"\nEPOCH_DIR_FINE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, \"fine_tune_epoch_losses.npy\")\nEPOCH_DIR_PRE = \"./hdpftl_trained_models/epochs\"",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "input_dim",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "input_dim = 79  # Your feature size\npretrain_classes = 5  # Suppose you pretrained with 5 classes\ntarget_classes = 10  # Suppose you pretrained with 5 classes\nGLOBAL_MODEL_PATH = \"./hdpftl_trained_models/global_model.pth\"\nFINETUNE_MODEL_PATH = \"./hdpftl_trained_models/fine_tuned_tabular_model.pth\"\nPRE_MODEL_PATH = \"./hdpftl_trained_models/pretrained_tabular_model.pth\"\nEPOCH_DIR_FINE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, \"fine_tune_epoch_losses.npy\")\nEPOCH_DIR_PRE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, \"pre_epoch_losses.npy\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "pretrain_classes",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "pretrain_classes = 5  # Suppose you pretrained with 5 classes\ntarget_classes = 10  # Suppose you pretrained with 5 classes\nGLOBAL_MODEL_PATH = \"./hdpftl_trained_models/global_model.pth\"\nFINETUNE_MODEL_PATH = \"./hdpftl_trained_models/fine_tuned_tabular_model.pth\"\nPRE_MODEL_PATH = \"./hdpftl_trained_models/pretrained_tabular_model.pth\"\nEPOCH_DIR_FINE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, \"fine_tune_epoch_losses.npy\")\nEPOCH_DIR_PRE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, \"pre_epoch_losses.npy\")\nPLOT_PATH = \"./hdpftl_plot_outputs/\"",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "target_classes",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "target_classes = 10  # Suppose you pretrained with 5 classes\nGLOBAL_MODEL_PATH = \"./hdpftl_trained_models/global_model.pth\"\nFINETUNE_MODEL_PATH = \"./hdpftl_trained_models/fine_tuned_tabular_model.pth\"\nPRE_MODEL_PATH = \"./hdpftl_trained_models/pretrained_tabular_model.pth\"\nEPOCH_DIR_FINE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, \"fine_tune_epoch_losses.npy\")\nEPOCH_DIR_PRE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, \"pre_epoch_losses.npy\")\nPLOT_PATH = \"./hdpftl_plot_outputs/\"\nPERSONALISED_MODEL_PATH_TEMPLATE = Template(\"./hdpftl_trained_models/personalized_model_client_${n}.pth\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "GLOBAL_MODEL_PATH",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "GLOBAL_MODEL_PATH = \"./hdpftl_trained_models/global_model.pth\"\nFINETUNE_MODEL_PATH = \"./hdpftl_trained_models/fine_tuned_tabular_model.pth\"\nPRE_MODEL_PATH = \"./hdpftl_trained_models/pretrained_tabular_model.pth\"\nEPOCH_DIR_FINE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, \"fine_tune_epoch_losses.npy\")\nEPOCH_DIR_PRE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, \"pre_epoch_losses.npy\")\nPLOT_PATH = \"./hdpftl_plot_outputs/\"\nPERSONALISED_MODEL_PATH_TEMPLATE = Template(\"./hdpftl_trained_models/personalized_model_client_${n}.pth\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "FINETUNE_MODEL_PATH",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "FINETUNE_MODEL_PATH = \"./hdpftl_trained_models/fine_tuned_tabular_model.pth\"\nPRE_MODEL_PATH = \"./hdpftl_trained_models/pretrained_tabular_model.pth\"\nEPOCH_DIR_FINE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, \"fine_tune_epoch_losses.npy\")\nEPOCH_DIR_PRE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, \"pre_epoch_losses.npy\")\nPLOT_PATH = \"./hdpftl_plot_outputs/\"\nPERSONALISED_MODEL_PATH_TEMPLATE = Template(\"./hdpftl_trained_models/personalized_model_client_${n}.pth\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "PRE_MODEL_PATH",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "PRE_MODEL_PATH = \"./hdpftl_trained_models/pretrained_tabular_model.pth\"\nEPOCH_DIR_FINE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, \"fine_tune_epoch_losses.npy\")\nEPOCH_DIR_PRE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, \"pre_epoch_losses.npy\")\nPLOT_PATH = \"./hdpftl_plot_outputs/\"\nPERSONALISED_MODEL_PATH_TEMPLATE = Template(\"./hdpftl_trained_models/personalized_model_client_${n}.pth\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "EPOCH_DIR_FINE",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "EPOCH_DIR_FINE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, \"fine_tune_epoch_losses.npy\")\nEPOCH_DIR_PRE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, \"pre_epoch_losses.npy\")\nPLOT_PATH = \"./hdpftl_plot_outputs/\"\nPERSONALISED_MODEL_PATH_TEMPLATE = Template(\"./hdpftl_trained_models/personalized_model_client_${n}.pth\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "EPOCH_FILE_FINE",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "EPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, \"fine_tune_epoch_losses.npy\")\nEPOCH_DIR_PRE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, \"pre_epoch_losses.npy\")\nPLOT_PATH = \"./hdpftl_plot_outputs/\"\nPERSONALISED_MODEL_PATH_TEMPLATE = Template(\"./hdpftl_trained_models/personalized_model_client_${n}.pth\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "EPOCH_DIR_PRE",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "EPOCH_DIR_PRE = \"./hdpftl_trained_models/epochs\"\nEPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, \"pre_epoch_losses.npy\")\nPLOT_PATH = \"./hdpftl_plot_outputs/\"\nPERSONALISED_MODEL_PATH_TEMPLATE = Template(\"./hdpftl_trained_models/personalized_model_client_${n}.pth\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "EPOCH_FILE_PRE",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "EPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, \"pre_epoch_losses.npy\")\nPLOT_PATH = \"./hdpftl_plot_outputs/\"\nPERSONALISED_MODEL_PATH_TEMPLATE = Template(\"./hdpftl_trained_models/personalized_model_client_${n}.pth\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "PLOT_PATH",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "PLOT_PATH = \"./hdpftl_plot_outputs/\"\nPERSONALISED_MODEL_PATH_TEMPLATE = Template(\"./hdpftl_trained_models/personalized_model_client_${n}.pth\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "PERSONALISED_MODEL_PATH_TEMPLATE",
+        "kind": 5,
+        "importPath": "hdpftl_utility.config",
+        "description": "hdpftl_utility.config",
+        "peekOfCode": "PERSONALISED_MODEL_PATH_TEMPLATE = Template(\"./hdpftl_trained_models/personalized_model_client_${n}.pth\")",
+        "detail": "hdpftl_utility.config",
+        "documentation": {}
+    },
+    {
+        "label": "setup_logging",
+        "kind": 2,
+        "importPath": "hdpftl_utility.log",
+        "description": "hdpftl_utility.log",
+        "peekOfCode": "def setup_logging(log_to_file=True):\n    log_format = \"%(asctime)s [%(levelname)s] %(message)s\"\n    logging.basicConfig(\n        filename=\"hdpftl_run.log\" if log_to_file else None,\n        level=logging.INFO,\n        format=log_format,\n        datefmt=\"%Y-%m-%d %H:%M:%S\",\n    )\ndef safe_log(message):\n    if message and message.strip():",
+        "detail": "hdpftl_utility.log",
+        "documentation": {}
+    },
+    {
+        "label": "safe_log",
+        "kind": 2,
+        "importPath": "hdpftl_utility.log",
+        "description": "hdpftl_utility.log",
+        "peekOfCode": "def safe_log(message):\n    if message and message.strip():\n        logging.info(message)",
+        "detail": "hdpftl_utility.log",
+        "documentation": {}
+    },
+    {
+        "label": "setup_device",
+        "kind": 2,
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "peekOfCode": "def setup_device():\n    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')\ndef make_dir(path):\n    if not os.path.exists(path):\n        os.makedirs(path)\n# ===== Timer Context Manager =====\n@contextmanager\ndef named_timer(name, writer=None, global_step=None, tag=None):\n    print(f\"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⏱️ Starting {name}...\")\n    start = time.time()",
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "make_dir",
+        "kind": 2,
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "peekOfCode": "def make_dir(path):\n    if not os.path.exists(path):\n        os.makedirs(path)\n# ===== Timer Context Manager =====\n@contextmanager\ndef named_timer(name, writer=None, global_step=None, tag=None):\n    print(f\"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⏱️ Starting {name}...\")\n    start = time.time()\n    yield\n    end = time.time()",
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "named_timer",
+        "kind": 2,
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "peekOfCode": "def named_timer(name, writer=None, global_step=None, tag=None):\n    print(f\"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⏱️ Starting {name}...\")\n    start = time.time()\n    yield\n    end = time.time()\n    elapsed = end - start\n    print(f\"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ {name} took {elapsed:.2f} seconds.\")\n    if writer and tag:\n        writer.add_scalar(f\"Timing/{tag}\", elapsed, global_step if global_step is not None else 0)\n# Example:",
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "time_resampling",
+        "kind": 2,
+        "importPath": "hdpftl_utility.utils",
+        "description": "hdpftl_utility.utils",
+        "peekOfCode": "def time_resampling(smote_type, X, y, k=5):\n    smote_classes = {\n        'smote': SMOTE,\n        'svm': SVMSMOTE,\n        'kmeans': KMeansSMOTE\n    }\n    sampler = smote_classes[smote_type](k_neighbors=k, random_state=42)\n    start = time.time()\n    X_res, y_res = sampler.fit_resample(X, y)\n    print(f\"⏱ {smote_type.upper()} took {time.time() - start:.2f} seconds\")",
+        "detail": "hdpftl_utility.utils",
+        "documentation": {}
+    },
+    {
+        "label": "TabularNet",
+        "kind": 6,
+        "importPath": "full_flow_tobedeleted",
+        "description": "full_flow_tobedeleted",
+        "peekOfCode": "class TabularNet(nn.Module):\n    def __init__(self, input_dim=3, output_dim=2):\n        super(TabularNet, self).__init__()\n        self.net = nn.Sequential(\n            nn.Linear(input_dim, 16),\n            nn.ReLU(),\n            nn.Linear(16, output_dim)\n        )\n    def forward(self, x):\n        return self.net(x)",
+        "detail": "full_flow_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "train_device_model",
+        "kind": 2,
+        "importPath": "full_flow_tobedeleted",
+        "description": "full_flow_tobedeleted",
+        "peekOfCode": "def train_device_model(base_model_fn, dataloader, device):\n    model = base_model_fn().to(device)\n    model.train()\n    optimizer = optim.Adam(model.parameters(), lr=0.005)\n    criterion = nn.CrossEntropyLoss()\n    for epoch in range(2):  # Tune as needed\n        for X, y in dataloader:\n            X, y = X.to(device), y.to(device)\n            optimizer.zero_grad()\n            loss = criterion(model(X), y)",
+        "detail": "full_flow_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "aggregate_fleet_models",
+        "kind": 2,
+        "importPath": "full_flow_tobedeleted",
+        "description": "full_flow_tobedeleted",
+        "peekOfCode": "def aggregate_fleet_models(models):\n    avg_model = copy.deepcopy(models[0])\n    for key in avg_model:\n        for i in range(1, len(models)):\n            avg_model[key] += models[i][key]\n        avg_model[key] = avg_model[key] / len(models)\n    return avg_model\n# ========== 4. Transfer + Personalize ==========\ndef transfer_and_personalize(global_model_weights, target_loader, base_model_fn, device):\n    model = base_model_fn().to(device)",
+        "detail": "full_flow_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "transfer_and_personalize",
+        "kind": 2,
+        "importPath": "full_flow_tobedeleted",
+        "description": "full_flow_tobedeleted",
+        "peekOfCode": "def transfer_and_personalize(global_model_weights, target_loader, base_model_fn, device):\n    model = base_model_fn().to(device)\n    model.load_state_dict(global_model_weights)\n    # Freeze all layers except last\n    for param in list(model.parameters())[:-2]:  # Freeze early layers\n        param.requires_grad = False\n    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001)\n    criterion = nn.CrossEntropyLoss()\n    model.train()\n    for epoch in range(1):  # Fine-tuning",
+        "detail": "full_flow_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "hdpftl_pipeline",
+        "kind": 2,
+        "importPath": "full_flow_tobedeleted",
+        "description": "full_flow_tobedeleted",
+        "peekOfCode": "def hdpftl_pipeline(fleet_dataloaders, base_model_fn, device):\n    fleet_models = []\n    for fleet_id, device_loaders in enumerate(fleet_dataloaders):\n        print(f\"\\n🚛 Fleet {fleet_id + 1} - Aggregating Device Models\")\n        device_models = []\n        for loader in device_loaders:\n            weights = train_device_model(base_model_fn, loader, device)\n            device_models.append(weights)\n        fleet_model = aggregate_fleet_models(device_models)\n        fleet_models.append(fleet_model)",
+        "detail": "full_flow_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "create_fleet_data",
+        "kind": 2,
+        "importPath": "full_flow_tobedeleted",
+        "description": "full_flow_tobedeleted",
+        "peekOfCode": "def create_fleet_data(num_fleets=200, devices_per_fleet=300, samples_per_device=200):\n    fleet_dataloaders = []\n    for _ in range(num_fleets):\n        fleet = []\n        for _ in range(devices_per_fleet):\n            X = torch.tensor(np.random.normal(0, 1, (samples_per_device, 3)), dtype=torch.float32)\n            y = torch.tensor(np.random.choice([0, 1], size=(samples_per_device,), p=[0.9, 0.1]), dtype=torch.long)\n            dataset = TensorDataset(X, y)\n            loader = DataLoader(dataset, batch_size=32, shuffle=True)\n            fleet.append(loader)",
+        "detail": "full_flow_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "evaluate",
+        "kind": 2,
+        "importPath": "full_flow_tobedeleted",
+        "description": "full_flow_tobedeleted",
+        "peekOfCode": "def evaluate(model, device):\n    model.eval()\n    with torch.no_grad():\n        X = torch.tensor(np.random.normal(0, 1, (100, 3)), dtype=torch.float32).to(device)\n        y = torch.tensor(np.random.choice([0, 1], size=(100,)), dtype=torch.long).to(device)\n        outputs = model(X)\n        preds = torch.argmax(outputs, dim=1)\n        acc = (preds == y).float().mean()\n        print(f\"\\n✅ Personalized Model Test Accuracy: {acc.item():.2f}\")\n# ========== 8. Main ==========",
+        "detail": "full_flow_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "full_flow_tobedeleted",
+        "description": "full_flow_tobedeleted",
+        "peekOfCode": "def main():\n    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\n    print(\"📡 Running HDPFTL Pipeline for IIoT...\\n\")\n    fleet_dataloaders = create_fleet_data()\n    personalized_model = hdpftl_pipeline(fleet_dataloaders, TabularNet, device)\n    evaluate(personalized_model, device)\nif __name__ == \"__main__\":\n    main()",
+        "detail": "full_flow_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "TabularNet",
+        "kind": 6,
+        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
+        "description": "hdpftl_pipeline_dummy_tobedeleted",
+        "peekOfCode": "class TabularNet(nn.Module):\n    def __init__(self, input_dim=3, output_dim=2):\n        super(TabularNet, self).__init__()\n        self.net = nn.Sequential(\n            nn.Linear(input_dim, 16),\n            nn.ReLU(),\n            nn.Linear(16, output_dim)\n        )\n    def forward(self, x):\n        return self.net(x)",
+        "detail": "hdpftl_pipeline_dummy_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "train_device_model",
+        "kind": 2,
+        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
+        "description": "hdpftl_pipeline_dummy_tobedeleted",
+        "peekOfCode": "def train_device_model(base_model_fn, dataloader, device):\n    model = base_model_fn().to(device)\n    model.train()\n    optimizer = optim.Adam(model.parameters(), lr=0.005)\n    criterion = nn.CrossEntropyLoss()\n    for epoch in range(2):  # Tune as needed\n        for X, y in dataloader:\n            X, y = X.to(device), y.to(device)\n            optimizer.zero_grad()\n            loss = criterion(model(X), y)",
+        "detail": "hdpftl_pipeline_dummy_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "aggregate_fleet_models",
+        "kind": 2,
+        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
+        "description": "hdpftl_pipeline_dummy_tobedeleted",
+        "peekOfCode": "def aggregate_fleet_models(models):\n    avg_model = copy.deepcopy(models[0])\n    for key in avg_model:\n        for i in range(1, len(models)):\n            avg_model[key] += models[i][key]\n        avg_model[key] = avg_model[key] / len(models)\n    return avg_model\n# ========== 4. Transfer + Personalize ==========\ndef transfer_and_personalize(global_model_weights, target_loader, base_model_fn, device):\n    model = base_model_fn().to(device)",
+        "detail": "hdpftl_pipeline_dummy_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "transfer_and_personalize",
+        "kind": 2,
+        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
+        "description": "hdpftl_pipeline_dummy_tobedeleted",
+        "peekOfCode": "def transfer_and_personalize(global_model_weights, target_loader, base_model_fn, device):\n    model = base_model_fn().to(device)\n    model.load_state_dict(global_model_weights)\n    # Freeze all layers except last\n    for param in list(model.parameters())[:-2]:  # Freeze early layers\n        param.requires_grad = False\n    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001)\n    criterion = nn.CrossEntropyLoss()\n    model.train()\n    for epoch in range(1):  # Fine-tuning",
+        "detail": "hdpftl_pipeline_dummy_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "hdpftl_pipeline_dummy",
+        "kind": 2,
+        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
+        "description": "hdpftl_pipeline_dummy_tobedeleted",
+        "peekOfCode": "def hdpftl_pipeline_dummy(fleet_dataloaders, base_model_fn, device):\n    fleet_models = []\n    for fleet_id, device_loaders in enumerate(fleet_dataloaders):\n        print(f\"\\n🚛 Fleet {fleet_id + 1} - Aggregating Device Models\")\n        device_models = []\n        for loader in device_loaders:\n            weights = train_device_model(base_model_fn, loader, device)\n            device_models.append(weights)\n        fleet_model = aggregate_fleet_models(device_models)\n        fleet_models.append(fleet_model)",
+        "detail": "hdpftl_pipeline_dummy_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "detect_anomalies_isolation_forest",
+        "kind": 2,
+        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
+        "description": "hdpftl_pipeline_dummy_tobedeleted",
+        "peekOfCode": "def detect_anomalies_isolation_forest(X_np):\n    scaler = StandardScaler()\n    X_scaled = scaler.fit_transform(X_np)\n    iso_forest = IsolationForest(contamination=0.05, random_state=42)\n    preds = iso_forest.fit_predict(X_scaled)\n    # Keep only normal samples (pred = 1)\n    mask = preds == 1\n    return X_np[mask], mask\ndef create_fleet_data(num_fleets=2, devices_per_fleet=3, samples_per_device=200, input_dim=3):\n    fleet_dataloaders = []",
+        "detail": "hdpftl_pipeline_dummy_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "create_fleet_data",
+        "kind": 2,
+        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
+        "description": "hdpftl_pipeline_dummy_tobedeleted",
+        "peekOfCode": "def create_fleet_data(num_fleets=2, devices_per_fleet=3, samples_per_device=200, input_dim=3):\n    fleet_dataloaders = []\n    for _ in range(num_fleets):\n        fleet = []\n        for _ in range(devices_per_fleet):\n            # Simulate device hdpftl_data\n            X_np = np.random.normal(0, 1, (samples_per_device, input_dim))\n            y_np = np.random.choice([0, 1], size=(samples_per_device,), p=[0.9, 0.1])  # Simulated labels\n            # Apply anomaly detection\n            X_clean, valid_mask = detect_anomalies_isolation_forest(X_np)",
+        "detail": "hdpftl_pipeline_dummy_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "evaluate",
+        "kind": 2,
+        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
+        "description": "hdpftl_pipeline_dummy_tobedeleted",
+        "peekOfCode": "def evaluate(model, device):\n    model.eval()\n    with torch.no_grad():\n        X = torch.tensor(np.random.normal(0, 1, (100, 3)), dtype=torch.float32).to(device)\n        y = torch.tensor(np.random.choice([0, 1], size=(100,)), dtype=torch.long).to(device)\n        outputs = model(X)\n        preds = torch.argmax(outputs, dim=1)\n        acc = (preds == y).float().mean()\n        print(f\"\\n✅ Personalized Model Test Accuracy: {acc.item():.2f}\")\n# ========== 8. Main ==========",
+        "detail": "hdpftl_pipeline_dummy_tobedeleted",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "hdpftl_pipeline_dummy_tobedeleted",
+        "description": "hdpftl_pipeline_dummy_tobedeleted",
+        "peekOfCode": "def main():\n    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\n    print(\"📡 Running HDPFTL Pipeline for IIoT...\\n\")\n    fleet_dataloaders = create_fleet_data()\n    personalized_model = hdpftl_pipeline_dummy(fleet_dataloaders, TabularNet, device)\n    evaluate(personalized_model, device)\nif __name__ == \"__main__\":\n    main()",
+        "detail": "hdpftl_pipeline_dummy_tobedeleted",
+        "documentation": {}
+    }
+]

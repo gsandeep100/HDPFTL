@@ -90,7 +90,7 @@ def safe_split(tensor, proportions, dim=0):
 
 
 # --- Main HDPFTL pipeline ---
-def hdpftl_pipeline(X_train, y_train, base_model_fn, client_partitions,writer=None):
+def hdpftl_pipeline(X_train, y_train, base_model_fn, client_partitions, writer=None):
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     #######################  TRAINING  #########################
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -111,21 +111,21 @@ def hdpftl_pipeline(X_train, y_train, base_model_fn, client_partitions,writer=No
 
         with named_timer("train_device_model", writer, tag="train_device_model"):
             trained_model = train_device_model(
-            model,
-            X_train[idx],
-            y_train[idx],
-            val_data=X_val_tensor,
-            val_labels=y_val_tensor,
-            epochs=20,
-            lr=0.001,
-            early_stopping_patience=5,
-            verbose=True
-        )
+                model,
+                X_train[idx],
+                y_train[idx],
+                val_data=X_val_tensor,
+                val_labels=y_val_tensor,
+                epochs=20,
+                lr=0.001,
+                early_stopping_patience=5,
+                verbose=True
+            )
         local_models.append(trained_model)
 
     with named_timer("Model Aggregation", writer, tag="Aggregation"):
         global_model, personalized_models = aggregate_fed_avg(local_models, base_model_fn, X_train, y_train,
-                                                          client_partitions)
+                                                              client_partitions)
 
     # global_model, personalized_models = aggregate_bayesian(local_models, base_model_fn, X_train, y_train,client_partitions)
 
