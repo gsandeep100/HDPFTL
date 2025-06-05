@@ -16,6 +16,7 @@ import warnings
 
 import numpy as np
 import torch
+from torch.utils.tensorboard import SummaryWriter
 
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model, evaluate_global_model_fromfile
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client, \
@@ -28,7 +29,7 @@ from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_training.hdpftl_pre_training.targetclass import target_class
 from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA, GLOBAL_MODEL_PATH, EPOCH_FILE_FINE, EPOCH_FILE_PRE
 from hdpftl_utility.log import setup_logging, safe_log
-from hdpftl_utility.utils import setup_device
+from hdpftl_utility.utils import named_timer, setup_device
 
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 
@@ -37,9 +38,11 @@ if __name__ == "__main__":
     safe_log("============================================================================")
     safe_log("======================Process Started=======================================")
     safe_log("============================================================================")
+    writer = SummaryWriter(log_dir="runs/hdpftl_pipeline")
 
     # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
-    X_train, X_test, y_train, y_test = preprocess_data(OUTPUT_DATASET_ALL_DATA)
+    with named_timer("Preprocessing", writer, tag="Preprocessing"):
+        X_train, X_test, y_train, y_test = preprocess_data(OUTPUT_DATASET_ALL_DATA)
     safe_log("[1]Data preprocessing completed.")
     device = setup_device()
     num_classes = len(torch.unique(y_train))
@@ -50,27 +53,33 @@ if __name__ == "__main__":
     Smaller alpha → more skewed, clients have few classes dominating.
     Larger alpha → more uniform data distribution across clients.
     """
-    client_partitions, client_data_dict = dirichlet_partition(X_train, y_train, num_classes, alpha=0.3)
-    client_partitions_test, client_data_dict_test = dirichlet_partition(X_test, y_test, num_classes, alpha=0.3)
+    with named_timer("dirichlet_partition", writer, tag="dirichlet_partition"):
+        client_partitions, client_data_dict = dirichlet_partition(X_train, y_train, num_classes, alpha=0.3)
+        client_partitions_test, client_data_dict_test = dirichlet_partition(X_test, y_test, num_classes, alpha=0.3)
     safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
 
     # If fine-tuned model exists, load and return it
     if not os.path.exists(GLOBAL_MODEL_PATH):
         # Step 2: Pretrain global model
-        model = pretrain_class()
+        with named_timer("pretrain_class", writer, tag="pretrain_class"):
+            model = pretrain_class()
         safe_log("[2]Pretraining completed.")
         # Step 3: Instantiate target model and train on device
-        base_model = target_class()
+        with named_timer("target_class", writer, tag="target_class"):
+            base_model = target_class()
         safe_log("[3]Fine Tuning completed.")
 
-        global_model, personalized_models = hdpftl_pipeline(X_train, y_train, base_model, client_partitions)
+        with named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
+            global_model, personalized_models = hdpftl_pipeline(X_train, y_train, base_model, client_partitions)
 
     #######################  EVALUATION LOAD FROM FILE #########
     else:
         # Load global model
-        global_model = evaluate_global_model_fromfile()
+        with named_timer("Evaluate Global Model From File", writer, tag="EvalFromFile"):
+            global_model = evaluate_global_model_fromfile()
         # Load personalized models
-        personalized_models = load_personalized_models_fromfile()
+        with named_timer("Evaluate Personalized Models From File", writer, tag="PersonalizedEval"):
+            personalized_models = load_personalized_models_fromfile()
 
     # Evaluate
     # global_accs = evaluate_global_model(global_model, X_test, y_test, client_partitions_test)
@@ -84,7 +93,8 @@ if __name__ == "__main__":
     Use personalized models to report per - client performance"""
 
     safe_log("\n[10]Evaluating personalized models per client on client partitioned data...")
-    personalised_acc = evaluate_personalized_models_per_client(personalized_models, X_test, y_test,
+    with named_timer("Evaluate Personalized Models", writer, tag="PersonalizedEval"):
+        personalised_acc = evaluate_personalized_models_per_client(personalized_models, X_test, y_test,
                                                                client_partitions_test)
     # for cid, model in personalized_models.items():
     #     acc = evaluate_personalized_models_per_client(model, X_test[client_partitions_test[cid]],
@@ -92,10 +102,12 @@ if __name__ == "__main__":
     #     safe_log(f"Client {cid} Accuracy for Personalized Model for clients: {acc[cid]:.4f}")
 
     safe_log("[11]Evaluating global model on client partitioned dataset per client...")
-    client_accs = evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
+    with named_timer("Evaluate Personalized Models Per Client", writer, tag="PersonalizedEvalperClient"):
+        client_accs = evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
 
     safe_log("[12] Evaluating global model on global dataset...")
-    global_acc = evaluate_global_model(global_model, X_test, y_test)
+    with named_timer("Evaluate Global Model", writer, tag="GlobalEval"):
+        global_acc = evaluate_global_model(global_model, X_test, y_test)
 
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     #######################  PLOT  #############################

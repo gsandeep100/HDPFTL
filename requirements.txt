@@ -7,3 +7,4 @@ jupyter
 torch
 torchvision
 imbalanced-learn
+tensorboard

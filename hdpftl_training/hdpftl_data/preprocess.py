@@ -15,6 +15,7 @@ import glob
 import os
 from collections import Counter
 from glob import glob
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -22,9 +23,116 @@ import torch
 from imblearn.over_sampling import SVMSMOTE
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
-
 from hdpftl_training.hdpftl_data.sampling import stratified_downsample
+from hdpftl_utility.utils import named_timer
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.pipeline import Pipeline
+from imblearn.over_sampling import SMOTE
 
+import pandas as pd
+import numpy as np
+from collections import Counter
+
+"""
+🎯 What is PCA (Principal Component Analysis)?
+PCA is a dimensionality reduction technique that transforms a dataset with many features 
+into a smaller set of new variables (called principal components) that still contain most of the original 
+information.
+Compressing data — like converting a full HD photo into a smaller version while keeping key details intact.
+
+"""
+
+
+from sklearn.decomposition import PCA
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.pipeline import Pipeline
+from collections import Counter
+import pandas as pd
+import warnings
+
+# 🔍 Step 0: Profile
+def profile_dataset(X, y):
+    print("📐 Feature shape:")
+    print(f"  ➤ X shape: {X.shape}")
+    
+    print("\n📊 Class distribution:")
+    counts = Counter(y)
+    for label, count in counts.items():
+        print(f"  ➤ Class {label}: {count} samples")
+    
+    imbalance_ratio = max(counts.values()) / min(counts.values())
+    print(f"\n⚖️  Imbalance Ratio: {imbalance_ratio:.2f}")
+    
+    print("\n🔍 Data type inspection:")
+    print(pd.DataFrame(X).dtypes.value_counts())
+
+# 🧪 Step 1: PCA
+def reduce_dim(X, n_components=30):
+    print(f"\n🔧 Reducing dimensions from {X.shape[1]} → {n_components} using PCA")
+    pca = PCA(n_components=n_components, random_state=42)
+    return pca.fit_transform(X)
+
+# ⚖️ Step 2: SMOTE
+def fast_safe_smote(X, y, k_neighbors=5):
+    counts = Counter(y)
+    min_class_size = min(counts.values())
+    k = min(k_neighbors, min_class_size - 1)
+    if k < 1:
+        warnings.warn("Too few samples for SMOTE; skipping.")
+        return X, y
+    print(f"\n⚡ Applying SMOTE with k={k}")
+    sm = SMOTE(k_neighbors=k, random_state=42)
+    result = sm.fit_resample(X, y)
+    # Ensure only X and y are returned, even if more values are present
+    if isinstance(result, tuple) and len(result) >= 2:
+        return result[0], result[1]
+    return result
+
+# 🌀 Step 3: Hybrid
+def hybrid_balance(X, y):
+    print("\n🌀 Applying hybrid balancing (undersample + SMOTE)")
+    under = RandomUnderSampler(sampling_strategy='auto', random_state=42)
+    over = SMOTE(k_neighbors=5, random_state=42)
+    pipeline = Pipeline([('under', under), ('over', over)])
+    try:
+        result = pipeline.fit_resample(X, y)
+        if result is None:
+            warnings.warn("Pipeline fit_resample returned None.")
+            return X, y
+        X_res, y_res = result
+        return X_res, y_res
+    except Exception as e:
+        warnings.warn(f"Hybrid balancing failed: {e}")
+        return X, y
+
+# 🎯 Master Function
+# 🎯 Master function with pre-sampling
+def prepare_data(X, y, strategy='pca_smote', n_components=30, pre_sample=False, sample_fraction=0.1):
+    print("📊 Running prepare_data with strategy:", strategy)
+    
+    # Optional downsampling
+    if pre_sample:
+        X, y = stratified_downsample(X, y, fraction=sample_fraction)
+    
+    profile_dataset(X, y)
+    
+    if strategy == 'pca_smote':
+        X_reduced = reduce_dim(X, n_components=n_components)
+        X_final, y_final = fast_safe_smote(X_reduced, y)
+    elif strategy == 'hybrid':
+        X_final, y_final = hybrid_balance(X, y)
+    elif strategy == 'smote_only':
+        X_final, y_final = fast_safe_smote(X, y)
+    elif strategy == 'none':
+        print("\n🚫 No resampling applied. Returning original X, y.")
+        X_final, y_final = X, y
+    else:
+        raise ValueError("❌ Invalid strategy. Choose from 'pca_smote', 'hybrid', 'smote_only', or 'none'.")
+    
+    print("\n✅ Final shape:", X_final.shape)
+    print("✅ Final class distribution:", Counter(y_final))
+    return X_final, y_final
 
 def safe_smote(X, y):
     counts = Counter(y)
@@ -126,10 +234,11 @@ def safe_clean_dataframe(df: pd.DataFrame,
 
     return df
 
-def preprocess_data(path):
+def preprocess_data(path, writer=None):
     # all_files = glob.glob(path + "*.csv")
     # df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)
-    df = load_and_label_all(path)
+    with named_timer("load_and_label_all", writer, tag="load_and_label_all"):
+        df = load_and_label_all(path)
     # Replace infinities and -999 or '?' with NaN
     scaler = MinMaxScaler()
     features = df.columns.difference(['Label'])
@@ -137,7 +246,8 @@ def preprocess_data(path):
     X, y = df[features], df['Label']
 
     # downsampling
-    X_small, y_small = stratified_downsample(X, y, fraction=0.2)
+    with named_timer("downsample", writer, tag="downsample"):
+        X_small, y_small = stratified_downsample(X, y, fraction=0.2)
 
     # print(df.columns)
 
@@ -150,19 +260,25 @@ def preprocess_data(path):
     #     ('svm_smote', SVMSMOTE(random_state=42)),
     #     ('smote_enn', SMOTEENN(random_state=42))
     # ])
-    smote_result = safe_smote(X_small, y_small)
-    if smote_result is None:
-        X_final, y_final = X_small, y_small
-    elif isinstance(smote_result, tuple) and len(smote_result) >= 2:
-        X_final, y_final = smote_result[:2]
-    else:
-        X_final, y_final = X_small, y_small
+    with named_timer("safe_smote", writer, tag="safe_smote"):
+        # Call the function with your dataset
+        X_final, y_final = prepare_data(X, y, strategy='hybrid', pre_sample=True, sample_fraction=0.2)
+        """
+        smote_result = safe_smote(X_small, y_small)
+        if smote_result is None:
+            X_final, y_final = X_small, y_small
+        elif isinstance(smote_result, tuple) and len(smote_result) >= 2:
+            X_final, y_final = smote_result[:2]
+        else:
+            X_final, y_final = X_small, y_small
+        """
     # Scale features
     scaler = StandardScaler()
     if isinstance(X_final, pd.Series):
         X_final = X_final.to_frame()
     X = scaler.fit_transform(X_final)
-    X_train, X_test, y_train, y_test = train_test_split(X, y_final, test_size=0.2, random_state=42, stratify=y_final)
+    with named_timer("train_test_split", writer, tag="train_test_split"):
+        X_train, X_test, y_train, y_test = train_test_split(X, y_final, test_size=0.2, random_state=42, stratify=y_final)
     # Convert to PyTorch tensors
     X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
     X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
