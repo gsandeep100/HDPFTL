@@ -133,25 +133,25 @@ if __name__ == "__main__":
     tk.Label(root, text="Choose a Plot Type", font=("Arial", 16)).pack(pady=10)
 
     # Buttons for each plot type
-    tk.Button(root, text="Client Labels Distribution", width=20,
+    tk.Button(root, text="Client Labels Distribution", width=30,
               command=lambda: plot_class_distribution_per_client(client_data_dict)).pack(pady=5)
 
-    tk.Button(root, text="Confusion Matrix", width=20,
+    tk.Button(root, text="Confusion Matrix", width=30,
               command=lambda: plot_confusion_matrix(y_true=y_test, y_pred=predictions,
                                                     class_names=[str(i) for i in range(int(num_classes))],
                                                     normalize=True)).pack(pady=5)
-    tk.Button(root, text="Pre Epoch Losses", width=20,
+    tk.Button(root, text="Pre Epoch Losses", width=30,
               command=lambda: plot_training_loss(losses=np.load(EPOCH_FILE_PRE), name='epoch_loss_pre.png',
                                                  label='Pre Epoch Losses')).pack(pady=5)
-    tk.Button(root, text="Fine Tuning Epoch Losses", width=20,
+    tk.Button(root, text="Fine Tuning Epoch Losses", width=30,
               command=lambda: plot_training_loss(losses=np.load(EPOCH_FILE_FINE), name='epoch_loss_fine.png',
                                                  label='Fine Tuning Epoch Losses')).pack(pady=5)
-    tk.Button(root, text="Global/Personalized Acc/Client", width=20,
+    tk.Button(root, text="Global/Personalized Acc/Client", width=30,
               command=lambda: plot_accuracy_comparison(client_accs, personalised_acc)).pack(pady=5)
-    tk.Button(root, text="Per-Client Accuracy", width=20,
+    tk.Button(root, text="Per-Client Accuracy", width=30,
               command=lambda: plot_client_accuracies(client_accs, global_acc=global_acc,
                                                      title="Per-Client vs Global Model Accuracy")).pack(pady=5)
-    tk.Button(root, text="Client Acc: Personalized/Global", width=20,
+    tk.Button(root, text="Client Acc: Personalized/Global", width=30,
               command=lambda: plot_personalized_vs_global(personalised_acc, global_acc)).pack(pady=5)
 
     root.mainloop()
