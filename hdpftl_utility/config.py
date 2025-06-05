@@ -122,7 +122,7 @@ OUTPUT_DATASET_PATH_2023 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2023/"
 OUTPUT_DATASET_PATH_2024 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/"
 OUTPUT_DATASET_ALL_DATA = "./hdpftl_training/hdpftl_dataset/AllData/"
 
-BATCH_SIZE = 32
+BATCH_SIZE = 5
 NUM_CLIENTS = 7
 NUM_DEVICE = 2
 CLIENTS_PER_AGGREGATOR = 5

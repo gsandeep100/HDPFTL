@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn_personalized
-from hdpftl_utility.config import PERSONALISED_MODEL_PATH_TEMPLATE, NUM_CLIENTS
+from hdpftl_utility.config import BATCH_SIZE, PERSONALISED_MODEL_PATH_TEMPLATE, NUM_CLIENTS
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
 
@@ -41,7 +41,7 @@ def load_personalized_models_fromfile():
 
 
 # evaluate_personalized_models function! This version works for evaluate personalized models per client
-def evaluate_personalized_models_per_client(personalized_models, X, y, client_partitions_test, batch_size=32):
+def evaluate_personalized_models_per_client(personalized_models, X, y, client_partitions_test):
     accs = {}
     device = setup_device()
 
@@ -56,7 +56,7 @@ def evaluate_personalized_models_per_client(personalized_models, X, y, client_pa
         x_client = X[idx].to(device)
         y_client = y[idx].to(device)
 
-        loader = DataLoader(TensorDataset(x_client, y_client), batch_size=batch_size)
+        loader = DataLoader(TensorDataset(x_client, y_client),BATCH_SIZE)
 
         correct, total = 0, 0
         with torch.no_grad():
@@ -79,7 +79,7 @@ def evaluate_personalized_models_per_client(personalized_models, X, y, client_pa
 
 
 # Client accuracy for Global model
-def evaluate_per_client(global_model, X, y, client_partitions_test, batch_size=32):
+def evaluate_per_client(global_model, X, y, client_partitions_test):
     accs = {}
     device = setup_device()
     model = global_model.to(device)
@@ -93,7 +93,7 @@ def evaluate_per_client(global_model, X, y, client_partitions_test, batch_size=3
         x_client = X[idx].to(device)
         y_client = y[idx].to(device)
 
-        loader = DataLoader(TensorDataset(x_client, y_client), batch_size=batch_size)
+        loader = DataLoader(TensorDataset(x_client, y_client), BATCH_SIZE)
 
         correct, total = 0, 0
         with torch.no_grad():

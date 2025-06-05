@@ -118,7 +118,6 @@ def hdpftl_pipeline(X_train, y_train, base_model_fn, client_partitions,writer=No
             val_labels=y_val_tensor,
             epochs=20,
             lr=0.001,
-            batch_size=32,
             early_stopping_patience=5,
             verbose=True
         )

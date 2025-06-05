@@ -40,7 +40,7 @@ def pretrain_class():
     pretrain_labels = torch.randint(0, pretrain_classes, (2000,))
 
     pretrain_dataset = TensorDataset(pretrain_features, pretrain_labels)
-    pretrain_loader = DataLoader(pretrain_dataset, batch_size=32, shuffle=True)
+    pretrain_loader = DataLoader(pretrain_dataset, shuffle=True)
 
     # Create model for pretraining
     pretrain_model = TabularNet(input_dim, pretrain_classes).to(device)

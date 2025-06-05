@@ -19,7 +19,7 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import input_dim, target_classes, FINETUNE_MODEL_PATH, EPOCH_DIR_FINE, EPOCH_FILE_FINE
+from hdpftl_utility.config import BATCH_SIZE, input_dim, target_classes, FINETUNE_MODEL_PATH, EPOCH_DIR_FINE, EPOCH_FILE_FINE
 from hdpftl_utility.utils import setup_device
 
 
@@ -35,8 +35,8 @@ def target_class():
     X_train, X_val, y_train, y_val = train_test_split(
         target_features, target_labels, test_size=0.2, random_state=42
     )
-    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=32, shuffle=True)
-    val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=32, shuffle=False)
+    train_loader = DataLoader(TensorDataset(X_train, y_train), BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(TensorDataset(X_val, y_val), BATCH_SIZE, shuffle=False)
 
     # 3. Load pretrained model
     transfer_model = TabularNet(input_dim, target_classes).to(device)

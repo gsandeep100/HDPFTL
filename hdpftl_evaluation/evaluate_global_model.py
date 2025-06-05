@@ -14,7 +14,7 @@ def evaluate_global_model_fromfile():
     return global_model
 
 
-def evaluate_global_model(model, X_test, y_test, batch_size=32):
+def evaluate_global_model(model, X_test, y_test):
     safe_log("[4] Evaluating global model...")
     device = setup_device()
 
@@ -34,7 +34,7 @@ def evaluate_global_model(model, X_test, y_test, batch_size=32):
         X_test = X_test.to(device)
         y_test = y_test.to(device)
         assert len(X_test) == len(y_test), "Mismatch in number of samples and labels"
-        dataloader = DataLoader(TensorDataset(X_test, y_test), batch_size=batch_size)
+        dataloader = DataLoader(TensorDataset(X_test, y_test))
         correct, total = 0, 0
 
         for x, y in dataloader:
