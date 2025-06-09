@@ -180,3 +180,4 @@ cython_debug/
 # hdpftl_dataset
 *.csv
 .local.*
+*.json
