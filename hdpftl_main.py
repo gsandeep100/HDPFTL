@@ -24,16 +24,18 @@ from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_p
 from hdpftl_plotting.plot import plot_client_accuracies, plot_personalized_vs_global, plot_confusion_matrix, \
     plot_accuracy_comparison, plot_training_loss, plot_class_distribution_per_client
 from hdpftl_training.hdpftl_data.preprocess import preprocess_data
-from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition
+from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition_with_devices
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_training.hdpftl_pre_training.targetclass import target_class
-from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA, GLOBAL_MODEL_PATH, EPOCH_FILE_FINE, EPOCH_FILE_PRE
+from hdpftl_utility.config import GLOBAL_MODEL_PATH, EPOCH_FILE_FINE, EPOCH_FILE_PRE, input_dim, FINETUNE_MODEL_PATH
 from hdpftl_utility.log import setup_logging, safe_log
 from hdpftl_utility.utils import named_timer, setup_device
 
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 if __name__ == "__main__":
+    global_model = None
+    personalized_models = None
     setup_logging()
     safe_log("============================================================================")
     safe_log("======================Process Started=======================================")
@@ -42,10 +44,9 @@ if __name__ == "__main__":
 
     # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
     with named_timer("Preprocessing", writer, tag="Preprocessing"):
-        X_train, X_test, y_train, y_test = preprocess_data(OUTPUT_DATASET_ALL_DATA)
+        X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data()
     safe_log("[1]Data preprocessing completed.")
     device = setup_device()
-    num_classes = len(torch.unique(y_train))
     """
     dirichlet_partition is a standard technique to simulate non-IID data — 
     and it's commonly used in federated learning experiments to control the degree of 
@@ -53,24 +54,31 @@ if __name__ == "__main__":
     Smaller alpha → more skewed, clients have few classes dominating.
     Larger alpha → more uniform data distribution across clients.
     """
-    with named_timer("dirichlet_partition", writer, tag="dirichlet_partition"):
-        client_partitions, client_data_dict = dirichlet_partition(X_train, y_train, num_classes, alpha=0.3)
-        client_partitions_test, client_data_dict_test = dirichlet_partition(X_test, y_test, num_classes, alpha=0.3)
-    safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
 
     # If fine-tuned model exists, load and return it
     if not os.path.exists(GLOBAL_MODEL_PATH):
         # Step 2: Pretrain global model
         with named_timer("pretrain_class", writer, tag="pretrain_class"):
-            model = pretrain_class()
+            pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=input_dim, early_stop_patience=10)
         safe_log("[2]Pretraining completed.")
         # Step 3: Instantiate target model and train on device
         with named_timer("target_class", writer, tag="target_class"):
-            base_model = target_class()
+            base_model = target_class(
+                X_finetune,
+                y_finetune,
+                input_dim=X_finetune.shape[1],
+                target_classes=len(np.unique(y_finetune)),
+                model_path=FINETUNE_MODEL_PATH)
+
         safe_log("[3]Fine Tuning completed.")
 
+        with named_timer("dirichlet_partition", writer, tag="dirichlet_partition"):
+            client_data_dict, hierarchical_data = dirichlet_partition_with_devices(X_final, y_final, alpha=0.3)
+            client_data_dict_test, hierarchical_data_test = dirichlet_partition_with_devices(X_test, y_test, alpha=0.3)
+
+        safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
         with named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
-            global_model, personalized_models = hdpftl_pipeline(X_train, y_train, base_model, client_partitions)
+            global_model, personalized_models = hdpftl_pipeline(base_model, hierarchical_data)
 
     #######################  EVALUATION LOAD FROM FILE #########
     else:
@@ -95,7 +103,7 @@ if __name__ == "__main__":
     safe_log("\n[10]Evaluating personalized models per client on client partitioned data...")
     with named_timer("Evaluate Personalized Models", writer, tag="PersonalizedEval"):
         personalised_acc = evaluate_personalized_models_per_client(personalized_models, X_test, y_test,
-                                                                   client_partitions_test)
+                                                                   client_data_dict_test)
     # for cid, model in personalized_models.items():
     #     acc = evaluate_personalized_models_per_client(model, X_test[client_partitions_test[cid]],
     #                                                   y_test[client_partitions_test[cid]], client_partitions_test)
@@ -103,7 +111,7 @@ if __name__ == "__main__":
 
     safe_log("[11]Evaluating global model on client partitioned dataset per client...")
     with named_timer("Evaluate Personalized Models Per Client", writer, tag="PersonalizedEvalperClient"):
-        client_accs = evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
+        client_accs = evaluate_per_client(global_model, X_test, y_test, client_data_dict_test)
 
     safe_log("[12] Evaluating global model on global dataset...")
     with named_timer("Evaluate Global Model", writer, tag="GlobalEval"):

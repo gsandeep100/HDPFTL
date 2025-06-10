@@ -1,7 +1,6 @@
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from hdpftl_evaluation.load_model import load_global_model
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn_global
 from hdpftl_utility.config import GLOBAL_MODEL_PATH
 from hdpftl_utility.log import safe_log
@@ -9,9 +8,22 @@ from hdpftl_utility.utils import setup_device
 
 
 def evaluate_global_model_fromfile():
-    global_model = load_global_model(create_model_fn_global(), GLOBAL_MODEL_PATH)
-    global_model.eval()
-    return global_model
+    device = setup_device()
+
+    try:
+        # Instantiate architecture
+        global_model = create_model_fn_global().to(device)
+
+        # Load saved weights
+        global_model.load_state_dict(torch.load(GLOBAL_MODEL_PATH, map_location=device))
+        global_model.eval()
+        print("✅ Global model loaded and ready for evaluation.")
+        return global_model
+
+    except Exception as e:
+        print("❌ Failed to load global model.")
+        print(f"Error: {e}")
+        return None
 
 
 def evaluate_global_model(model, X_test, y_test):

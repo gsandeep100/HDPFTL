@@ -16,21 +16,30 @@ from hdpftl_utility.utils import setup_device
 
 
 def load_personalized_models_fromfile():
+    """
+    Loads personalized models for each client from disk.
+
+    Returns:
+        List[nn.Module]: List of models, one per client, set to eval mode.
+    """
     personalized_models = []
     device = setup_device()
 
     for cid in range(NUM_CLIENTS):
         model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)
-        model = create_model_fn_personalized()
-        model = model.to(device)
+        model = create_model_fn_personalized().to(device)
 
         if os.path.exists(model_path):
             try:
                 state_dict = torch.load(model_path, map_location=device)
-                model.load_state_dict(state_dict)
-                print(f"✅ Loaded model for client {cid} from {model_path}")
+
+                if isinstance(state_dict, dict):
+                    model.load_state_dict(state_dict)
+                    print(f"✅ Loaded model for client {cid} from {model_path}")
+                else:
+                    print(f"⚠️ Unexpected format: {model_path} does not contain a valid state_dict")
             except Exception as e:
-                print(f"❌ Failed to load model for client {cid}: {e}")
+                print(f"❌ Failed to load model for client {cid} due to error: {e}")
         else:
             print(f"❌ Model file not found for client {cid}: {model_path}")
 

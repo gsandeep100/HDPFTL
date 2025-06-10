@@ -13,36 +13,59 @@
 import os
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import BATCH_SIZE, input_dim, target_classes, FINETUNE_MODEL_PATH, EPOCH_DIR_FINE, \
-    EPOCH_FILE_FINE
+from hdpftl_utility.config import BATCH_SIZE, EPOCH_DIR_FINE, EPOCH_FILE_FINE
 from hdpftl_utility.utils import setup_device
 
+"""
+2. Fine-tuning phase
+Use X_finetune, y_finetune — more specific, target data.
 
-def target_class():
+Fine-tune pretrained model for your specific task.
+"""
+
+
+def target_class(X_finetune, y_finetune, input_dim, target_classes, model_path):
     print("\n=== Fine-tuning Phase ===")
     device = setup_device()
 
-    # 1. Generate target data (replace this with real data in production)
-    target_features = torch.randn(1000, input_dim)
-    target_labels = torch.randint(0, target_classes, (1000,))
+    # 1. Convert real fine-tune data to torch tensors
+    print(f"X_finetune shape: {X_finetune.shape}")  # Should be (num_samples, num_features)
+    print(f"y_finetune shape: {y_finetune.shape}")  # Should be (num_samples,)
+
+    def to_tensor(data, dtype):
+        if hasattr(data, 'values'):  # pandas DataFrame or Series
+            data_np = data.values
+        else:
+            data_np = data
+        return torch.tensor(data_np, dtype=dtype)
+
+    target_features = to_tensor(X_finetune, dtype=torch.float32)
+    target_labels = to_tensor(y_finetune, dtype=torch.long)
+
+    print(f"target_features shape: {target_features.shape}")
+    print(f"target_labels shape: {target_labels.shape}")
 
     # 2. Train/Validation split
     X_train, X_val, y_train, y_val = train_test_split(
         target_features, target_labels, test_size=0.2, random_state=42
     )
-    train_loader = DataLoader(TensorDataset(X_train, y_train), BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(TensorDataset(X_val, y_val), BATCH_SIZE, shuffle=False)
 
-    # 3. Load pretrained model
+    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=BATCH_SIZE, shuffle=False)
+
+    # 3. Load pretrained model architecture
     transfer_model = TabularNet(input_dim, target_classes).to(device)
+
+    # 4. Load pretrained weights
     try:
-        state_dict = torch.load(FINETUNE_MODEL_PATH)
+        state_dict = torch.load(model_path)
         missing, unexpected = transfer_model.load_state_dict(state_dict, strict=False)
         print("✅ Loaded pretrained model (strict=False)")
         if missing:
@@ -53,18 +76,18 @@ def target_class():
         print("❌ Could not load pretrained model")
         print(f"Error: {e}")
 
-    # 4. Replace classifier
+    # 5. Replace classifier head for new task
     transfer_model.classifier = nn.Linear(64, target_classes).to(device)
 
-    # 5. Unfreeze specific shared layers
+    # 6. Unfreeze some shared layers
     for name, param in transfer_model.shared.named_parameters():
-        param.requires_grad = '2' in name or '1' in name
+        param.requires_grad = '1' in name or '2' in name
 
-    # 6. Optimizer and loss
+    # 7. Optimizer and loss
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, transfer_model.parameters()), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
-    # 7. Fine-tuning loop
+    # 8. Fine-tuning loop
     best_val_acc = 0.0
     epoch_losses = []
     os.makedirs(EPOCH_DIR_FINE, exist_ok=True)
@@ -75,8 +98,8 @@ def target_class():
 
         for features, labels in train_loader:
             features, labels = features.to(device), labels.to(device)
-            optimizer.zero_grad()
 
+            optimizer.zero_grad()
             outputs = transfer_model(features)
             loss = criterion(outputs, labels)
             loss.backward()
@@ -106,12 +129,12 @@ def target_class():
 
         print(f"Epoch [{epoch + 1}/10] - Loss: {avg_loss:.4f} - Train Acc: {train_acc:.2f}% - Val Acc: {val_acc:.2f}%")
 
-        # Save best model
+        # Save best fine-tuned model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(transfer_model.state_dict(), FINETUNE_MODEL_PATH)
+            torch.save(transfer_model.state_dict(), model_path)
 
-        # Save every epoch
+        # Save loss history
         np.save(EPOCH_FILE_FINE, np.array(epoch_losses))
 
     return transfer_model

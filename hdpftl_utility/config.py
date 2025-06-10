@@ -124,12 +124,12 @@ OUTPUT_DATASET_ALL_DATA = "./hdpftl_training/hdpftl_dataset/AllData/"
 
 BATCH_SIZE = 5
 NUM_CLIENTS = 7
-NUM_DEVICE = 2
+NUM_DEVICES_PER_CLIENT = 5
 CLIENTS_PER_AGGREGATOR = 5
 NUM_ROUNDS = 5
 input_dim = 79  # Your feature size
-pretrain_classes = 5  # Suppose you pretrained with 5 classes
-target_classes = 10  # Suppose you pretrained with 5 classes
+NUM_EPOCHS_PRE_TRAIN = 10  # or 50 or 100
+NUM_EPOCHS_FINE_TUNE = 20  # or 50 or 100
 
 GLOBAL_MODEL_PATH = "./hdpftl_trained_models/global_model.pth"
 FINETUNE_MODEL_PATH = "./hdpftl_trained_models/fine_tuned_tabular_model.pth"

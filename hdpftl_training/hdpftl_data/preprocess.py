@@ -16,12 +16,12 @@ import os
 from glob import glob
 
 import numpy as np
-import torch
 from imblearn.over_sampling import SVMSMOTE
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 from hdpftl_training.hdpftl_data.sampling import stratified_downsample
+from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA
 from hdpftl_utility.utils import named_timer
 
 """
@@ -100,8 +100,8 @@ def hybrid_balance(X, y):
         warnings.warn(f"Hybrid balancing failed: {e}")
         return X, y
 
-# 🎯 Master Function
-# 🎯 Master function with pre-sampling
+    # 🎯 Master Function
+    # 🎯 Master function with pre-sampling
 
     """AI is creating summary for 
     Summary Table
@@ -197,11 +197,11 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
 
 
 def safe_clean_dataframe(df: pd.DataFrame,
-                         chunk_size: int=10000,
+                         chunk_size: int = 10000,
                          invalid_values=None,
                          replace_with=np.nan,
-                         log_progress: bool=True,
-                         auto_gc: bool=True) -> pd.DataFrame:
+                         log_progress: bool = True,
+                         auto_gc: bool = True) -> pd.DataFrame:
     """
     Safely replaces infinities and other specified invalid values in a large DataFrame.
 
@@ -240,11 +240,11 @@ def safe_clean_dataframe(df: pd.DataFrame,
     return df
 
 
-def preprocess_data(path, writer=None):
+def preprocess_data(writer=None):
     # all_files = glob.glob(path + "*.csv")
     # df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)
     with named_timer("load_and_label_all", writer, tag="load_and_label_all"):
-        df = load_and_label_all(path)
+        df = load_and_label_all(OUTPUT_DATASET_ALL_DATA)
     # Replace infinities and -999 or '?' with NaN
     scaler = MinMaxScaler()
     features = df.columns.difference(['Label'])
@@ -253,7 +253,7 @@ def preprocess_data(path, writer=None):
 
     # downsampling
     # with named_timer("downsample", writer, tag="downsample"):
-     #   X_small, y_small = stratified_downsample(X, y, fraction=0.2)
+    #   X_small, y_small = stratified_downsample(X, y, fraction=0.2)
 
     # print(df.columns)
 
@@ -278,20 +278,21 @@ def preprocess_data(path, writer=None):
         else:
             X_final, y_final = X_small, y_small
         """
-    # Scale features
-    scaler = StandardScaler()
-    if isinstance(X_final, pd.Series):
-        X_final = X_final.to_frame()
-    X = scaler.fit_transform(X_final)
     with named_timer("train_test_split", writer, tag="train_test_split"):
-        X_train, X_test, y_train, y_test = train_test_split(X, y_final, test_size=0.2, random_state=42,
-                                                            stratify=y_final)
-    # Convert to PyTorch tensors
-    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
-    X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
-    y_train_tensor = torch.tensor(y_train, dtype=torch.long)
-    y_test_tensor = torch.tensor(y_test.to_numpy(), dtype=torch.long)
-    return X_train_tensor, X_test_tensor, y_train_tensor, y_test_tensor
+        X_temp, X_test, y_temp, y_test = train_test_split(X_final, y_final, test_size=0.2, random_state=42,
+                                                          stratify=y_final)
+        X_pretrain, X_finetune, y_pretrain, y_finetune = train_test_split(
+            X_temp, y_temp, test_size=0.3, stratify=y_temp, random_state=42
+        )
+        # Scale features
+        scaler = StandardScaler()
+        if isinstance(X_pretrain, pd.Series):
+            X_pretrain = X_pretrain.to_frame()
+        X_pretrain = scaler.fit_transform(X_pretrain)
+        X_test = scaler.fit_transform(X_test)
+
+        return X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test
+
 
 """
 def preprocess_data_small(csv_path, test_size=0.2):
