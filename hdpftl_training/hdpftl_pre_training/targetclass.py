@@ -13,14 +13,13 @@
 import os
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import BATCH_SIZE, EPOCH_DIR_FINE, EPOCH_FILE_FINE
+from hdpftl_utility.config import BATCH_SIZE, EPOCH_DIR, EPOCH_FILE_FINE, PRE_MODEL_PATH, FINETUNE_MODEL_PATH
 from hdpftl_utility.utils import setup_device
 
 """
@@ -31,7 +30,7 @@ Fine-tune pretrained model for your specific task.
 """
 
 
-def target_class(X_finetune, y_finetune, input_dim, target_classes, model_path):
+def target_class(X_finetune, y_finetune, input_dim, target_classes):
     print("\n=== Fine-tuning Phase ===")
     device = setup_device()
 
@@ -65,7 +64,7 @@ def target_class(X_finetune, y_finetune, input_dim, target_classes, model_path):
 
     # 4. Load pretrained weights
     try:
-        state_dict = torch.load(model_path)
+        state_dict = torch.load(PRE_MODEL_PATH)
         missing, unexpected = transfer_model.load_state_dict(state_dict, strict=False)
         print("✅ Loaded pretrained model (strict=False)")
         if missing:
@@ -90,7 +89,7 @@ def target_class(X_finetune, y_finetune, input_dim, target_classes, model_path):
     # 8. Fine-tuning loop
     best_val_acc = 0.0
     epoch_losses = []
-    os.makedirs(EPOCH_DIR_FINE, exist_ok=True)
+    os.makedirs(EPOCH_DIR, exist_ok=True)
 
     for epoch in range(10):
         transfer_model.train()
@@ -132,7 +131,7 @@ def target_class(X_finetune, y_finetune, input_dim, target_classes, model_path):
         # Save best fine-tuned model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(transfer_model.state_dict(), model_path)
+            torch.save(transfer_model.state_dict(), FINETUNE_MODEL_PATH)
 
         # Save loss history
         np.save(EPOCH_FILE_FINE, np.array(epoch_losses))

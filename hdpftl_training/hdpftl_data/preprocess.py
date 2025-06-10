@@ -279,10 +279,10 @@ def preprocess_data(writer=None):
             X_final, y_final = X_small, y_small
         """
     with named_timer("train_test_split", writer, tag="train_test_split"):
-        X_temp, X_test, y_temp, y_test = train_test_split(X_final, y_final, test_size=0.2, random_state=42,
+        X_temp, X_test, y_temp, y_test = train_test_split(X_final, y_final, test_size=0.1, random_state=42,
                                                           stratify=y_final)
         X_pretrain, X_finetune, y_pretrain, y_finetune = train_test_split(
-            X_temp, y_temp, test_size=0.3, stratify=y_temp, random_state=42
+            X_temp, y_temp, test_size=0.1, stratify=y_temp, random_state=42
         )
         # Scale features
         scaler = StandardScaler()

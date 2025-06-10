@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 
 from hdpftl_utility.config import PLOT_PATH
 
@@ -166,9 +167,10 @@ def plot_confusion_matrix(y_true, y_pred, class_names=None, normalize=False):
     plt.show()
 
 
-def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", save_path=None):
-    import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+import os
 
+def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", save_path=None):
     client_ids = list(accs.keys())
     accuracies = [accs[cid] for cid in client_ids]
 
@@ -177,26 +179,31 @@ def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", s
     plt.xlabel("Client ID")
     plt.ylabel("Accuracy")
     plt.title(title)
-    plt.ylim(0, 1.0)
+    plt.ylim(0, 1.05)
 
+    # Annotate bars
     for bar in bars:
         yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width() / 2, yval + 0.01, f"{yval:.2f}", ha='center', va='bottom',
-                 fontsize=8)
+        plt.text(bar.get_x() + bar.get_width() / 2, yval + 0.01,
+                 f"{yval:.2f}", ha='center', va='bottom', fontsize=8)
 
-    # Optionally show global accuracy
+    # Global accuracy line
     if global_acc is not None:
         plt.axhline(global_acc, color='red', linestyle='--', linewidth=2,
                     label=f'Global Accuracy: {global_acc:.2f}')
         plt.legend()
 
     plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
 
+    # Save logic
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
+    else:
+        default_path = os.path.join(PLOT_PATH, 'plot_client_accuracies.png')
+        plt.savefig(default_path, bbox_inches='tight')
 
-    file_path = os.path.join(PLOT_PATH, 'plot_client_accuracies.png')
-    plt.savefig(file_path)
     plt.show()
 
 

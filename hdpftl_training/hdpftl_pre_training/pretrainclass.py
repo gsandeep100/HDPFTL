@@ -20,7 +20,7 @@ from sklearn.metrics import accuracy_score
 from torch.utils.data import TensorDataset, DataLoader
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import EPOCH_DIR_PRE, EPOCH_FILE_PRE, PRE_MODEL_PATH, NUM_EPOCHS_PRE_TRAIN
+from hdpftl_utility.config import EPOCH_FILE_PRE, PRE_MODEL_PATH, NUM_EPOCHS_PRE_TRAIN, EPOCH_DIR
 
 """
 1. Pretraining phase
@@ -52,7 +52,7 @@ def pretrain_class(X_train, X_test, y_train, y_test, input_dim, early_stop_patie
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
-    os.makedirs(EPOCH_DIR_PRE, exist_ok=True)
+    os.makedirs(EPOCH_DIR, exist_ok=True)
 
     best_val_loss = float('inf')
     patience_counter = 0

@@ -1,7 +1,9 @@
+import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from hdpftl_training.hdpftl_models.TabularNet import create_model_fn_global
+from hdpftl_training.hdpftl_models.TabularNet import create_model_fn_global, TabularNet
 from hdpftl_utility.config import GLOBAL_MODEL_PATH
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
@@ -11,12 +13,16 @@ def evaluate_global_model_fromfile():
     device = setup_device()
 
     try:
-        # Instantiate architecture
+        # Instantiate model directly (no lambda now)
         global_model = create_model_fn_global().to(device)
 
-        # Load saved weights
+        # Allowlist your custom model class for safe loading
+        torch.serialization.add_safe_globals([TabularNet])
+
+        # Load weights safely
         global_model.load_state_dict(torch.load(GLOBAL_MODEL_PATH, map_location=device))
         global_model.eval()
+
         print("✅ Global model loaded and ready for evaluation.")
         return global_model
 
@@ -27,38 +33,78 @@ def evaluate_global_model_fromfile():
 
 
 def evaluate_global_model(model, X_test, y_test):
+    """
+    Evaluates the performance of a global PyTorch model on a test dataset.
+
+    Args:
+        model (torch.nn.Module): The PyTorch model to evaluate.
+        X_test (np.ndarray, pd.DataFrame, or torch.Tensor): The test features.
+        y_test (np.ndarray, pd.Series, or torch.Tensor): The test labels.
+
+    Returns:
+        float: The accuracy of the global model on the test set.
+    """
     safe_log("[4] Evaluating global model...")
     device = setup_device()
 
     # Ensure model is on correct device and in eval mode
     model = model.to(device)
-    model.eval()
+    model.eval()  # Set the model to evaluation mode (disables dropout, batch norm updates, etc.)
 
-    # Ensure inputs are tensors
-    if not torch.is_tensor(X_test):
-        X_test = torch.tensor(X_test, dtype=torch.float32)
-    if not torch.is_tensor(y_test):
-        y_test = torch.tensor(y_test, dtype=torch.long)
+    # --- Robust Input Conversion to PyTorch Tensors ---
+    # Convert X_test to a PyTorch tensor if it's not already
+    if isinstance(X_test, np.ndarray):
+        X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+    elif isinstance(X_test, pd.DataFrame):
+        X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)  # Convert DataFrame to NumPy first
+    elif torch.is_tensor(X_test):
+        X_test_tensor = X_test.to(torch.float32)  # Ensure correct dtype
+    else:
+        raise TypeError(
+            f"Unsupported type for X_test: {type(X_test)}. Expected numpy.ndarray, pandas.DataFrame, or torch.Tensor.")
 
-    assert len(X_test) == len(y_test), "Mismatched test data and labels"
+    # Convert y_test to a PyTorch tensor if it's not already
+    if isinstance(y_test, np.ndarray):
+        y_test_tensor = torch.tensor(y_test, dtype=torch.long)
+    elif isinstance(y_test, pd.Series):
+        y_test_tensor = torch.tensor(y_test.values, dtype=torch.long)  # Convert Series to NumPy first
+    elif isinstance(y_test, pd.DataFrame):  # Handle single-column DataFrames for labels
+        if y_test.shape[1] == 1:
+            y_test_tensor = torch.tensor(y_test.values.flatten(), dtype=torch.long)
+        else:
+            raise ValueError("y_test (labels) DataFrame should have a single column.")
+    elif torch.is_tensor(y_test):
+        y_test_tensor = y_test.to(torch.long)  # Ensure correct dtype
+    else:
+        raise TypeError(
+            f"Unsupported type for y_test: {type(y_test)}. Expected numpy.ndarray, pandas.Series, pandas.DataFrame, or torch.Tensor.")
 
-    with torch.no_grad():
-        X_test = X_test.to(device)
-        y_test = y_test.to(device)
-        assert len(X_test) == len(y_test), "Mismatch in number of samples and labels"
-        dataloader = DataLoader(TensorDataset(X_test, y_test))
-        correct, total = 0, 0
+    # Move tensors to the specified device (CPU/GPU)
+    X_test_on_device = X_test_tensor.to(device)
+    y_test_on_device = y_test_tensor.to(device)
 
-        for x, y in dataloader:
-            x = x.to(device)
-            y = y.to(device)
+    # --- End Robust Input Conversion ---
 
-            output = model(x)
-            _, pred = torch.max(output, 1)
-            correct += (pred == y).sum().item()
-            total += y.size(0)
+    assert len(X_test_on_device) == len(y_test_on_device), "Mismatched test data and labels lengths after conversion."
+
+    # Create DataLoader. Using a default batch size as it's not provided,
+    # or you can make BATCH_SIZE a parameter or global variable.
+    # For global evaluation, often a single batch or large batch size is used.
+    test_batch_size = 256  # Or define globally like BATCH_SIZE
+    dataloader = DataLoader(TensorDataset(X_test_on_device, y_test_on_device), batch_size=test_batch_size)
+
+    correct, total = 0, 0
+    with torch.no_grad():  # Disable gradient calculations for inference
+        for x_batch, y_batch in dataloader:
+            # x_batch and y_batch are already on the correct device due to DataLoader's input
+            output = model(x_batch)
+            _, pred = torch.max(output, 1)  # Get the predicted class index
+            correct += (pred == y_batch).sum().item()  # Count correct predictions
+            total += y_batch.size(0)  # Accumulate total samples
 
     acc = correct / total if total > 0 else 0.0
-    safe_log(f"Global Accuracy{acc:.4f}")
+    safe_log(f"Global Accuracy: {acc:.4f}")  # Corrected log message to include "Accuracy"
 
+    # The original return statement was 'return ACC' which was not defined.
+    # Assuming you want to return the calculated accuracy 'acc'.
     return acc

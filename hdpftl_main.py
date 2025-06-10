@@ -27,7 +27,7 @@ from hdpftl_training.hdpftl_data.preprocess import preprocess_data
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition_with_devices
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_training.hdpftl_pre_training.targetclass import target_class
-from hdpftl_utility.config import GLOBAL_MODEL_PATH, EPOCH_FILE_FINE, EPOCH_FILE_PRE, input_dim, FINETUNE_MODEL_PATH
+from hdpftl_utility.config import GLOBAL_MODEL_PATH, EPOCH_FILE_FINE, EPOCH_FILE_PRE, INPUT_DIM
 from hdpftl_utility.log import setup_logging, safe_log
 from hdpftl_utility.utils import named_timer, setup_device
 
@@ -54,33 +54,33 @@ if __name__ == "__main__":
     Smaller alpha → more skewed, clients have few classes dominating.
     Larger alpha → more uniform data distribution across clients.
     """
+    with named_timer("dirichlet_partition", writer, tag="dirichlet_partition"):
+        client_data_dict, hierarchical_data = dirichlet_partition_with_devices(X_pretrain, y_pretrain, alpha=0.3)
+        client_data_dict_test, hierarchical_data_test = dirichlet_partition_with_devices(X_test, y_test, alpha=0.3)
+
+    safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
 
     # If fine-tuned model exists, load and return it
     if not os.path.exists(GLOBAL_MODEL_PATH):
         # Step 2: Pretrain global model
         with named_timer("pretrain_class", writer, tag="pretrain_class"):
-            pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=input_dim, early_stop_patience=10)
+            pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=INPUT_DIM, early_stop_patience=10)
         safe_log("[2]Pretraining completed.")
         # Step 3: Instantiate target model and train on device
         with named_timer("target_class", writer, tag="target_class"):
-            base_model = target_class(
-                X_finetune,
-                y_finetune,
-                input_dim=X_finetune.shape[1],
-                target_classes=len(np.unique(y_finetune)),
-                model_path=FINETUNE_MODEL_PATH)
+            def base_model_fn():
+                return target_class(
+                    X_finetune,
+                    y_finetune,
+                    input_dim=X_finetune.shape[1],
+                    target_classes=len(np.unique(y_finetune)))
 
         safe_log("[3]Fine Tuning completed.")
 
-        with named_timer("dirichlet_partition", writer, tag="dirichlet_partition"):
-            client_data_dict, hierarchical_data = dirichlet_partition_with_devices(X_final, y_final, alpha=0.3)
-            client_data_dict_test, hierarchical_data_test = dirichlet_partition_with_devices(X_test, y_test, alpha=0.3)
-
-        safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
         with named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
-            global_model, personalized_models = hdpftl_pipeline(base_model, hierarchical_data)
+            global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data)
 
-    #######################  EVALUATION LOAD FROM FILE #########
+    #######################  LOAD FROM FILE ##################################
     else:
         # Load global model
         with named_timer("Evaluate Global Model From File", writer, tag="EvalFromFile"):
@@ -121,7 +121,8 @@ if __name__ == "__main__":
     #######################  PLOT  #############################
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     with torch.no_grad():
-        outputs = global_model(X_test.to(device))
+        X_test_tensor = torch.from_numpy(X_test).float().to(device)
+        outputs = global_model(X_test_tensor)
         _, predictions = torch.max(outputs, 1)
     num_classes = int(max(y_test.max().item(), predictions.cpu().max().item()) + 1)
     print("Number of classes:::", num_classes)

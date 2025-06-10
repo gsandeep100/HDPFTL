@@ -127,17 +127,19 @@ NUM_CLIENTS = 7
 NUM_DEVICES_PER_CLIENT = 5
 CLIENTS_PER_AGGREGATOR = 5
 NUM_ROUNDS = 5
-input_dim = 79  # Your feature size
+INPUT_DIM = 79  # Your feature size
 NUM_EPOCHS_PRE_TRAIN = 10  # or 50 or 100
 NUM_EPOCHS_FINE_TUNE = 20  # or 50 or 100
-
+NUM_TRAIN_ON_DEVICE = 5  # or 50 or 100
+NUM_CLASSES = 2  # Suppose you pretrained with 5 classes
 GLOBAL_MODEL_PATH = "./hdpftl_trained_models/global_model.pth"
 FINETUNE_MODEL_PATH = "./hdpftl_trained_models/fine_tuned_tabular_model.pth"
 PRE_MODEL_PATH = "./hdpftl_trained_models/pretrained_tabular_model.pth"
-EPOCH_DIR_FINE = "./hdpftl_trained_models/epochs"
-EPOCH_FILE_FINE = os.path.join(EPOCH_DIR_FINE, "fine_tune_epoch_losses.npy")
-EPOCH_DIR_PRE = "./hdpftl_trained_models/epochs"
-EPOCH_FILE_PRE = os.path.join(EPOCH_DIR_PRE, "pre_epoch_losses.npy")
+EPOCH_DIR = "./hdpftl_trained_models/epochs"
+TRAINED_MODEL_DIR = "./hdpftl_trained_models/"
+
+EPOCH_FILE_FINE = os.path.join(EPOCH_DIR, "fine_tune_epoch_losses.npy")
+EPOCH_FILE_PRE = os.path.join(EPOCH_DIR, "pre_epoch_losses.npy")
 
 PLOT_PATH = "./hdpftl_plot_outputs/"
 PERSONALISED_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/personalized_model_client_${n}.pth")
