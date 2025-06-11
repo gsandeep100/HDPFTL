@@ -1,15 +1,16 @@
-import os
-
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, f1_score
+from sklearn.model_selection import StratifiedKFold
 import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader, TensorDataset
 
+from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
 from hdpftl_utility.config import PLOT_PATH
 from hdpftl_utility.log import safe_log
+from hdpftl_utility.utils import setup_device
 
 
 # ✅ 1. Global vs Personalized Accuracy per Client
@@ -36,13 +37,14 @@ def plot_accuracy_comparison(global_accs, personalized_accs, title="Global vs Pe
     os.makedirs(PLOT_PATH, exist_ok=True)
 
     plt.figure(figsize=(12, 6))
-    bars1 = plt.bar(x - width/2, global_values, width, label='Global Model', color='lightcoral')
-    bars2 = plt.bar(x + width/2, personal_values, width, label='Personalized Model', color='skyblue')
+    bars1 = plt.bar(x - width / 2, global_values, width, label='Global Model', color='lightcoral')
+    bars2 = plt.bar(x + width / 2, personal_values, width, label='Personalized Model', color='skyblue')
 
     # Add accuracy labels on bars
     for bar in bars1 + bars2:
         height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2, height + 0.01, f"{height:.2f}", ha='center', va='bottom', fontsize=8)
+        plt.text(bar.get_x() + bar.get_width() / 2, height + 0.01, f"{height:.2f}", ha='center', va='bottom',
+                 fontsize=8)
 
     plt.xlabel('Client ID')
     plt.ylabel('Accuracy')
@@ -60,6 +62,7 @@ def plot_accuracy_comparison(global_accs, personalized_accs, title="Global vs Pe
     plt.savefig(save_path, bbox_inches='tight')
     plt.show()
     safe_log(f"✅ Accuracy comparison plot saved at: {save_path}")
+
 
 # Training Loss vs Epochs (Global or Local)
 """
@@ -196,6 +199,7 @@ def plot_confusion_matrix(y_true, y_pred, class_names=None, normalize=False):
 import matplotlib.pyplot as plt
 import os
 
+
 def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", save_path=None):
     """
     Plots per-client accuracy as a bar chart with optional global accuracy line.
@@ -240,6 +244,7 @@ def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", s
     plt.savefig(file_path, bbox_inches='tight')
     plt.show()
     safe_log(f"✅ Plot saved at: {file_path}")
+
 
 """
 # Evaluate global model
@@ -370,3 +375,119 @@ def plot_client_sample_counts(client_data_dict):
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.show()
+
+def cross_validate_model_with_plots(
+            X, y, k=5, batch_size=64, num_epochs=20, lr=0.001, patience=3, early_stopping=True
+    ):
+        device = setup_device()
+        X_np = X.values if hasattr(X, "values") else np.array(X)
+        y_np = y.values.flatten() if hasattr(y, "values") else np.array(y).flatten()
+
+        skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=42)
+        fold_results = []
+
+        for fold, (train_idx, val_idx) in enumerate(skf.split(X_np, y_np)):
+            safe_log(f"\n🔁 Fold {fold + 1}/{k}")
+
+            X_train, y_train = X_np[train_idx], y_np[train_idx]
+            X_val, y_val = X_np[val_idx], y_np[val_idx]
+
+            train_ds = TensorDataset(torch.tensor(X_train, dtype=torch.float32),
+                                     torch.tensor(y_train, dtype=torch.long))
+            val_ds = TensorDataset(torch.tensor(X_val, dtype=torch.float32),
+                                   torch.tensor(y_val, dtype=torch.long))
+            train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+            val_loader = DataLoader(val_ds, batch_size=batch_size)
+
+            model = create_model_fn().to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+            loss_fn = torch.nn.CrossEntropyLoss()
+
+            best_acc, best_f1 = 0, 0
+            train_losses = []
+            val_accuracies = []
+            val_f1s = []
+
+            epochs_no_improve = 0
+
+            for epoch in range(num_epochs):
+                model.train()
+                total_loss = 0
+                for xb, yb in train_loader:
+                    xb, yb = xb.to(device), yb.to(device)
+                    optimizer.zero_grad()
+                    output = model(xb)
+                    loss = loss_fn(output, yb)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
+
+                avg_loss = total_loss / len(train_loader)
+                train_losses.append(avg_loss)
+
+                # Validation
+                model.eval()
+                all_preds, all_labels = [], []
+                with torch.no_grad():
+                    for xb, yb in val_loader:
+                        xb = xb.to(device)
+                        preds = model(xb).argmax(dim=1).cpu().numpy()
+                        all_preds.extend(preds)
+                        all_labels.extend(yb.numpy())
+
+                acc = accuracy_score(all_labels, all_preds)
+                f1 = f1_score(all_labels, all_preds, average="macro")
+                val_accuracies.append(acc)
+                val_f1s.append(f1)
+
+                safe_log(f"📈 Epoch {epoch + 1}: Loss = {avg_loss:.4f}, Accuracy = {acc:.4f}, F1 = {f1:.4f}")
+
+                if acc > best_acc:
+                    best_acc = acc
+                    best_f1 = f1
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+                    if early_stopping and epochs_no_improve >= patience:
+                        safe_log("⏹️ Early stopping triggered.")
+                        break
+
+            fold_results.append({"fold": fold + 1, "accuracy": best_acc, "f1_score": best_f1})
+            safe_log(f"✅ Fold {fold + 1} Final: Accuracy = {best_acc:.4f}, F1 = {best_f1:.4f}")
+
+
+            # Plotting with two y-axes
+            plt.figure(figsize=(10, 5))
+            ax1 = plt.gca()
+            ax2 = ax1.twinx()
+
+            ax1.plot(train_losses, color='blue', label='Training Loss')
+            ax1.set_ylabel('Loss', color='blue')
+            ax1.tick_params(axis='y', labelcolor='blue')
+
+            ax2.plot(val_accuracies, label='Validation Accuracy', color='green', marker='s', linewidth=5)
+            ax2.plot(val_f1s, color='orange', label='Validation F1')
+            ax2.set_ylabel('Accuracy / F1', color='green')
+            ax2.tick_params(axis='y', labelcolor='green')
+
+            ax1.set_xlabel('Epoch')
+            plt.title(f'Fold {fold + 1} Learning Curve')
+            lines, labels = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            plt.legend(lines + lines2, labels + labels2, loc='center right')
+            plt.grid(True)
+            plt.tight_layout()
+            file_path = os.path.join(PLOT_PATH, 'validarion.png')
+            plt.savefig(file_path)
+
+            plt.show()
+
+        # Summary
+        mean_acc = np.mean([f["accuracy"] for f in fold_results])
+        mean_f1 = np.mean([f["f1_score"] for f in fold_results])
+        safe_log(f"\n📊 Cross-Validation Summary:")
+        safe_log(f"🔹 Mean Accuracy: {mean_acc:.4f}")
+        safe_log(f"🔹 Mean F1 Score: {mean_f1:.4f}")
+
+        return fold_results
+

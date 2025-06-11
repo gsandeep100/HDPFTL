@@ -7,7 +7,6 @@ especially when hdpftl_data is non-IID (not identically distributed across clien
 import os
 
 import numpy as np
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -22,36 +21,31 @@ def load_personalized_models_fromfile():
     Loads personalized models for each client from disk.
 
     Returns:
-        List[nn.Module]: List of models, one per client, set to eval mode.
+        Dict[int, nn.Module]: Mapping from client_id to their loaded model (in eval mode).
     """
-    personalized_models = []
+    personalized_models = {}
     device = setup_device()
-    try:
-        model = create_model_fn().to(device)
 
-        for cid in range(NUM_CLIENTS):
-            model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)
+    for cid in range(NUM_CLIENTS):
+        model = create_model_fn().to(device)  # New model for each client
+        model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)
 
-            if os.path.exists(model_path):
-                try:
-                    state_dict = torch.load(model_path, map_location=device)
+        if os.path.exists(model_path):
+            try:
+                state_dict = torch.load(model_path, map_location=device)
 
-                    if isinstance(state_dict, dict):
-                        model.load_state_dict(state_dict)
-                        safe_log(f"✅ Loaded model for client {cid} from {model_path}")
-                    else:
-                        safe_log(f"⚠️ Unexpected format: {model_path} does not contain a valid state_dict",level="error")
-                except Exception as e:
-                    safe_log(f"❌ Failed to load model for client {cid} due to error: {e}",level="error")
-            else:
-                safe_log(f"❌ Model file not found for client {cid}: {model_path}",level="error")
+                if isinstance(state_dict, dict):
+                    model.load_state_dict(state_dict)
+                    model.eval()
+                    personalized_models[cid] = model
+                    safe_log(f"✅ Loaded model for client {cid} from {model_path}")
+                else:
+                    safe_log(f"⚠️ Unexpected format in model {cid}: state_dict not found.", level="error")
+            except Exception as e:
+                safe_log(f"❌ Error loading model for client {cid}: {e}", level="error")
+        else:
+            safe_log(f"❌ Model file not found for client {cid}: {model_path}", level="error")
 
-        model.eval()
-        personalized_models.append(model)
-    except Exception as e:
-        safe_log("❌ Failed to load personal model.")
-        safe_log(f"Error: {e}",level="error")
-        return None
     return personalized_models
 
 

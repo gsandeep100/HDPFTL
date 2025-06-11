@@ -1,5 +1,4 @@
 import pandas as pd
-
 from result import predictions
 
 from hdpftl_utility.log import safe_log

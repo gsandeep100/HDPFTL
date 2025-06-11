@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 -------------------------------------------------
-   File Name:        targetclass.py
+   File Name:        finetune_model.py
    Description:      HDPFTL - Preventing Zero-day Attacks on IoT Devices using
                      Hierarchical Decentralized Personalized Federated Transfer Learning (HDPFTL)
                      with ResNet-18 Model for Cross-Silo Collaboration on Heterogeneous Non-IID Data
@@ -17,12 +17,13 @@ import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.tensorboard import writer
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
 from hdpftl_utility.config import BATCH_SIZE, EPOCH_DIR, EPOCH_FILE_FINE, PRE_MODEL_PATH, FINETUNE_MODEL_PATH, \
     NUM_EPOCHS_PRE_TRAIN
 from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device
+from hdpftl_utility.utils import setup_device, named_timer
 
 """
 2. Fine-tuning phase
@@ -47,8 +48,8 @@ def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
     target_features = to_tensor(X_finetune, dtype=torch.float32)
     finetune_labels = to_tensor(y_finetune, dtype=torch.long)
 
-    safe_log(f"target_features shape: {target_features.shape}")
-    safe_log(f"finetune_labels shape: {finetune_labels.shape}")
+    #safe_log(f"target_features shape: {target_features.shape}")
+    #safe_log(f"finetune_labels shape: {finetune_labels.shape}")
 
     # Train-validation split
     X_train, X_val, y_train, y_val = train_test_split(
@@ -64,14 +65,13 @@ def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
     try:
         state_dict = torch.load(PRE_MODEL_PATH)
         missing, unexpected = transfer_model.load_state_dict(state_dict, strict=False)
-        safe_log("✅ Loaded pretrained model (strict=False)")
-        if missing:
-            safe_log(f"⚠️ Missing keys: {missing}", level="warning")
-        if unexpected:
-            safe_log(f"⚠️ Unexpected keys: {unexpected}", level="error")
+        with named_timer(f"FineTuning model (strict=False)", writer, tag="federated_round"):
+            if missing:
+                safe_log(f"⚠️ Missing keys: {missing}", level="warning")
+            if unexpected:
+                safe_log(f"⚠️ Unexpected keys: {unexpected}", level="error")
     except Exception as e:
-        safe_log("❌ Could not load pretrained model")
-        safe_log(f"Error: {e}", level="error")
+        safe_log(f"❌Could not load pretrained model Error: {e}", level="error")
 
     # Replace classifier head
     transfer_model.classifier = nn.Linear(64, target_classes).to(device)  # Assumes last shared layer has 64 units

@@ -20,6 +20,7 @@ def setup_logging(log_to_file=True):
         handlers=handlers,
     )
 
+
 def safe_log(message, extra="", level="info"):
     # Convert non-string inputs to string
     if not isinstance(message, str):

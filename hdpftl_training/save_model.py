@@ -28,7 +28,7 @@ def save(global_model, personalized_models):
         torch.save(global_model, GLOBAL_MODEL_PATH)
         safe_log(f"✅ Global model (state_dict) saved to {GLOBAL_MODEL_PATH}")
     else:
-        safe_log(f"❌Unexpected type for global_model ({type(global_model)}). Not saving global model.",level="warning")
+        safe_log(f"❌Unexpected type for global_model ({type(global_model)}). Not saving global model.", level="warning")
 
     # --- Save personalized models ---
     safe_log(f"Saving {len(personalized_models)} personalized models...")
@@ -41,6 +41,7 @@ def save(global_model, personalized_models):
         else:
             # This block will catch if something unexpected gets into personalized_models
             safe_log(
-                f"  ❌Expected a state_dict (dict) for client {cid}, but got {type(model_data)}. Skipping save for this client.",level="warning")
+                f"  ❌Expected a state_dict (dict) for client {cid}, but got {type(model_data)}. Skipping save for this client.",
+                level="warning")
 
     safe_log("✅ All HDPFTL models saved successfully.")

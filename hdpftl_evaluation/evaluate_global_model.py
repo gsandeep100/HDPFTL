@@ -3,23 +3,29 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
+from hdpftl_training.hdpftl_models.TabularNet import create_model_fn, TabularNet
 from hdpftl_utility.config import GLOBAL_MODEL_PATH
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
 
 
 def evaluate_global_model_fromfile():
+    """
+    Loads the global model from file and returns it. Does not evaluate on any test data.
+
+    Returns:
+        nn.Module or None: Loaded model in eval mode, or None if loading fails.
+    """
     device = setup_device()
 
     try:
-        # Instantiate model directly (no lambda now)
+        # Instantiate the model
         global_model = create_model_fn().to(device)
 
-        # Allowlist your custom model class for safe loading
+        # Allowlist custom model class for safe unpickling
         torch.serialization.add_safe_globals([TabularNet])
 
-        # Load weights safely
+        # Load weights
         global_model.load_state_dict(torch.load(GLOBAL_MODEL_PATH, map_location=device))
         global_model.eval()
 
@@ -28,7 +34,7 @@ def evaluate_global_model_fromfile():
 
     except Exception as e:
         safe_log("❌ Failed to load global model.")
-        safe_log(f"Error: {e}",level="error")
+        safe_log(f"Error: {e}", level="error")
         return None
 
 

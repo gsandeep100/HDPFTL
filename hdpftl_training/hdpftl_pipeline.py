@@ -2,14 +2,12 @@ import copy
 
 import numpy as np
 import torch
-from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
 from hdpftl_training.hdpftl_aggregation.hdpftl_fedavg import aggregate_models
 from hdpftl_training.save_model import save
-from hdpftl_utility.config import NUM_CLIENTS, NUM_DEVICES_PER_CLIENT, NUM_TRAIN_ON_DEVICE, \
-    NUM_FEDERATED_ROUND
+from hdpftl_utility.config import NUM_DEVICES_PER_CLIENT, NUM_FEDERATED_ROUND
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import named_timer, setup_device
 
@@ -238,7 +236,7 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
             device_state_dicts.append(local_state_dict)
 
         if not device_state_dicts:
-            safe_log(f"No devices trained for client {client_id}, skipping client aggregation.",level="warning")
+            safe_log(f"No devices trained for client {client_id}, skipping client aggregation.", level="warning")
             continue
 
         # Aggregate devices per client
@@ -246,13 +244,14 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
         client_state_dicts.append(client_agg_state_dict)
 
     if not client_state_dicts:
-        safe_log("No clients trained in this round, returning previous global model.",level="warning")
+        safe_log("No clients trained in this round, returning previous global model.", level="warning")
         return global_model
 
     # Aggregate all clients into new global model
-    new_global_state_dict = aggregate_models(client_state_dicts,base_model_fn)
+    new_global_state_dict = aggregate_models(client_state_dicts, base_model_fn)
     global_model.load_state_dict(new_global_state_dict)
     return global_model
+
 
 """
 ✅ hierarchical_data: {client_id: [(X_dev1, y_dev1), (X_dev2, y_dev2), ...]}
@@ -270,18 +269,17 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
 
 
 # --- Main HDPFTL pipeline ---
-def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,y_test, writer=None):
+def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test, writer=None):
     device = setup_device()
     safe_log("\n🚀 Starting HDPFTL pipeline...\n")
 
     # Instantiate global model properly
-    #global_model = base_model_fn().to(device)
+    # global_model = base_model_fn().to(device)
     global_model = copy.deepcopy(base_model_fn()).to(device)
-
 
     # Federated training rounds
     for round_num in range(NUM_FEDERATED_ROUND):
-        safe_log(f"\n🔁 Federated Round {round_num + 1}/{NUM_FEDERATED_ROUND}")
+        #safe_log(f"\n🔁 Federated Round {round_num + 1}/{NUM_FEDERATED_ROUND}")
         with named_timer(f"federated_round_{round_num + 1}", writer, tag="federated_round"):
             global_model = federated_round(base_model_fn, global_model, hierarchical_data)
             acc = evaluate_global_model(global_model, X_test, y_test)

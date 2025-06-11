@@ -89,7 +89,7 @@ def train_device_model(
             else:
                 epochs_no_improve += 1
                 if verbose:
-                    safe_log(f"Early stopping at epoch {epoch + 1}",level="warning")
+                    safe_log(f"Early stopping at epoch {epoch + 1}", level="warning")
                 if best_model_state is not None:
                     model.load_state_dict(best_model_state)
                 break

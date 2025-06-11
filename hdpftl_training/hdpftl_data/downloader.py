@@ -31,7 +31,7 @@ def download_dataset(input_dir, output_dir):
             file.write(response.content)
         safe_log('File downloaded successfully.')
     else:
-        safe_log(f'Failed to download file. Status code: {response.status_code}',level="error")
+        safe_log(f'Failed to download file. Status code: {response.status_code}', level="error")
 
 # def download_dataset():
 #     if not os.path.exists(DATASET_PATH_2023):

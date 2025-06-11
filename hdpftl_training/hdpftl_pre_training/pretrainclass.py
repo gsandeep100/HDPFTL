@@ -108,7 +108,7 @@ def pretrain_class(X_train, X_test, y_train, y_test, input_dim, early_stop_patie
         else:
             patience_counter += 1
             if patience_counter >= early_stop_patience:
-                safe_log(f"Early stopping at epoch {epoch + 1}",level="warning")
+                safe_log(f"Early stopping at epoch {epoch + 1}", level="warning")
                 break
 
     # Save metrics to file
