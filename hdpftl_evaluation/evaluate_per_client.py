@@ -11,7 +11,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from hdpftl_training.hdpftl_models.TabularNet import create_model_fn_personalized
+from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
 from hdpftl_utility.config import BATCH_SIZE, PERSONALISED_MODEL_PATH_TEMPLATE, NUM_CLIENTS
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
@@ -27,7 +27,7 @@ def load_personalized_models_fromfile():
     personalized_models = []
     device = setup_device()
     try:
-        model = create_model_fn_personalized().to(device)
+        model = create_model_fn().to(device)
 
         for cid in range(NUM_CLIENTS):
             model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)
@@ -38,65 +38,56 @@ def load_personalized_models_fromfile():
 
                     if isinstance(state_dict, dict):
                         model.load_state_dict(state_dict)
-                        print(f"✅ Loaded model for client {cid} from {model_path}")
+                        safe_log(f"✅ Loaded model for client {cid} from {model_path}")
                     else:
-                        print(f"⚠️ Unexpected format: {model_path} does not contain a valid state_dict")
+                        safe_log(f"⚠️ Unexpected format: {model_path} does not contain a valid state_dict",level="error")
                 except Exception as e:
-                    print(f"❌ Failed to load model for client {cid} due to error: {e}")
+                    safe_log(f"❌ Failed to load model for client {cid} due to error: {e}",level="error")
             else:
-                print(f"❌ Model file not found for client {cid}: {model_path}")
+                safe_log(f"❌ Model file not found for client {cid}: {model_path}",level="error")
 
         model.eval()
         personalized_models.append(model)
     except Exception as e:
-        print("❌ Failed to load personal model.")
-        print(f"Error: {e}")
+        safe_log("❌ Failed to load personal model.")
+        safe_log(f"Error: {e}",level="error")
         return None
     return personalized_models
 
 
 # evaluate_personalized_models function! This version works for evaluate personalized models per client
-def evaluate_personalized_models_per_client(personalized_models, X, y, client_data_dict_test):
-    """
-    Evaluates personalized models for each client.
-
-    Args:
-        personalized_models (dict): Dict of client_id -> model.
-        X (numpy.ndarray): Global features dataset.
-        y (numpy.ndarray): Global labels dataset.
-        client_data_dict_test (dict): client_id -> list of indices into X and y.
-
-    Returns:
-        dict: client_id -> accuracy
-    """
+def evaluate_personalized_models_per_client(personalized_models, client_data_dict_test):
     accs = {}
     device = setup_device()
 
-    for client_id, client_indices in client_data_dict_test.items():
-        # 1. Handle invalid or empty indices
-        if not isinstance(client_indices, (list, np.ndarray)) or len(client_indices) == 0:
-            print(f"Warning: Client '{client_id}' has no test data. Assigning accuracy 0.0.")
+    for client_id, client_data in client_data_dict_test.items():
+        if not client_data or len(client_data) != 2:
+            safe_log(f"Client '{client_id}' has invalid test data. Assigning accuracy 0.0.", level="warning")
             accs[client_id] = 0.0
             continue
 
-        # 2. Check if model exists for client
-        if client_id not in personalized_models:
-            print(f"Error: No model found for client '{client_id}'. Skipping.")
-            accs[client_id] = 0.0
-            continue
-
-        print(f"Evaluating client: '{client_id}'")
-
-        model = personalized_models[client_id].to(device)
-        model.eval()
-
-        x_client_np = X[client_indices]
-        y_client_np = y[client_indices]
+        x_client_np, y_client_np = client_data
 
         if len(x_client_np) == 0:
-            print(f"Warning: Client '{client_id}' has no actual data after indexing. Assigning accuracy 0.0.")
+            safe_log(f"Client '{client_id}' has no actual data. Assigning accuracy 0.0.", level="warning")
             accs[client_id] = 0.0
             continue
+
+        if client_id not in personalized_models:
+            safe_log(f"No model found for client '{client_id}'. Skipping.", level="error")
+            accs[client_id] = 0.0
+            continue
+
+        safe_log(f"Evaluating client: '{client_id}'")
+
+        # Handle model or state_dict
+        if isinstance(personalized_models[client_id], dict):
+            model = create_model_fn(x_client_np.shape[1], len(np.unique(y_client_np))).to(device)
+            model.load_state_dict(personalized_models[client_id])
+        else:
+            model = personalized_models[client_id].to(device)
+
+        model.eval()
 
         x_tensor = torch.tensor(x_client_np).float().to(device)
         y_tensor = torch.tensor(y_client_np).long().to(device)
@@ -112,7 +103,7 @@ def evaluate_personalized_models_per_client(personalized_models, X, y, client_da
                 total += yb.size(0)
 
         accs[client_id] = correct / total if total > 0 else 0.0
-        print(f"  Accuracy for client '{client_id}': {accs[client_id]:.4f}")
+        safe_log(f"  Accuracy for client '{client_id}': {accs[client_id]:.4f}")
 
     return accs
 
@@ -125,93 +116,50 @@ def evaluate_personalized_models_per_client(personalized_models, X, y, client_da
 
 
 # Client accuracy for Global model
-def evaluate_per_client(global_model, X, y, client_partitions_test):
+def evaluate_per_client(global_model, client_partitions_test):
     """
-    Evaluates a global model's performance on client-specific test data.
+    Evaluates a global model's performance on per-client test datasets.
 
     Args:
-        global_model (torch.nn.Module): The PyTorch model to evaluate.
-        X (np.ndarray or pd.DataFrame): The full dataset features.
-            Expected to be a NumPy array or convertible to one.
-        y (np.ndarray or pd.DataFrame or pd.Series): The full dataset labels.
-            Expected to be a NumPy array or convertible to one (1D for labels).
-        client_partitions_test (dict or list): A dictionary where keys are client IDs
-            and values are lists/arrays of indices corresponding to that client's
-            data in X and y. Or, if `enumerate` is used on a list, it should be
-            a list of index arrays.
+        global_model (torch.nn.Module): The model to evaluate.
+        client_partitions_test (dict): client_id -> (X_client, y_client) as numpy arrays or tensors.
 
     Returns:
-        dict: A dictionary of accuracies for each client.
+        dict: client_id -> accuracy
     """
     accs = {}
     device = setup_device()
-
-    # Ensure the global_model is on the correct device and in evaluation mode
     model = global_model.to(device)
-    model.eval()  # Important: Sets the model to evaluation mode (disables dropout, batch norm updates, etc.)
+    model.eval()
 
-    # --- Data Type Conversion to NumPy Arrays (One-time, before the loop) ---
-    # Convert X to a NumPy array if it's a Pandas DataFrame
-    if isinstance(X, pd.DataFrame):
-        X_np = X.values
-        safe_log("Converted X from pandas.DataFrame to numpy.ndarray.")
-    elif isinstance(X, np.ndarray):
-        X_np = X
-    else:
-        # Handle other types if necessary, or raise an error
-        raise TypeError(f"Unsupported type for X: {type(X)}. Expected numpy.ndarray or pandas.DataFrame.")
-
-    # Convert y to a 1D NumPy array if it's a Pandas DataFrame/Series
-    if isinstance(y, pd.DataFrame):
-        # If it's a single column DataFrame, flatten it to 1D
-        if y.shape[1] == 1:
-            y_np = y.values.flatten()
-            safe_log("Converted y from single-column pandas.DataFrame to 1D numpy.ndarray.")
-        else:
-            raise ValueError("y (labels) should be a single-column DataFrame or Series.")
-    elif isinstance(y, pd.Series):
-        y_np = y.values
-        safe_log("Converted y from pandas.Series to numpy.ndarray.")
-    elif isinstance(y, np.ndarray):
-        # Ensure y is 1D for classification labels if it's a NumPy array
-        if y.ndim > 1 and y.shape[1] == 1:
-            y_np = y.flatten()
-            safe_log("Flattened 2D y numpy.ndarray to 1D.")
-        else:
-            y_np = y
-    else:
-        raise TypeError(
-            f"Unsupported type for y: {type(y)}. Expected numpy.ndarray, pandas.DataFrame, or pandas.Series.")
-    # --- End Data Type Conversion ---
-
-    for cid, idx in enumerate(client_partitions_test):
-        # Skip clients with no data (empty index list/array)
-        if not (isinstance(idx, (list, np.ndarray)) and len(idx) > 0):
+    for cid, client_data in client_partitions_test.items():
+        if not isinstance(client_data, (tuple, list)) or len(client_data) != 2:
+            safe_log(f"Client '{cid}' has invalid test data. Assigning accuracy 0.0.", level="warning")
             accs[cid] = 0.0
-            safe_log(f"Client {cid} has no valid data indices, accuracy set to 0.0.")
             continue
 
-        # Extract client-specific data using the prepared NumPy arrays
-        # Then convert these NumPy subarrays to PyTorch tensors and move to device
-        x_client_tensor = torch.tensor(X_np[idx]).float().to(device)
-        y_client_tensor = torch.tensor(y_np[idx]).long().to(device)  # Labels are typically long/int64
+        X_client, y_client = client_data
 
-        # Create DataLoader for the current client's test set
-        loader = DataLoader(TensorDataset(x_client_tensor, y_client_tensor), BATCH_SIZE)
+        if len(X_client) == 0:
+            safe_log(f"Client '{cid}' has no data. Skipping.", level="warning")
+            accs[cid] = 0.0
+            continue
+
+        # Convert to torch tensors if not already
+        X_tensor = torch.tensor(X_client, dtype=torch.float32).to(device)
+        y_tensor = torch.tensor(y_client, dtype=torch.long).to(device)
+
+        loader = DataLoader(TensorDataset(X_tensor, y_tensor), batch_size=BATCH_SIZE)
 
         correct, total = 0, 0
-        with torch.no_grad():  # Disable gradient calculations for evaluation
+        with torch.no_grad():
             for xb, yb in loader:
-                # xb and yb are already on the correct device because x_client_tensor/y_client_tensor were
                 output = model(xb)
-                # Get the predicted class (index of the max log-probability)
-                _, pred = torch.max(output, 1)
-                # Accumulate correct predictions and total samples
+                pred = output.argmax(dim=1)
                 correct += (pred == yb).sum().item()
                 total += yb.size(0)
 
-        # Calculate accuracy for the current client
         accs[cid] = correct / total if total > 0 else 0.0
-        safe_log(f"Client {cid} Accuracy for Global Model: {accs[cid]:.4f}")
+        safe_log(f"✅ Client {cid} accuracy: {accs[cid]:.4f}")
 
     return accs

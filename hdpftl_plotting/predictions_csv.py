@@ -2,6 +2,8 @@ import pandas as pd
 
 from result import predictions
 
+from hdpftl_utility.log import safe_log
+
 
 def prediction_csv(new_data):
     # Convert predictions to NumPy
@@ -14,4 +16,4 @@ def prediction_csv(new_data):
     df_input = pd.DataFrame(new_data.cpu().numpy())
     df_input["Predicted_Label"] = preds_np
     df_input.to_csv("input_with_predictions.csv", index=False)
-    print("Predictions saved to predictions.csv")
+    safe_log("Predictions saved to predictions.csv")

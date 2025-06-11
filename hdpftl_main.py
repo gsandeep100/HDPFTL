@@ -26,8 +26,9 @@ from hdpftl_plotting.plot import plot_client_accuracies, plot_personalized_vs_gl
 from hdpftl_training.hdpftl_data.preprocess import preprocess_data
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition_with_devices
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
-from hdpftl_training.hdpftl_pre_training.targetclass import target_class
-from hdpftl_utility.config import GLOBAL_MODEL_PATH, EPOCH_FILE_FINE, EPOCH_FILE_PRE, INPUT_DIM
+from hdpftl_training.hdpftl_pre_training.targetclass import finetune_model
+from hdpftl_utility.config import GLOBAL_MODEL_PATH, EPOCH_FILE_FINE, EPOCH_FILE_PRE, INPUT_DIM, NUM_CLIENTS, \
+    NUM_DEVICES_PER_CLIENT
 from hdpftl_utility.log import setup_logging, safe_log
 from hdpftl_utility.utils import named_timer, setup_device
 
@@ -55,8 +56,13 @@ if __name__ == "__main__":
     Larger alpha → more uniform data distribution across clients.
     """
     with named_timer("dirichlet_partition", writer, tag="dirichlet_partition"):
-        client_data_dict, hierarchical_data = dirichlet_partition_with_devices(X_pretrain, y_pretrain, alpha=0.3)
-        client_data_dict_test, hierarchical_data_test = dirichlet_partition_with_devices(X_test, y_test, alpha=0.3)
+        client_data_dict, hierarchical_data = dirichlet_partition_with_devices(
+            X_pretrain, y_pretrain, alpha=0.5, num_clients=NUM_CLIENTS, num_devices_per_client=NUM_DEVICES_PER_CLIENT
+        )
+
+        client_data_dict_test, hierarchical_data_test = dirichlet_partition_with_devices(
+            X_test, y_test, alpha=0.5, num_clients=NUM_CLIENTS, num_devices_per_client=NUM_DEVICES_PER_CLIENT
+        )
 
     safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
 
@@ -69,7 +75,7 @@ if __name__ == "__main__":
         # Step 3: Instantiate target model and train on device
         with named_timer("target_class", writer, tag="target_class"):
             def base_model_fn():
-                return target_class(
+                return finetune_model(
                     X_finetune,
                     y_finetune,
                     input_dim=X_finetune.shape[1],
@@ -78,7 +84,7 @@ if __name__ == "__main__":
         safe_log("[3]Fine Tuning completed.")
 
         with named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
-            global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data)
+            global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data,X_test,y_test)
 
     #######################  LOAD FROM FILE ##################################
     else:
@@ -102,8 +108,8 @@ if __name__ == "__main__":
 
     safe_log("\n[10]Evaluating personalized models per client on client partitioned data...")
     with named_timer("Evaluate Personalized Models", writer, tag="PersonalizedEval"):
-        personalised_acc = evaluate_personalized_models_per_client(personalized_models, X_test, y_test,
-                                                                   client_data_dict_test)
+        personalised_acc = evaluate_personalized_models_per_client(personalized_models,client_data_dict_test)
+        #print(f"Evaluate Personalized Models + {personalised_acc} ")
     # for cid, model in personalized_models.items():
     #     acc = evaluate_personalized_models_per_client(model, X_test[client_partitions_test[cid]],
     #                                                   y_test[client_partitions_test[cid]], client_partitions_test)
@@ -111,7 +117,7 @@ if __name__ == "__main__":
 
     safe_log("[11]Evaluating global model on client partitioned dataset per client...")
     with named_timer("Evaluate Personalized Models Per Client", writer, tag="PersonalizedEvalperClient"):
-        client_accs = evaluate_per_client(global_model, X_test, y_test, client_data_dict_test)
+        client_accs = evaluate_per_client(global_model, client_data_dict_test)
 
     safe_log("[12] Evaluating global model on global dataset...")
     with named_timer("Evaluate Global Model", writer, tag="GlobalEval"):
@@ -125,7 +131,7 @@ if __name__ == "__main__":
         outputs = global_model(X_test_tensor)
         _, predictions = torch.max(outputs, 1)
     num_classes = int(max(y_test.max().item(), predictions.cpu().max().item()) + 1)
-    print("Number of classes:::", num_classes)
+    safe_log("Number of classes:::", num_classes)
     # plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
 
     # plot_training_loss(losses=np.load(EPOCH_FILE_PRE), label='Pre Epoch Losses')
@@ -169,26 +175,26 @@ if __name__ == "__main__":
     safe_log("============================================================================")
 
 """
-print("\n[3] Aggregating fleet models...")
+safe_log("\n[3] Aggregating fleet models...")
     # global_model = aggregate_models(local_models, base_model_fn)
     global_model = bayesian_aggregate_models(local_models, base_model_fn)
-    print("\n[4] Evaluating global model...")
+    safe_log("\n[4] Evaluating global model...")
     acc = evaluate_global_model(global_model, X_test, y_test)
-    print(f"Global Accuracy Before Personalization: {acc:.4f}")
+    safe_log(f"Global Accuracy Before Personalization: {acc:.4f}")
     logging.info(f"Global Accuracy Before Personalization: {acc:.4f}")
 
     evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
 
-    print("\n[5] Personalizing each client...")
+    safe_log("\n[5] Personalizing each client...")
     personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)
 
-    print("\n[6] Evaluating personalized hdpftl_models...")
+    safe_log("\n[6] Evaluating personalized hdpftl_models...")
     for cid, model in personalized_models.items():
         acc = evaluate_global_model(model, X_test[client_partitions_test[cid]], y_test[client_partitions_test[cid]],device)
-        print(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
+        safe_log(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
         logging.info(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
 
-        # print(f"Personalized Accuracy for Client {cid}: {acc:.4f}")
+        # safe_log(f"Personalized Accuracy for Client {cid}: {acc:.4f}")
 
     return global_model, personalized_models
 
@@ -208,7 +214,7 @@ print("\n[3] Aggregating fleet models...")
     logging.info(f"Predictions: {preds}")
     logging.info(f"Probabilities: {probs}")
     logging.info("=========================Process Finished===================================")
-    print("Predictions:", preds)
+    safe_log("Predictions:", preds)
     print("Probabilities:", probs)
     # plot(global_accuracies=preds, personalized_accuracies=probs)
     """

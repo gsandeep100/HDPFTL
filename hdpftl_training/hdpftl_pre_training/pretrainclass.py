@@ -21,6 +21,7 @@ from torch.utils.data import TensorDataset, DataLoader
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
 from hdpftl_utility.config import EPOCH_FILE_PRE, PRE_MODEL_PATH, NUM_EPOCHS_PRE_TRAIN, EPOCH_DIR
+from hdpftl_utility.log import safe_log
 
 """
 1. Pretraining phase
@@ -45,7 +46,7 @@ def pretrain_class(X_train, X_test, y_train, y_test, input_dim, early_stop_patie
     # Create DataLoaders
     train_loader = DataLoader(train_dataset, shuffle=True, batch_size=32)
     val_loader = DataLoader(test_dataset, shuffle=False, batch_size=32)
-    print("\n=== Pretraining Phase (Real Data) ===")
+    safe_log("\n=== Pretraining Phase (Real Data) ===")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = TabularNet(input_dim, num_classes).to(device)
@@ -96,7 +97,7 @@ def pretrain_class(X_train, X_test, y_train, y_test, input_dim, early_stop_patie
         epoch_metrics.append((train_loss, val_loss, val_acc))
 
         if verbose:
-            print(
+            safe_log(
                 f"Epoch {epoch + 1}: Train Loss = {train_loss:.4f} | Val Loss = {val_loss:.4f} | Val Acc = {val_acc:.4f}")
 
         # Early stopping
@@ -107,9 +108,9 @@ def pretrain_class(X_train, X_test, y_train, y_test, input_dim, early_stop_patie
         else:
             patience_counter += 1
             if patience_counter >= early_stop_patience:
-                print(f"Early stopping at epoch {epoch + 1}")
+                safe_log(f"Early stopping at epoch {epoch + 1}",level="warning")
                 break
 
     # Save metrics to file
     np.save(EPOCH_FILE_PRE, np.array(epoch_metrics))
-    print("Pretraining complete. Best model saved.")
+    safe_log("Pretraining complete. Best model saved.")

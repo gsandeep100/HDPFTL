@@ -123,13 +123,13 @@ OUTPUT_DATASET_PATH_2024 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/"
 OUTPUT_DATASET_ALL_DATA = "./hdpftl_training/hdpftl_dataset/AllData/"
 
 BATCH_SIZE = 5
-NUM_CLIENTS = 7
+NUM_CLIENTS = 3
 NUM_DEVICES_PER_CLIENT = 5
 CLIENTS_PER_AGGREGATOR = 5
 NUM_ROUNDS = 5
 INPUT_DIM = 79  # Your feature size
-NUM_EPOCHS_PRE_TRAIN = 10  # or 50 or 100
-NUM_EPOCHS_FINE_TUNE = 20  # or 50 or 100
+NUM_EPOCHS_PRE_TRAIN = 5  # or 50 or 100
+NUM_FEDERATED_ROUND = 5  # or 50 or 100
 NUM_TRAIN_ON_DEVICE = 5  # or 50 or 100
 NUM_CLASSES = 2  # Suppose you pretrained with 5 classes
 GLOBAL_MODEL_PATH = "./hdpftl_trained_models/global_model.pth"

@@ -5,9 +5,11 @@ import torch
 from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 
+from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
 from hdpftl_training.hdpftl_aggregation.hdpftl_fedavg import aggregate_models
 from hdpftl_training.save_model import save
-from hdpftl_utility.config import NUM_CLIENTS, NUM_DEVICES_PER_CLIENT, NUM_EPOCHS_FINE_TUNE, NUM_TRAIN_ON_DEVICE
+from hdpftl_utility.config import NUM_CLIENTS, NUM_DEVICES_PER_CLIENT, NUM_TRAIN_ON_DEVICE, \
+    NUM_FEDERATED_ROUND
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import named_timer, setup_device
 
@@ -37,79 +39,85 @@ def split_among_devices(X_client, y_client, seed=42):
     return device_data
 
 
-def dirichlet_partition_with_devices(X, y, alpha=0.3, num_clients=5):
-    # Step 1: Partition into clients
-    client_data_dict = dirichlet_partition(X, y, alpha=alpha)
+def dirichlet_partition(X, y, alpha, num_clients, seed=42):
+    """
+    Partition dataset indices using Dirichlet distribution to simulate non-IID data.
 
-    # Step 2: Subdivide each client’s data among devices
+    Args:
+        X: Features (numpy array or DataFrame).
+        y: Labels (numpy array, torch tensor, or pandas Series).
+        alpha: Dirichlet concentration parameter.
+        num_clients: Number of clients to partition into.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        client_data_dict: dict mapping client_id to (X_subset, y_subset)
+    """
+
+    # Convert y to numpy array if needed
+    if hasattr(y, 'values'):
+        y = y.values
+    if isinstance(y, torch.Tensor):
+        y = y.cpu().numpy()
+
+    np.random.seed(seed)
+    unique_classes = np.unique(y)
+
+    client_indices = [[] for _ in range(num_clients)]
+
+    for c in unique_classes:
+        class_indices = np.where(y == c)[0]
+        np.random.shuffle(class_indices)
+
+        proportions = np.random.dirichlet(alpha * np.ones(num_clients))
+        proportions = (proportions * len(class_indices)).astype(int)
+
+        diff = len(class_indices) - proportions.sum()
+        if diff > 0:
+            proportions[np.argmax(proportions)] += diff
+        elif diff < 0:
+            proportions[np.argmax(proportions)] += diff
+
+        splits = np.split(class_indices, np.cumsum(proportions)[:-1])
+        for client_id, split in enumerate(splits):
+            client_indices[client_id].extend(split.tolist())
+
+    X_np = X.values if hasattr(X, 'values') else X
+    y_np = y
+
+    client_data_dict = {}
+    for client_id, indices in enumerate(client_indices):
+        indices = np.array(indices)
+        client_data_dict[client_id] = (X_np[indices], y_np[indices])
+
+    return client_data_dict
+
+
+def dirichlet_partition_with_devices(X, y, alpha=0.3, num_clients=5, num_devices_per_client=2):
+    """
+    Hierarchical partitioning:
+      1. Partition dataset among clients via Dirichlet.
+      2. Split each client dataset evenly among devices.
+
+    Returns:
+        client_data_dict: dict of client_id -> (X_subset, y_subset)
+        hierarchical_data: dict of client_id -> list of device datasets [(X_device, y_device), ...]
+    """
+    client_data_dict = dirichlet_partition(X, y, alpha=alpha, num_clients=num_clients)
+
     hierarchical_data = {}
     for client_id, (X_c, y_c) in client_data_dict.items():
         num_samples = len(X_c)
-        device_indices = np.array_split(np.arange(num_samples), NUM_DEVICES_PER_CLIENT)
+        device_indices = np.array_split(np.arange(num_samples), num_devices_per_client)
 
         device_data = []
         for d_idx in device_indices:
-            device_data.append((torch.tensor(X_c[d_idx]), torch.tensor(y_c[d_idx])))
+            # Convert to torch tensors for training later
+            device_data.append((torch.tensor(X_c[d_idx]).float(), torch.tensor(y_c[d_idx]).long()))
 
         hierarchical_data[client_id] = device_data
 
     return client_data_dict, hierarchical_data
-
-
-def dirichlet_partition(X, y, alpha, seed=42):
-    """
-    Partition hdpftl_data indices using Dirichlet distribution.
-
-    Args:
-        X: Dataset features (unused, only y matters here for indexing).
-        y: Dataset labels (1D numpy array or torch tensor).
-        alpha: Dirichlet concentration parameter.
-        n_clients: Number of partitions/clients.
-        n_classes: Number of unique classes (optional).
-        seed: Random seed for reproducibility.
-
-    Returns:
-        List of index lists, one per client.
-    """
-    n_classes = len(torch.unique(torch.tensor(y.values)))
-
-    client_data_dict = {}
-    if isinstance(y, torch.Tensor):
-        y = y.numpy()
-
-    np.random.seed(seed)
-    if n_classes is None:
-        n_classes = len(np.unique(y))
-
-    client_indices = [[] for _ in range(NUM_CLIENTS)]
-
-    for c in range(n_classes):
-        class_indices = np.where(y == c)[0]
-        np.random.shuffle(class_indices)
-
-        proportions = np.random.dirichlet([alpha] * NUM_CLIENTS)
-        # Scale to number of class samples
-        proportions = (proportions * len(class_indices)).astype(int)
-
-        # Correct any overflows/deficits
-        while proportions.sum() > len(class_indices):
-            proportions[np.argmax(proportions)] -= 1
-        while proportions.sum() < len(class_indices):
-            proportions[np.argmin(proportions)] += 1
-
-        splits = np.split(class_indices, np.cumsum(proportions)[:-1])
-        for i, split in enumerate(splits):
-            client_indices[i].extend(split.tolist())
-
-        # Build client datasets
-        for client_id, indices in enumerate(client_indices):
-            indices = np.array(indices)
-            X_np = X.values if hasattr(X, 'values') else X
-            y_np = y.values if hasattr(y, 'values') else y
-
-            client_data_dict[client_id] = (X_np[indices], y_np[indices])
-
-    return client_data_dict
 
 
 def safe_split(tensor, proportions, dim=0):
@@ -149,129 +157,102 @@ def average_models(model_state_dicts):
     return avg_state
 
 
-def train_on_device(model, device_data, batch_size=32):
+def train_on_device(model, device_data, epochs=1, batch_size=32, lr=0.01):
     """
-    Trains a PyTorch model on data from a single device.
+    Train a model locally on device data for a few epochs.
 
     Args:
-        model (torch.nn.Module): The model to be trained (usually a local copy of the global model).
-        device_data (tuple): A tuple (X_device, y_device) where X_device is features
-                             and y_device is labels (can be NumPy arrays or PyTorch tensors).
+        model (torch.nn.Module): The model to train.
+        device_data (tuple): Tuple (X_data, y_data) as either NumPy arrays or tensors.
         epochs (int): Number of training epochs.
-        batch_size (int): Batch size for the DataLoader.
+        batch_size (int): Training batch size.
+        lr (float): Learning rate.
 
     Returns:
-        dict: The state_dict of the trained model.
+        dict: Trained model's state_dict.
     """
     device = setup_device()
-    model.to(device)  # Ensure the model is on the correct device
-    model.train()  # Set model to training mode
+    model = model.to(device)
+    model.train()
 
-    X_device_raw, y_device_raw = device_data
-    if not isinstance(X_device_raw, (np.ndarray, list)) or len(X_device_raw) == 0:
-        print(f"  Info: train_on_device received empty data for training. Skipping training for this device.")
-        # Return the current model's state_dict as no training occurred
-        return model.state_dict()
+    X_data, y_data = device_data
 
-    # Robust conversion from NumPy array or existing PyTorch tensor to PyTorch tensor
-    # .detach().clone() is used if X_device_raw is already a tensor, to ensure a fresh copy.
-    # If X_device_raw is a NumPy array, torch.tensor() handles the conversion and copying.
-    X_device_tensor = torch.tensor(X_device_raw).float()
-    y_device_tensor = torch.tensor(y_device_raw).long()  # Assuming classification labels
+    # Convert to tensors if needed
+    if isinstance(X_data, np.ndarray):
+        X_tensor = torch.tensor(X_data).float().to(device)
+    else:
+        X_tensor = X_data.float().to(device)
 
-    # Create DataLoader for batching and shuffling
-    dataset = TensorDataset(X_device_tensor, y_device_tensor)
-    if len(dataset) == 0:
-        print(f"  Info: TensorDataset created with no samples. Skipping training for this device.")
-        return model.state_dict()
+    if isinstance(y_data, np.ndarray):
+        y_tensor = torch.tensor(y_data).long().to(device)
+    else:
+        y_tensor = y_data.long().to(device)
 
+    dataset = TensorDataset(X_tensor, y_tensor)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    criterion = nn.CrossEntropyLoss()  # Or nn.MSELoss() for regression, etc.
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    criterion = torch.nn.CrossEntropyLoss()
 
-    # Training loop
-    for epoch in range(NUM_TRAIN_ON_DEVICE):
-        total_loss = 0
-        for features, labels in loader:
-            # Move batch data to the same device as the model
-            features, labels = features.to(device), labels.to(device)
+    for _ in range(epochs):
+        for xb, yb in loader:
+            optimizer.zero_grad()
+            output = model(xb)
+            loss = criterion(output, yb)
+            loss.backward()
+            optimizer.step()
 
-            optimizer.zero_grad()  # Zero gradients for the current batch
-            outputs = model(features)  # Forward pass
-            loss = criterion(outputs, labels)  # Calculate loss
-            loss.backward()  # Backward pass (compute gradients)
-            optimizer.step()  # Update model parameters
-
-            total_loss += loss.item()  # Accumulate loss (optional, for logging/monitoring)
-
-        # Optional: Print epoch loss for monitoring
-        # print(f"  Epoch {epoch+1}/{epochs}, Loss: {total_loss / len(loader):.4f}")
-
-    # Return the state_dict of the trained model, not the full model object.
-    # This is standard practice for aggregation in federated learning.
     return model.state_dict()
 
 
-def federated_round(base_model_fn, global_model, hierarchical_data):
+def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
     """
-    Performs one round of federated learning with hierarchical aggregation.
+    One round of federated training with hierarchical aggregation:
+      - Train on each device
+      - Aggregate device models per client
+      - Aggregate client models into global model
 
     Args:
-        base_model_fn (callable): A function that returns a new instance of the model architecture.
-        global_model (torch.nn.Module): The current global model instance.
-        hierarchical_data (dict): A dictionary where keys are client IDs and values are
-                                  lists of device data (e.g., [(X_dev1, y_dev1), (X_dev2, y_dev2)]).
+        base_model_fn: function returning a fresh model instance
+        global_model: current global model
+        hierarchical_data: dict client_id -> list of (X_device, y_device)
+        epochs: number of epochs to train per device
 
     Returns:
-        torch.nn.Module: The updated global model instance after aggregation.
+        Updated global_model with aggregated weights
     """
     device = setup_device()
-    client_state_dicts = []  # Will store state_dicts from each client
+    client_state_dicts = []
 
     for client_id, devices_data in hierarchical_data.items():
-        print(f"  Processing client: {client_id}")
-        device_state_dicts = []  # Will store state_dicts from each device of this client
+        device_state_dicts = []
+        safe_log(f"Training client {client_id} on {len(devices_data)} devices...")
 
         for device_data in devices_data:
-            X_device_np, y_device_np = device_data  # Assuming device_data is (X_np, y_np)
-            if len(X_device_np) == 0:
-                print(
-                    f"Warning: Device for client '{client_id}' has no training data. Skipping local training for this device.")
+            if device_data[0].size(0) == 0:  # no samples on this device
+                safe_log(f"Skipping empty device for client {client_id}")
                 continue
-            local_model = copy.deepcopy(global_model).to(device)
 
-            # Train the local model on the device's data.
-            # train_on_device should handle data conversion to tensors and moving to device.
-            # It should return the state_dict of the trained local model.
-            local_state_dict = train_on_device(local_model, device_data)
+            local_model = copy.deepcopy(global_model).to(device)
+            local_state_dict = train_on_device(local_model, device_data, epochs=epochs)
             device_state_dicts.append(local_state_dict)
 
-        # Handle clients with no actual trained devices
         if not device_state_dicts:
-            print(
-                f"  Warning: Client '{client_id}' had no devices with data or all devices skipped training. Skipping aggregation for this client.")
-            continue  # Skip this client if no state_dicts were generated
+            safe_log(f"No devices trained for client {client_id}, skipping client aggregation.",level="warning")
+            continue
 
-        # Aggregate device models' state_dicts within this client to get a client-level state_dict
-        # aggregate_models should return a state_dict.
-        client_aggregated_state_dict = aggregate_models(device_state_dicts, base_model_fn)
-        client_state_dicts.append(client_aggregated_state_dict)
+        # Aggregate devices per client
+        client_agg_state_dict = aggregate_models(device_state_dicts, base_model_fn)
+        client_state_dicts.append(client_agg_state_dict)
 
-    # Handle case where no clients actually trained in the entire round
     if not client_state_dicts:
-        print("Warning: No clients contributed updates in this federated round. Global model remains unchanged.")
-        return global_model  # Return the original global model if no updates occurred
+        safe_log("No clients trained in this round, returning previous global model.",level="warning")
+        return global_model
 
-    # Aggregate all client models' state_dicts to update the global model's state
-    # aggregate_models should return a state_dict.
-    new_global_state_dict = aggregate_models(client_state_dicts, base_model_fn)
-
-    # Load the new global state dict into the existing global model instance
+    # Aggregate all clients into new global model
+    new_global_state_dict = aggregate_models(client_state_dicts,base_model_fn)
     global_model.load_state_dict(new_global_state_dict)
-
     return global_model
-
 
 """
 ✅ hierarchical_data: {client_id: [(X_dev1, y_dev1), (X_dev2, y_dev2), ...]}
@@ -289,34 +270,39 @@ def federated_round(base_model_fn, global_model, hierarchical_data):
 
 
 # --- Main HDPFTL pipeline ---
-def hdpftl_pipeline(base_model_fn, hierarchical_data, writer=None):
+def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,y_test, writer=None):
     device = setup_device()
     safe_log("\n🚀 Starting HDPFTL pipeline...\n")
 
     # Instantiate global model properly
-    global_model = base_model_fn().to(device)
+    #global_model = base_model_fn().to(device)
+    global_model = copy.deepcopy(base_model_fn()).to(device)
+
 
     # Federated training rounds
-    for round_num in range(NUM_EPOCHS_FINE_TUNE):
-        safe_log(f"\n🔁 Federated Round {round_num + 1}/{NUM_EPOCHS_FINE_TUNE}")
+    for round_num in range(NUM_FEDERATED_ROUND):
+        safe_log(f"\n🔁 Federated Round {round_num + 1}/{NUM_FEDERATED_ROUND}")
         with named_timer(f"federated_round_{round_num + 1}", writer, tag="federated_round"):
             global_model = federated_round(base_model_fn, global_model, hierarchical_data)
+            acc = evaluate_global_model(global_model, X_test, y_test)
+            safe_log(f"🌍 Global Accuracy after round {round_num + 1}: {acc:.4f}")
 
     # Personalized fine-tuning per client
     personalized_models = {}
     for client_id, devices_data in hierarchical_data.items():
-        model = copy.deepcopy(global_model).to(device)
+        safe_log(f"🔧 Personalizing model for client {client_id}")
 
-        # Combine device-level data into client-level dataset
+        # Combine device data for the client
         X_client = np.concatenate([d[0] for d in devices_data])
         y_client = np.concatenate([d[1] for d in devices_data])
 
-        # Instantiate fresh model from base_model_fn, move to device
+        # Fresh model for personalization
         trained_model = base_model_fn().to(device)
 
-        # Load global weights as starting point
-        trained_model.load_state_dict(model.state_dict())
+        # Start from global weights
+        trained_model.load_state_dict(global_model.state_dict())
 
+        # Train on client-specific data
         trained_model = train_on_device(trained_model, (X_client, y_client), batch_size=32)
 
         personalized_models[client_id] = trained_model

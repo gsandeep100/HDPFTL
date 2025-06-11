@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from hdpftl_training.hdpftl_models.TabularNet import create_model_fn_global, TabularNet
+from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
 from hdpftl_utility.config import GLOBAL_MODEL_PATH
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
@@ -14,7 +14,7 @@ def evaluate_global_model_fromfile():
 
     try:
         # Instantiate model directly (no lambda now)
-        global_model = create_model_fn_global().to(device)
+        global_model = create_model_fn().to(device)
 
         # Allowlist your custom model class for safe loading
         torch.serialization.add_safe_globals([TabularNet])
@@ -23,12 +23,12 @@ def evaluate_global_model_fromfile():
         global_model.load_state_dict(torch.load(GLOBAL_MODEL_PATH, map_location=device))
         global_model.eval()
 
-        print("✅ Global model loaded and ready for evaluation.")
+        safe_log("✅ Global model loaded and ready for evaluation.")
         return global_model
 
     except Exception as e:
-        print("❌ Failed to load global model.")
-        print(f"Error: {e}")
+        safe_log("❌ Failed to load global model.")
+        safe_log(f"Error: {e}",level="error")
         return None
 
 
