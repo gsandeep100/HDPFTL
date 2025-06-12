@@ -16,12 +16,13 @@ import os
 from glob import glob
 
 import numpy as np
-import torch
 from imblearn.over_sampling import SVMSMOTE
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 from hdpftl_training.hdpftl_data.sampling import stratified_downsample
+from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA
+from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import named_timer
 
 """
@@ -44,24 +45,24 @@ import warnings
 
 # 🔍 Step 0: Profile
 def profile_dataset(X, y):
-    print("📐 Feature shape:")
-    print(f"  ➤ X shape: {X.shape}")
+    safe_log("📐 Feature shape:")
+    safe_log(f"  ➤ X shape: {X.shape}")
 
-    print("\n📊 Class distribution:")
+    safe_log("\n📊 Class distribution:")
     counts = Counter(y)
     for label, count in counts.items():
-        print(f"  ➤ Class {label}: {count} samples")
+        safe_log(f"  ➤ Class {label}: {count} samples")
 
     imbalance_ratio = max(counts.values()) / min(counts.values())
-    print(f"\n⚖️  Imbalance Ratio: {imbalance_ratio:.2f}")
+    safe_log(f"\n⚖️  Imbalance Ratio: {imbalance_ratio:.2f}")
 
-    print("\n🔍 Data type inspection:")
-    print(pd.DataFrame(X).dtypes.value_counts())
+    safe_log("\n🔍 Data type inspection:")
+    safe_log(pd.DataFrame(X).dtypes.value_counts())
 
 
 # 🧪 Step 1: PCA
 def reduce_dim(X, n_components=30):
-    print(f"\n🔧 Reducing dimensions from {X.shape[1]} → {n_components} using PCA")
+    safe_log(f"\n🔧 Reducing dimensions from {X.shape[1]} → {n_components} using PCA")
     pca = PCA(n_components=n_components, random_state=42)
     return pca.fit_transform(X)
 
@@ -74,7 +75,7 @@ def fast_safe_smote(X, y, k_neighbors=5):
     if k < 1:
         warnings.warn("Too few samples for SMOTE; skipping.")
         return X, y
-    print(f"\n⚡ Applying SMOTE with k={k}")
+    safe_log(f"\n⚡ Applying SMOTE with k={k}")
     sm = SMOTE(k_neighbors=k, random_state=42)
     result = sm.fit_resample(X, y)
     # Ensure only X and y are returned, even if more values are present
@@ -85,7 +86,7 @@ def fast_safe_smote(X, y, k_neighbors=5):
 
 # 🌀 Step 3: Hybrid
 def hybrid_balance(X, y):
-    print("\n🌀 Applying hybrid balancing (undersample + SMOTE)")
+    safe_log("\n🌀 Applying hybrid balancing (undersample + SMOTE)")
     under = RandomUnderSampler(sampling_strategy='auto', random_state=42)
     over = SMOTE(k_neighbors=5, random_state=42)
     pipeline = Pipeline([('under', under), ('over', over)])
@@ -100,8 +101,8 @@ def hybrid_balance(X, y):
         warnings.warn(f"Hybrid balancing failed: {e}")
         return X, y
 
-# 🎯 Master Function
-# 🎯 Master function with pre-sampling
+    # 🎯 Master Function
+    # 🎯 Master function with pre-sampling
 
     """AI is creating summary for 
     Summary Table
@@ -112,7 +113,7 @@ def hybrid_balance(X, y):
 
 
 def prepare_data(X, y, strategy='pca_smote', n_components=30, pre_sample=False, sample_fraction=0.1):
-    print("📊 Running prepare_data with strategy:", strategy)
+    safe_log("📊 Running prepare_data with strategy:", strategy)
 
     # Optional downsampling
     if pre_sample:
@@ -128,13 +129,13 @@ def prepare_data(X, y, strategy='pca_smote', n_components=30, pre_sample=False, 
     elif strategy == 'smote_only':
         X_final, y_final = fast_safe_smote(X, y)
     elif strategy == 'none':
-        print("\n🚫 No resampling applied. Returning original X, y.")
+        safe_log("\n🚫 No resampling applied. Returning original X, y.")
         X_final, y_final = X, y
     else:
         raise ValueError("❌ Invalid strategy. Choose from 'pca_smote', 'hybrid', 'smote_only', or 'none'.")
 
-    print("\n✅ Final shape:", X_final.shape)
-    print("✅ Final class distribution:", Counter(y_final))
+    safe_log("\n✅ Final shape:", X_final.shape)
+    safe_log("✅ Final class distribution:", Counter(y_final))
     return X_final, y_final
 
 
@@ -143,7 +144,7 @@ def safe_smote(X, y):
     min_class_size = min(counts.values())
     k = min(5, min_class_size - 1)
     if k < 1:
-        print("Too few samples for SMOTE; skipping.")
+        safe_log("Too few samples for SMOTE; skipping.")
         return X, y
     smote = SVMSMOTE(k_neighbors=k, random_state=42)
     return smote.fit_resample(X, y)
@@ -154,13 +155,13 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
 
     if not all_files:
         raise FileNotFoundError(f"No CSV files found in: {os.path.abspath(folder_path)}")
-    print(f"Found {len(all_files)} CSV files in '{folder_path}'")
+    safe_log(f"Found {len(all_files)} CSV files in '{folder_path}'")
     combined_df = []
 
     for count, file in enumerate(all_files, start=1):
         df = pd.read_csv(file)
         filename = os.path.basename(file).lower()
-        print(f"Count: {count}, Processing File: {file}")
+        safe_log(f"Count: {count}, Processing File: {file}")
 
         # Determine label from filename
         if any(kw in filename for kw in benign_keywords):
@@ -197,11 +198,11 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
 
 
 def safe_clean_dataframe(df: pd.DataFrame,
-                         chunk_size: int=10000,
+                         chunk_size: int = 10000,
                          invalid_values=None,
                          replace_with=np.nan,
-                         log_progress: bool=True,
-                         auto_gc: bool=True) -> pd.DataFrame:
+                         log_progress: bool = True,
+                         auto_gc: bool = True) -> pd.DataFrame:
     """
     Safely replaces infinities and other specified invalid values in a large DataFrame.
 
@@ -227,7 +228,7 @@ def safe_clean_dataframe(df: pd.DataFrame,
     for start in range(0, total_rows, chunk_size):
         end = min(start + chunk_size, total_rows)
         if log_progress:
-            print(f"Processing rows {start} to {end - 1}...")
+            safe_log(f"Processing rows {start} to {end - 1}...")
 
         df.iloc[start:end] = df.iloc[start:end].replace(values_to_replace, replace_with)
 
@@ -235,16 +236,16 @@ def safe_clean_dataframe(df: pd.DataFrame,
             gc.collect()
 
     if log_progress:
-        print("Cleaning complete.")
+        safe_log("Cleaning complete.")
 
     return df
 
 
-def preprocess_data(path, writer=None):
+def preprocess_data(writer=None):
     # all_files = glob.glob(path + "*.csv")
     # df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)
     with named_timer("load_and_label_all", writer, tag="load_and_label_all"):
-        df = load_and_label_all(path)
+        df = load_and_label_all(OUTPUT_DATASET_ALL_DATA)
     # Replace infinities and -999 or '?' with NaN
     scaler = MinMaxScaler()
     features = df.columns.difference(['Label'])
@@ -253,9 +254,9 @@ def preprocess_data(path, writer=None):
 
     # downsampling
     # with named_timer("downsample", writer, tag="downsample"):
-     #   X_small, y_small = stratified_downsample(X, y, fraction=0.2)
+    #   X_small, y_small = stratified_downsample(X, y, fraction=0.2)
 
-    # print(df.columns)
+    # safe_log(df.columns)
 
     # SVMSMOTE- Create synthetic minority points near SVM boundary (critical zones).
     #           Makes the minority class stronger exactly where it matters — at the decision boundary.
@@ -278,20 +279,21 @@ def preprocess_data(path, writer=None):
         else:
             X_final, y_final = X_small, y_small
         """
-    # Scale features
-    scaler = StandardScaler()
-    if isinstance(X_final, pd.Series):
-        X_final = X_final.to_frame()
-    X = scaler.fit_transform(X_final)
     with named_timer("train_test_split", writer, tag="train_test_split"):
-        X_train, X_test, y_train, y_test = train_test_split(X, y_final, test_size=0.2, random_state=42,
-                                                            stratify=y_final)
-    # Convert to PyTorch tensors
-    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
-    X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
-    y_train_tensor = torch.tensor(y_train, dtype=torch.long)
-    y_test_tensor = torch.tensor(y_test.to_numpy(), dtype=torch.long)
-    return X_train_tensor, X_test_tensor, y_train_tensor, y_test_tensor
+        X_temp, X_test, y_temp, y_test = train_test_split(X_final, y_final, test_size=0.1, random_state=42,
+                                                          stratify=y_final)
+        X_pretrain, X_finetune, y_pretrain, y_finetune = train_test_split(
+            X_temp, y_temp, test_size=0.1, stratify=y_temp, random_state=42
+        )
+        # Scale features
+        scaler = StandardScaler()
+        if isinstance(X_pretrain, pd.Series):
+            X_pretrain = X_pretrain.to_frame()
+        X_pretrain = scaler.fit_transform(X_pretrain)
+        X_test = scaler.fit_transform(X_test)
+
+        return X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test
+
 
 """
 def preprocess_data_small(csv_path, test_size=0.2):
@@ -317,7 +319,7 @@ def preprocess_data_small(csv_path, test_size=0.2):
     y_encoded = le.fit_transform(y)
 
     # Optional: show label mapping
-    print("Label mapping:", dict(zip(le.classes_, le.transform(le.classes_).tolist())))
+    safe_log("Label mapping:", dict(zip(le.classes_, le.transform(le.classes_).tolist())))
 
     # Feature scaling
     scaler = StandardScaler()

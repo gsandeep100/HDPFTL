@@ -18,6 +18,8 @@ from datetime import datetime
 import torch
 from imblearn.over_sampling import SMOTE, SVMSMOTE, KMeansSMOTE
 
+from hdpftl_utility.log import safe_log
+
 
 def setup_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -31,12 +33,12 @@ def make_dir(path):
 # ===== Timer Context Manager =====
 @contextmanager
 def named_timer(name, writer=None, global_step=None, tag=None):
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⏱️ Starting {name}...")
+    safe_log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⏱️ Starting {name}...")
     start = time.time()
     yield
     end = time.time()
     elapsed = end - start
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ {name} took {elapsed:.2f} seconds.")
+    safe_log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ {name} took {elapsed:.2f} seconds.")
     if writer and tag:
         writer.add_scalar(f"Timing/{tag}", elapsed, global_step if global_step is not None else 0)
 
@@ -52,5 +54,5 @@ def time_resampling(smote_type, X, y, k=5):
     sampler = smote_classes[smote_type](k_neighbors=k, random_state=42)
     start = time.time()
     X_res, y_res = sampler.fit_resample(X, y)
-    print(f"⏱ {smote_type.upper()} took {time.time() - start:.2f} seconds")
+    safe_log(f"⏱ {smote_type.upper()} took {time.time() - start:.2f} seconds")
     return X_res, y_res

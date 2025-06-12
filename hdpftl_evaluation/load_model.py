@@ -19,10 +19,16 @@ def load_global_model(base_model_fn, path):
     # Instantiate the model
     global_model = base_model_fn().to(device)
 
-    # Load state dict with device map
-    global_model = torch.load(path, map_location=device, weights_only=False)
+    # Load the state dict
+    state_dict = torch.load(path, map_location=device)
 
-    # Set to evaluation mode
+    # If you only saved the weights
+    if isinstance(state_dict, dict):
+        global_model.load_state_dict(state_dict)
+    else:
+        raise ValueError("Loaded file is not a state_dict. Use torch.save(model.state_dict(), path) when saving.")
+
+    # Set to eval mode
     global_model.eval()
 
     return global_model

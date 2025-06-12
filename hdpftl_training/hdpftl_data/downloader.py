@@ -14,6 +14,8 @@ import os
 
 import requests
 
+from hdpftl_utility.log import safe_log
+
 
 def download_dataset(input_dir, output_dir):
     # Create output directory if it doesn't exist
@@ -27,9 +29,9 @@ def download_dataset(input_dir, output_dir):
         # Save the content to a local file
         with open('CIC_IoT_Dataset_2023.html', 'wb') as file:
             file.write(response.content)
-        print('File downloaded successfully.')
+        safe_log('File downloaded successfully.')
     else:
-        print(f'Failed to download file. Status code: {response.status_code}')
+        safe_log(f'Failed to download file. Status code: {response.status_code}', level="error")
 
 # def download_dataset():
 #     if not os.path.exists(DATASET_PATH_2023):
@@ -39,6 +41,6 @@ def download_dataset(input_dir, output_dir):
 #         #path1 = kagglehub.dataset_download("ishasingh03/friday-workinghours-afternoon-ddos")
 #         shutil.copytree(path, DATASET_PATH_2023)
 #         #shutil.copytree(path1, DATASET_PATH)
-#         print("Dataset downloaded at:", DATASET_PATH_2023)
+#         safe_log("Dataset downloaded at:", DATASET_PATH_2023)
 #     else:
-#         print("Dataset already exists at:", DATASET_PATH_2023)
+#         safe_log("Dataset already exists at:", DATASET_PATH_2023)

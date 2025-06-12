@@ -3,6 +3,7 @@ from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 
 from hdpftl_utility.config import BATCH_SIZE
+from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
 
 
@@ -76,7 +77,7 @@ def train_device_model(
             val_accuracy = 100 * correct / total
 
             # if verbose:
-            #   print(f"Epoch [{epoch + 1}/{epochs}] Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val Acc: {val_accuracy:.2f}%")
+            #   safe_log(f"Epoch [{epoch + 1}/{epochs}] Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val Acc: {val_accuracy:.2f}%")
 
             scheduler.step(avg_val_loss)
 
@@ -88,14 +89,14 @@ def train_device_model(
             else:
                 epochs_no_improve += 1
                 if verbose:
-                    print(f"Early stopping at epoch {epoch + 1}")
+                    safe_log(f"Early stopping at epoch {epoch + 1}", level="warning")
                 if best_model_state is not None:
                     model.load_state_dict(best_model_state)
                 break
         else:
             # No validation
             # if verbose:
-            #     print(f"Epoch [{epoch + 1}/{epochs}] Train Loss: {avg_train_loss:.4f}")
+            #     safe_log(f"Epoch [{epoch + 1}/{epochs}] Train Loss: {avg_train_loss:.4f}")
             scheduler.step(avg_train_loss)
 
     return model
