@@ -65,11 +65,11 @@ def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
     try:
         state_dict = torch.load(PRE_MODEL_PATH)
         missing, unexpected = transfer_model.load_state_dict(state_dict, strict=False)
-        with named_timer(f"FineTuning model (strict=False)", writer, tag="federated_round"):
-            if missing:
-                safe_log(f"⚠️ Missing keys: {missing}", level="warning")
-            if unexpected:
-                safe_log(f"⚠️ Unexpected keys: {unexpected}", level="error")
+        safe_log("FineTuning model (strict=False)")
+        if missing:
+            safe_log(f"⚠️ Missing keys: {missing}", level="warning")
+        if unexpected:
+            safe_log(f"⚠️ Unexpected keys: {unexpected}", level="error")
     except Exception as e:
         safe_log(f"❌Could not load pretrained model Error: {e}", level="error")
 
