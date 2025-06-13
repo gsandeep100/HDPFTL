@@ -3,8 +3,9 @@ import os
 
 import torch
 
-from hdpftl_utility.config import GLOBAL_MODEL_PATH, TRAINED_MODEL_DIR
+from hdpftl_utility.config import TRAINED_MODEL_DIR, GLOBAL_MODEL_PATH_TEMPLATE
 from hdpftl_utility.log import safe_log
+from hdpftl_utility.utils import get_today_date
 
 
 def save(global_model, personalized_models):
@@ -22,11 +23,11 @@ def save(global_model, personalized_models):
     # --- Save the global model ---
     # It's best practice to save only the state_dict, not the entire model object.
     if isinstance(global_model, torch.nn.Module):
-        torch.save(global_model.state_dict(), GLOBAL_MODEL_PATH)
-        safe_log(f"✅ Global model state_dict saved to {GLOBAL_MODEL_PATH}")
+        torch.save(global_model.state_dict(), GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date()))
+        safe_log(f"✅ Global model state_dict saved to {GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date())}")
     elif isinstance(global_model, dict):  # If global_model is already a state_dict from aggregation
-        torch.save(global_model, GLOBAL_MODEL_PATH)
-        safe_log(f"✅ Global model (state_dict) saved to {GLOBAL_MODEL_PATH}")
+        torch.save(global_model, GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date()))
+        safe_log(f"✅ Global model (state_dict) saved to {GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date())}")
     else:
         safe_log(f"❌Unexpected type for global_model ({type(global_model)}). Not saving global model.", level="warning")
 

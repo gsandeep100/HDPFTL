@@ -20,10 +20,10 @@ from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.tensorboard import writer
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import BATCH_SIZE, EPOCH_DIR, EPOCH_FILE_FINE, PRE_MODEL_PATH, FINETUNE_MODEL_PATH, \
-    NUM_EPOCHS_PRE_TRAIN
+from hdpftl_utility.config import BATCH_SIZE, EPOCH_DIR, EPOCH_FILE_FINE, \
+    NUM_EPOCHS_PRE_TRAIN, FINETUNE_MODEL_PATH_TEMPLATE, PRE_MODEL_PATH_TEMPLATE
 from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device, named_timer
+from hdpftl_utility.utils import setup_device, named_timer, get_today_date
 
 """
 2. Fine-tuning phase
@@ -63,7 +63,7 @@ def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
     transfer_model = TabularNet(input_dim, target_classes).to(device)
 
     try:
-        state_dict = torch.load(PRE_MODEL_PATH)
+        state_dict = torch.load(PRE_MODEL_PATH_TEMPLATE.substitute(n=get_today_date()))
         missing, unexpected = transfer_model.load_state_dict(state_dict, strict=False)
         safe_log("FineTuning model (strict=False)")
         if missing:
@@ -128,7 +128,7 @@ def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(transfer_model.state_dict(), FINETUNE_MODEL_PATH)
+            torch.save(transfer_model.state_dict(), FINETUNE_MODEL_PATH_TEMPLATE.substitute(n=get_today_date()))
             safe_log(f"💾 Best model saved at epoch {epoch + 1} with Val Acc: {val_acc:.2f}%")
 
         np.save(EPOCH_FILE_FINE, np.array(epoch_losses))

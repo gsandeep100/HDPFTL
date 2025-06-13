@@ -19,6 +19,8 @@
 import os
 from string import Template
 
+from hdpftl_utility.utils import get_today_date
+
 # Main Code Flow Based on the Diagrams
 # 🔁 Level 1: Device-Level Training (Personalized Learning)
 # Collect device-specific hdpftl_data
@@ -132,14 +134,17 @@ NUM_EPOCHS_PRE_TRAIN = 10  # or 50 or 100
 NUM_FEDERATED_ROUND = 10  # or 50 or 100
 #NUM_TRAIN_ON_DEVICE = 10  # or 50 or 100
 NUM_CLASSES = 2  # Suppose you pretrained with 5 classes
-GLOBAL_MODEL_PATH = "./hdpftl_trained_models/global_model.pth"
-FINETUNE_MODEL_PATH = "./hdpftl_trained_models/fine_tuned_tabular_model.pth"
-PRE_MODEL_PATH = "./hdpftl_trained_models/pretrained_tabular_model.pth"
-EPOCH_DIR = "./hdpftl_trained_models/epochs"
+GLOBAL_MODEL_PATH_TEMPLATE = Template("../hdpftl_trained_models/${n}/global_model.pth")
+FINETUNE_MODEL_PATH_TEMPLATE = Template("../hdpftl_trained_models/${n}/fine_tuned_tabular_model.pth")
+PRE_MODEL_PATH_TEMPLATE = Template("../hdpftl_trained_models/${n}/pretrained_tabular_model.pth")
+EPOCH_DIR_TEMPLATE = Template("../hdpftl_trained_models${n}/epochs")
 TRAINED_MODEL_DIR = "./hdpftl_trained_models/"
+
+# Substitute to get the string path
+EPOCH_DIR = EPOCH_DIR_TEMPLATE.substitute(n=get_today_date())
 
 EPOCH_FILE_FINE = os.path.join(EPOCH_DIR, "fine_tune_epoch_losses.npy")
 EPOCH_FILE_PRE = os.path.join(EPOCH_DIR, "pre_epoch_losses.npy")
 
 PLOT_PATH = "./hdpftl_plot_outputs/"
-PERSONALISED_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/personalized_model_client_${n}.pth")
+PERSONALISED_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/personalized_model_client_${n}.pth")

@@ -176,6 +176,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+*.imp
+*.xml
 
 # hdpftl_dataset
 *.csv
