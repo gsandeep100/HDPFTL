@@ -44,24 +44,24 @@ warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 if __name__ == "__main__":
 
-    global_model = None
-    personalized_models = None
     num_classes = 0
     client_accs = {}
-    personalised_acc = {}
     X_test = {}
     y_test = {}
     client_data_dict = {}
     global_acc = {}
+    personalised_acc = {}
     y_pred = None
     predictions = None
     selected_folder = ""
     start_time_label = None
+    total_time_taken_label = None
     end_time_label = None
     hh = None
     mm = None
     ss = None
     after_id = None
+    start_time = float(time.time())
 
 
     def update_progress(value):
@@ -77,6 +77,7 @@ if __name__ == "__main__":
 
     def start_training():
         # Start infinite progress animation
+        global start_time
         progress.config(mode='indeterminate')
         progress.start(10)
         progress_label.config(text="Training in progress...")
@@ -89,22 +90,35 @@ if __name__ == "__main__":
         def finish():
             progress.stop()
             progress.config(mode='determinate', maximum=100)
-            time_taken_label.config(text=f"📂 {hh}Hours:{mm}Minutes:{ss}seconds")
-            stop_clock()
-            # Simulate fast jump to 100%
+
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            mins, secs = divmod(elapsed_time, 60)
+            hh, mm, ss = convert_to_hms(mins, secs)
+
+            total_time_taken_label.config(text=f"Total Time: {hh}H:{mm}M:{ss}S")
+            # time_taken_label.config(text=f"📂 {hh}Hours:{mm}Minutes:{ss}seconds")
+
+            current_time = time.strftime('%H:%M:%S')
+            end_time_label.config(text=f"End Time: {current_time}")
+
+            # Animate progress bar to 100%
             for val in range(0, 101, 10):
                 root.after(val * 3, lambda v=val: progress.config(value=v))
+
             root.after(350, lambda: progress_label.config(text="✅ Training complete!"))
 
         root.after(0, finish)
 
 
     def start_process():
-        global global_model
-        global personalized_models
-        global predictions
+        global personalised_acc
+        global global_acc
+        global client_accs
         global total_steps
         global client_data_dict
+        global time_taken
+        global hh, mm, ss
 
         def update_clock():
             global after_id
@@ -126,10 +140,6 @@ if __name__ == "__main__":
                 hierarchical_data)
 
         update_clock()
-        current_time = time.strftime('%H:%M:%S')
-        end_time_label.config(text=f"End Time: {current_time}")
-
-        start_time = time.time()
         setup_logging()
         safe_log("============================================================================")
         safe_log("======================Process Started=======================================")
@@ -185,16 +195,13 @@ if __name__ == "__main__":
         #######################  LOAD FROM FILE ##################################
         else:
             # Load global model
-            load_from_file(writer)
+            global_model, personalized_models = load_from_file(writer)
 
-        evaluation(X_test, client_data_dict_test, global_model, personalized_models, writer, y_test)
-
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        mins, secs = divmod(elapsed_time, 60)
-        global time_taken
-        hh, mm, ss = convert_to_hms(mins, secs)
-
+        personalised_acc, client_accs, global_acc = evaluation(X_test, client_data_dict_test, global_model,
+                                                               personalized_models, writer, y_test)
+        plot(global_model)
+        stop_clock()
+        complete_progress_bar()
         # plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
 
         # plot_training_loss(losses=np.load(EPOCH_FILE_PRE), label='Pre Epoch Losses')
@@ -209,12 +216,12 @@ if __name__ == "__main__":
 
 
     def load_from_file(writer):
-        global global_model, personalized_models
         with named_timer("Evaluate Global Model From File", writer, tag="EvalFromFile"):
             global_model = evaluate_global_model_fromfile()
         # Load personalized models
         with named_timer("Evaluate Personalized Models From File", writer, tag="PersonalizedEval"):
             personalized_models = load_personalized_models_fromfile()
+        return global_model, personalized_models
 
 
     def evaluation(X_test, client_data_dict_test, global_model, personalized_models, writer, y_test):
@@ -226,20 +233,16 @@ if __name__ == "__main__":
         """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
         """During evaluation: Use  global model for generalization tests 
                 Use personalized models to report per - client performance"""
-        # safe_log("\n[10]Evaluating personalized models per client on client partitioned data...")
         with named_timer("Evaluate Personalized Models", writer, tag="PersonalizedEval"):
-            global personalised_acc
             personalised_acc = evaluate_personalized_models_per_client(personalized_models, client_data_dict_test)
-        # safe_log("[11]Evaluating global model on client partitioned dataset per client...")
         with named_timer("Evaluate Personalized Models Per Client", writer, tag="PersonalizedEvalperClient"):
-            global client_accs
             client_accs = evaluate_per_client(global_model, client_data_dict_test)
-        # safe_log("[12] Evaluating global model on global dataset...")
         with named_timer("Evaluate Global Model", writer, tag="GlobalEval"):
-            global global_acc
             global_acc = evaluate_global_model(global_model, X_test, y_test)
+        return personalised_acc, client_accs, global_acc
 
-        """
+
+    """
         safe_log("[12] Cross Validate Model...")
         with named_timer("Cross Validate Model", writer, tag="ValidateModel"):
             accuracies = cross_validate_model(X_test, y_test, k=5, num_epochs=20, lr=0.001)
@@ -247,29 +250,30 @@ if __name__ == "__main__":
         safe_log("[12] Cross Validate Model with F1 Score...")
         with named_timer("Cross Validate Model with F1 Score", writer, tag="ValidateModelF1"):
             fold_results = cross_validate_model_advanced(X_test, y_test, k=5, num_epochs=20, early_stopping=True)
-        """
+    """
 
 
-    def plot():
+    def plot(global_model):
+        global predictions
         """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
         #######################  PLOT  #############################
         """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
         with torch.no_grad():
-            X_test_tensor = torch.from_numpy(X_test).float().to(device)
+            X_test_tensor = torch.from_numpy(X_test).float().to(setup_device())
             outputs = global_model(X_test_tensor)
             _, predictions = torch.max(outputs, 1)
         num_classes = int(max(y_test.max().item(), predictions.cpu().max().item()) + 1)
         safe_log("Number of classes:::", num_classes)
 
 
-    def convert_to_hms(minutes, seconds):
-        total_seconds = minutes * 60 + seconds
-        hours = total_seconds // 3600
-        remainder = total_seconds % 3600
-        mins = remainder // 60
-        secs = remainder % 60
-        return hours, mins, secs
-        safe_log(f"\n⏱️ Total time taken: {int(mins)} minutes and {int(secs)} seconds")
+    def convert_to_hms(mins, secs):
+        total_seconds = int(mins * 60 + secs)
+        hh = total_seconds // 3600
+        mm = (total_seconds % 3600) // 60
+        ss = total_seconds % 60
+        return hh, mm, ss
+
+        # GUI
 
 
     def on_selection(event):
@@ -280,8 +284,13 @@ if __name__ == "__main__":
             selected_folder = listbox.get(index)
             label_selected.config(text=f"📂 Selected Folder: {selected_folder}")
             start_button.state(["!disabled"])
-
-        # GUI
+            client_label_dist_btn.config(state="normal")
+            confusion_matrix_btn.config(state="normal")
+            pre_epoch_loses_btn.config(state="normal")
+            fine_tune_epoch_loses_btn.config(state="normal")
+            per_global_dotted_btn.config(state="normal")
+            per_global_bar_btn.config(state="normal")
+            cross_validation_btn.config(state="normal")
 
 
     def open_log_window():
@@ -323,7 +332,10 @@ if __name__ == "__main__":
     # Label
     tk.Label(top_frame, text="HDPFTL Architecture", font=("Arial", 18, "bold")).grid(row=0, column=1, padx=10)
     tk.Button(top_frame, text="View log.txt", command=open_log_window, width=10).grid(row=0, column=2, padx=10)
-    time_taken_label = tk.Label(top_frame, text="Total time", font=("Arial", 18, "bold")).grid(row=0, column=3, padx=10)
+
+    time_taken_label = tk.Label(top_frame, font=('Arial', 12), fg='red', text="Total Time: --:--:--")
+    time_taken_label.grid(row=0, column=4, padx=10)
+    total_time_taken_label = time_taken_label
 
     # Frame for listbox and scrollbar
     frame = tk.Frame(root)
@@ -364,24 +376,89 @@ if __name__ == "__main__":
 
     # Buttons for actions
     button_params = {"width": 30, "font": ("Arial", 11), "pady": 5}
-    tk.Button(root, text="Client Labels Distribution",
-              command=lambda: plot_class_distribution_per_client(client_data_dict), **button_params).pack()
-    tk.Button(root, text="Confusion Matrix",
-              command=lambda: plot_confusion_matrix(y_test, predictions, [str(i) for i in range(int(num_classes))],
-                                                    normalize=True), **button_params).pack()
-    tk.Button(root, text="Pre Epoch Losses",
-              command=lambda: plot_training_loss(np.load(EPOCH_FILE_PRE), 'epoch_loss_pre.png', 'Pre Epoch Losses'),
-              **button_params).pack()
-    tk.Button(root, text="Fine Tuning Epoch Losses",
-              command=lambda: plot_training_loss(np.load(EPOCH_FILE_FINE), 'epoch_loss_fine.png',
-                                                 'Fine Tuning Epoch Losses'), **button_params).pack()
-    tk.Button(root, text="Personalized vs Global--Dotted",
-              command=lambda: plot_client_accuracies(client_accs, global_acc, "Personalized vs Global--Dotted"),
-              **button_params).pack()
-    tk.Button(root, text="Personalized vs Global--Bar Chart",
-              command=lambda: plot_personalized_vs_global(personalised_acc, global_acc), **button_params).pack()
-    tk.Button(root, text="Cross Validation Model", command=lambda: cross_validate_model_with_plots(X_test, y_test),
-              **button_params).pack()
+    client_label_dist_btn = tk.Button(
+        root,
+        text="Client Labels Distribution",
+        state="disabled",
+        command=lambda: (
+            start_process(),
+            plot_class_distribution_per_client(client_data_dict)
+        ),
+        **button_params
+    )
+    client_label_dist_btn.pack()
+
+    confusion_matrix_btn = tk.Button(
+        root,
+        text="Confusion Matrix",
+        state="disabled",
+        command=lambda: (
+            start_process(),
+            plot_confusion_matrix(y_test, predictions, [str(i) for i in range(int(num_classes))], normalize=True)
+        ),
+        **button_params
+    )
+    confusion_matrix_btn.pack()
+
+    pre_epoch_loses_btn = tk.Button(
+        root,
+        text="Pre Epoch Losses",
+        state="disabled",
+        command=lambda: (
+            start_process(),
+            plot_training_loss(np.load(EPOCH_FILE_PRE), 'epoch_loss_pre.png', 'Pre Epoch Losses')
+        ),
+        **button_params
+    )
+    pre_epoch_loses_btn.pack()
+
+    fine_tune_epoch_loses_btn = tk.Button(
+        root,
+        text="Fine Tuning Epoch Losses",
+        state="disabled",
+        command=lambda: (
+            start_process(),
+            plot_training_loss(np.load(EPOCH_FILE_FINE), 'epoch_loss_fine.png', 'Fine Tuning Epoch Losses')
+        ),
+        **button_params
+    )
+    fine_tune_epoch_loses_btn.pack()
+
+    per_global_dotted_btn = tk.Button(
+        root,
+        text="Personalized vs Global--Dotted",
+        state="disabled",
+        command=lambda: (
+            start_process(),
+            plot_client_accuracies(client_accs, global_acc, "Personalized vs Global--Dotted")
+        ),
+        **button_params
+    )
+    per_global_dotted_btn.pack()
+
+    per_global_bar_btn = tk.Button(
+        root,
+        text="Personalized vs Global--Bar Chart",
+        state="disabled",
+        command=lambda: (
+            start_process(),
+            plot_personalized_vs_global(personalised_acc, global_acc)
+        ),
+        **button_params
+    )
+    per_global_bar_btn.pack()
+
+    cross_validation_btn = tk.Button(
+        root,
+        text="Cross Validation Model",
+        state="disabled",
+        command=lambda: (
+            start_process(),
+            cross_validate_model_with_plots(X_test, y_test)
+        ),
+        **button_params
+    )
+    cross_validation_btn.pack()
 
     # Create a custom style
     style = ttk.Style(root)
@@ -440,52 +517,8 @@ if __name__ == "__main__":
     # End time label
     clock_label_end = tk.Label(bottom_frame, font=('Arial', 12), fg='red', text="End Time: --:--:--")
     clock_label_end.grid(row=0, column=2, padx=10)
+
     start_time_label = clock_label_start
     end_time_label = clock_label_end
 
     root.mainloop()
-
-"""
-safe_log("\n[3] Aggregating fleet models...")
-    # global_model = aggregate_models(local_models, base_model_fn)
-    global_model = bayesian_aggregate_models(local_models, base_model_fn)
-    safe_log("\n[4] Evaluating global model...")
-    acc = evaluate_global_model(global_model, X_test, y_test)
-    safe_log(f"Global Accuracy Before Personalization: {acc:.4f}")
-    logging.info(f"Global Accuracy Before Personalization: {acc:.4f}")
-
-    evaluate_per_client(global_model, X_test, y_test, client_partitions_test)
-
-    safe_log("\n[5] Personalizing each client...")
-    personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)
-
-    safe_log("\n[6] Evaluating personalized hdpftl_models...")
-    for cid, model in personalized_models.items():
-        acc = evaluate_global_model(model, X_test[client_partitions_test[cid]], y_test[client_partitions_test[cid]],device)
-        safe_log(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
-        logging.info(f"Global Accuracy After Personalization for Client {cid}: {acc:.4f}")
-
-        # safe_log(f"Personalized Accuracy for Client {cid}: {acc:.4f}")
-
-    return global_model, personalized_models
-
-"""
-
-""" commented for now...need a way to get the evaluation on a different hdpftl_dataset
-
-    # Sample input: 3 feature vectors
-    new_sample = np.random.rand(5, 79).astype(np.float32)  # 3 samples, each with 79 features
-    new_sample = torch.tensor(new_sample)
-
-    # Label map
-    label_map = {0: "Normal", 1: "DoS", 2: "Probe", 3: "R2L", 4: "U2R"}
-    # Predict
-    preds, probs = predict(new_sample, global_model, label_map=label_map, return_proba=True)
-
-    logging.info(f"Predictions: {preds}")
-    logging.info(f"Probabilities: {probs}")
-    logging.info("=========================Process Finished===================================")
-    safe_log("Predictions:", preds)
-    print("Probabilities:", probs)
-    # plot(global_accuracies=preds, personalized_accuracies=probs)
-    """

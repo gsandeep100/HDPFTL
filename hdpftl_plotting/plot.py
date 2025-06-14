@@ -298,8 +298,8 @@ def plot_personalized_vs_global(personalized_accs, global_acc, title="Client Acc
         plt.savefig(save_path, bbox_inches='tight')
     plt.tight_layout()
     is_folder_exist(PLOT_PATH + get_today_date())
-    file_path = os.path.join(PLOT_PATH, 'plot_personalized_vs_global.png')
-    plt.savefig(file_path)
+    file_path = os.path.join(PLOT_PATH + get_today_date() + "/", 'plot_personalized_vs_global.png')
+    plt.savefig(file_path, bbox_inches='tight')
     plt.show()
 
 
