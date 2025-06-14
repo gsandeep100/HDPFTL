@@ -13,15 +13,15 @@
 import os
 import threading
 import time
+import tkinter as tk
 import warnings
 from tkinter import scrolledtext, messagebox
+from tkinter import ttk
 
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
-import tkinter as tk
-from tkinter import ttk
-import os
+
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model, evaluate_global_model_fromfile
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client, \
     load_personalized_models_fromfile
@@ -97,6 +97,8 @@ if __name__ == "__main__":
             root.after(350, lambda: progress_label.config(text="✅ Training complete!"))
 
         root.after(0, finish)
+
+
     def start_process():
         global global_model
         global personalized_models
@@ -118,8 +120,10 @@ if __name__ == "__main__":
 
         def calculate_total_steps():
             global total_steps
-            total_steps = number_of_data_folders(OUTPUT_DATASET_ALL_DATA) * 10  # or total epochs, or total logical steps
-            total_steps+= NUM_FEDERATED_ROUND *  NUM_CLIENTS * NUM_DEVICES_PER_CLIENT * NUM_EPOCHS_PRE_TRAIN * len(hierarchical_data)
+            total_steps = number_of_data_folders(
+                OUTPUT_DATASET_ALL_DATA) * 10  # or total epochs, or total logical steps
+            total_steps += NUM_FEDERATED_ROUND * NUM_CLIENTS * NUM_DEVICES_PER_CLIENT * NUM_EPOCHS_PRE_TRAIN * len(
+                hierarchical_data)
 
         update_clock()
         current_time = time.strftime('%H:%M:%S')
@@ -135,7 +139,8 @@ if __name__ == "__main__":
         # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
         with named_timer("Preprocessing", writer, tag="Preprocessing"):
             global X_test, y_test
-            X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(selected_folder)
+            X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(
+                selected_folder)
         # safe_log("[1]Data preprocessing completed.")
         device = setup_device()
         """
@@ -188,7 +193,7 @@ if __name__ == "__main__":
         elapsed_time = end_time - start_time
         mins, secs = divmod(elapsed_time, 60)
         global time_taken
-        hh,mm,ss = convert_to_hms(mins, secs)
+        hh, mm, ss = convert_to_hms(mins, secs)
 
         # plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
 
@@ -210,6 +215,7 @@ if __name__ == "__main__":
         # Load personalized models
         with named_timer("Evaluate Personalized Models From File", writer, tag="PersonalizedEval"):
             personalized_models = load_personalized_models_fromfile()
+
 
     def evaluation(X_test, client_data_dict_test, global_model, personalized_models, writer, y_test):
         # Evaluate
@@ -243,6 +249,7 @@ if __name__ == "__main__":
             fold_results = cross_validate_model_advanced(X_test, y_test, k=5, num_epochs=20, early_stopping=True)
         """
 
+
     def plot():
         """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
         #######################  PLOT  #############################
@@ -253,6 +260,7 @@ if __name__ == "__main__":
             _, predictions = torch.max(outputs, 1)
         num_classes = int(max(y_test.max().item(), predictions.cpu().max().item()) + 1)
         safe_log("Number of classes:::", num_classes)
+
 
     def convert_to_hms(minutes, seconds):
         total_seconds = minutes * 60 + seconds
@@ -273,7 +281,9 @@ if __name__ == "__main__":
             label_selected.config(text=f"📂 Selected Folder: {selected_folder}")
             start_button.state(["!disabled"])
 
-        #GUI
+        # GUI
+
+
     def open_log_window():
         try:
             with open("hdpftl_run.log", "r") as f:
@@ -290,6 +300,7 @@ if __name__ == "__main__":
         text_area.pack(expand=True, fill='both')
         text_area.insert(tk.END, log_contents)
         text_area.config(state='disabled')  # Make read-only
+
 
     root = tk.Tk()
     root.title("HDPFTL Architecture")
@@ -311,7 +322,7 @@ if __name__ == "__main__":
 
     # Label
     tk.Label(top_frame, text="HDPFTL Architecture", font=("Arial", 18, "bold")).grid(row=0, column=1, padx=10)
-    tk.Button(top_frame, text="View log.txt", command=open_log_window,width=10).grid(row=0, column=2, padx=10)
+    tk.Button(top_frame, text="View log.txt", command=open_log_window, width=10).grid(row=0, column=2, padx=10)
     time_taken_label = tk.Label(top_frame, text="Total time", font=("Arial", 18, "bold")).grid(row=0, column=3, padx=10)
 
     # Frame for listbox and scrollbar
@@ -324,13 +335,13 @@ if __name__ == "__main__":
 
     # Listbox
     listbox = tk.Listbox(
-    frame,
-    height=5,
-    width=60,
-    font=("Segoe UI", 13),
-    selectmode=tk.SINGLE,
-    bg="#f9f9f9",
-    fg="#333",
+        frame,
+        height=5,
+        width=60,
+        font=("Segoe UI", 13),
+        selectmode=tk.SINGLE,
+        bg="#f9f9f9",
+        fg="#333",
         selectbackground="#a0c4ff",
         selectforeground="#000",
         activestyle="dotbox",
@@ -431,8 +442,6 @@ if __name__ == "__main__":
     clock_label_end.grid(row=0, column=2, padx=10)
     start_time_label = clock_label_start
     end_time_label = clock_label_end
-
-
 
     root.mainloop()
 

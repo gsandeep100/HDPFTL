@@ -86,7 +86,7 @@ def plot_training_loss(losses, name, label='Loss'):
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend()
 
-    file_path = os.path.join(PLOT_PATH+get_today_date()+"/", name)
+    file_path = os.path.join(PLOT_PATH + get_today_date() + "/", name)
     plt.tight_layout()
     plt.savefig(file_path)
     plt.show()
@@ -101,7 +101,7 @@ def plot_accuracy_heatmap(accs_dict):
     plt.figure(figsize=(8, 6))
     sns.heatmap(df.set_index('Client').T, annot=True, cmap="YlGnBu", cbar=False)
     plt.title("Client-wise Accuracy Heatmap")
-    file_path = os.path.join(PLOT_PATH+get_today_date()+"/", 'plot_accuracy_heatmap.png')
+    file_path = os.path.join(PLOT_PATH + get_today_date() + "/", 'plot_accuracy_heatmap.png')
     plt.savefig(file_path)
     plt.show()
 
@@ -122,7 +122,7 @@ def plot_fine_tuning_improvement(pre_accs, post_accs):
     plt.ylabel("Accuracy Gain")
     plt.title("Accuracy Improvement After Fine-Tuning")
     plt.grid(True, linestyle="--", alpha=0.5)
-    file_path = os.path.join(PLOT_PATH+get_today_date()+"/", 'plot_fine_tuning_improvement.png')
+    file_path = os.path.join(PLOT_PATH + get_today_date() + "/", 'plot_fine_tuning_improvement.png')
     plt.savefig(file_path)
     plt.show()
 
@@ -146,7 +146,7 @@ def plot(global_accuracies, personalized_accuracies):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    file_path = os.path.join(PLOT_PATH+get_today_date()+"/", 'plot_global_personalised.png')
+    file_path = os.path.join(PLOT_PATH + get_today_date() + "/", 'plot_global_personalised.png')
     plt.savefig(file_path)
     plt.show()
 
@@ -190,8 +190,8 @@ def plot_confusion_matrix(y_true, y_pred, class_names=None, normalize=False):
 
     plt.title("Normalized Confusion Matrix" if normalize else "Confusion Matrix")
     plt.tight_layout()
-    is_folder_exist(PLOT_PATH+get_today_date())
-    file_path = os.path.join(PLOT_PATH+get_today_date()+"/", 'plot_confusion_matrix.png')
+    is_folder_exist(PLOT_PATH + get_today_date())
+    file_path = os.path.join(PLOT_PATH + get_today_date() + "/", 'plot_confusion_matrix.png')
     plt.savefig(file_path)
     plt.show()
 
@@ -240,8 +240,8 @@ def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", s
     plt.tight_layout()
 
     # Save plot
-    is_folder_exist(PLOT_PATH+get_today_date())
-    file_path = save_path or os.path.join(PLOT_PATH+get_today_date()+"/", 'plot_client_accuracies.png')
+    is_folder_exist(PLOT_PATH + get_today_date())
+    file_path = save_path or os.path.join(PLOT_PATH + get_today_date() + "/", 'plot_client_accuracies.png')
     plt.savefig(file_path, bbox_inches='tight')
     plt.show()
     safe_log(f"✅ Plot saved at: {file_path}")
@@ -297,7 +297,7 @@ def plot_personalized_vs_global(personalized_accs, global_acc, title="Client Acc
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
     plt.tight_layout()
-    is_folder_exist(PLOT_PATH+get_today_date())
+    is_folder_exist(PLOT_PATH + get_today_date())
     file_path = os.path.join(PLOT_PATH, 'plot_personalized_vs_global.png')
     plt.savefig(file_path)
     plt.show()
@@ -333,8 +333,8 @@ def plot_class_distribution_per_client(client_data_dict):
     plt.title("Label Distribution per Client")
     plt.xticks(rotation=45)
     plt.tight_layout()
-    is_folder_exist(PLOT_PATH+get_today_date())
-    file_path = os.path.join(PLOT_PATH+get_today_date()+"/", 'plot_class_distribution_per_client.png')
+    is_folder_exist(PLOT_PATH + get_today_date())
+    file_path = os.path.join(PLOT_PATH + get_today_date() + "/", 'plot_class_distribution_per_client.png')
     plt.savefig(file_path)
     plt.show()
 
@@ -481,7 +481,7 @@ def cross_validate_model_with_plots(
         plt.grid(True)
         plt.tight_layout()
         is_folder_exist(PLOT_PATH + get_today_date())
-        file_path = os.path.join(PLOT_PATH+get_today_date()+"/", 'validarion.png')
+        file_path = os.path.join(PLOT_PATH + get_today_date() + "/", 'validarion.png')
         plt.savefig(file_path)
 
         plt.show()

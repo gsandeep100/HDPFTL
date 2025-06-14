@@ -73,6 +73,7 @@ def createnewoutputfolder():
 def get_today_date():
     return datetime.now().strftime('%Y-%m-%d')
 
+
 def number_of_data_folders(folderpath):
     all_files = glob(os.path.join(folderpath, "*.csv")) + glob(os.path.join(folderpath, "*.CSV"))
     return len(all_files)

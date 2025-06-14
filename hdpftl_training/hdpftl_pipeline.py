@@ -91,7 +91,7 @@ def dirichlet_partition(X, y, alpha, num_clients, seed=42):
     return client_data_dict
 
 
-def dirichlet_partition_with_devices(X, y,alpha=0.3, num_clients=5, num_devices_per_client=2):
+def dirichlet_partition_with_devices(X, y, alpha=0.3, num_clients=5, num_devices_per_client=2):
     """
     Hierarchical partitioning:
       1. Partition dataset among clients via Dirichlet.
@@ -241,7 +241,6 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
             local_model = copy.deepcopy(global_model).to(device)
             local_state_dict = train_on_device(local_model, device_data, epochs=epochs)
             device_state_dicts.append(local_state_dict)
-
 
         if not device_state_dicts:
             safe_log(f"No devices trained for client {client_id}, skipping client aggregation.", level="warning")
