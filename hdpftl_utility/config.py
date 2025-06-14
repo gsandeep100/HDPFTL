@@ -140,7 +140,7 @@ PRE_MODEL_FOLDER_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
 PRE_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/pretrained_tabular_model.pth")
 EPOCH_DIR_TEMPLATE = Template("./hdpftl_trained_models/${n}/epochs")
 TRAINED_MODEL_DIR = "./hdpftl_trained_models/"
-
+LOGS_DIR_TEMPLATE = Template("./hdpftl_logs/${dataset}/${date}/")
 # Substitute to get the string path
 EPOCH_DIR = EPOCH_DIR_TEMPLATE.substitute(n=get_today_date())
 

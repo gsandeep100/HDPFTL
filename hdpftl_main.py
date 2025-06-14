@@ -34,9 +34,10 @@ from hdpftl_training.hdpftl_pre_training.finetune_model import finetune_model
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_utility.config import EPOCH_FILE_FINE, EPOCH_FILE_PRE, INPUT_DIM, NUM_CLIENTS, \
     NUM_DEVICES_PER_CLIENT, GLOBAL_MODEL_PATH_TEMPLATE, OUTPUT_DATASET_ALL_DATA, NUM_FEDERATED_ROUND, \
-    NUM_EPOCHS_PRE_TRAIN
+    NUM_EPOCHS_PRE_TRAIN, LOGS_DIR_TEMPLATE
 from hdpftl_utility.log import setup_logging, safe_log
-from hdpftl_utility.utils import named_timer, setup_device, get_output_folders, get_today_date, number_of_data_folders
+from hdpftl_utility.utils import named_timer, setup_device, get_output_folders, get_today_date, number_of_data_folders, \
+    is_folder_exist
 
 warnings.filterwarnings("ignore", message=".*Redirects are currently not supported.*")
 
@@ -136,7 +137,9 @@ if __name__ == "__main__":
                 hierarchical_data)
 
         update_clock()
-        setup_logging()
+        log_path_str = LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date())
+        is_folder_exist(log_path_str)
+        setup_logging(log_path_str)
         safe_log("============================================================================")
         safe_log("======================Process Started=======================================")
         safe_log("============================================================================")
@@ -275,18 +278,20 @@ if __name__ == "__main__":
             per_global_dotted_btn.config(state="normal")
             per_global_bar_btn.config(state="normal")
             cross_validation_btn.config(state="normal")
+            view_log_btn.config(state="normal")
 
 
     def open_log_window():
         try:
-            with open("hdpftl_run.log", "r") as f:
+            log_path_str = LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date())
+            with open(log_path_str+"hdpftl_run.log", "r") as f:
                 log_contents = f.read()
         except FileNotFoundError:
             messagebox.showerror("Error", "hdpftl_run.log not found.")
             return
 
         log_win = tk.Toplevel(root)
-        log_win.title("Log Viewer")
+        log_win.title("Log Viewer for dataset:"+ selected_folder+ " and dated:" + get_today_date())
         log_win.geometry("600x400")
 
         text_area = scrolledtext.ScrolledText(log_win, wrap=tk.WORD)
@@ -320,7 +325,8 @@ if __name__ == "__main__":
 
     # Label
     tk.Label(top_frame, text="HDPFTL Architecture", font=("Arial", 18, "bold")).grid(row=0, column=1, padx=10)
-    tk.Button(top_frame, text="View log.txt", command=open_log_window, width=10).grid(row=0, column=2, padx=10)
+    view_log_btn  = tk.Button(top_frame, text="View Log", command=open_log_window, width=10,state="disabled")
+    view_log_btn.grid(row=0, column=2, padx=10)
 
     time_taken_label = tk.Label(top_frame, font=('Arial', 12), fg='red', text="Total Time: --:--:--")
     time_taken_label.grid(row=0, column=4, padx=10)
