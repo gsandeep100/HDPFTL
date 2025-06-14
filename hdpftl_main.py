@@ -55,7 +55,6 @@ if __name__ == "__main__":
     predictions = None
     selected_folder = ""
     start_time_label = None
-    total_time_taken_label = None
     end_time_label = None
     hh = None
     mm = None
@@ -96,8 +95,8 @@ if __name__ == "__main__":
             mins, secs = divmod(elapsed_time, 60)
             hh, mm, ss = convert_to_hms(mins, secs)
 
-            total_time_taken_label.config(text=f"Total Time: {hh}H:{mm}M:{ss}S")
-            # time_taken_label.config(text=f"📂 {hh}Hours:{mm}Minutes:{ss}seconds")
+            #total_time_taken_label.config(text=f"Total Time: {hh}H:{mm}M:{ss}S")
+            time_taken_label.config(text=f"📂 {hh}Hours:{mm}Minutes:{ss}seconds")
 
             current_time = time.strftime('%H:%M:%S')
             end_time_label.config(text=f"End Time: {current_time}")
@@ -115,9 +114,7 @@ if __name__ == "__main__":
         global personalised_acc
         global global_acc
         global client_accs
-        global total_steps
         global client_data_dict
-        global time_taken
         global hh, mm, ss
 
         def update_clock():
@@ -133,7 +130,6 @@ if __name__ == "__main__":
                 after_id = None
 
         def calculate_total_steps():
-            global total_steps
             total_steps = number_of_data_folders(
                 OUTPUT_DATASET_ALL_DATA) * 10  # or total epochs, or total logical steps
             total_steps += NUM_FEDERATED_ROUND * NUM_CLIENTS * NUM_DEVICES_PER_CLIENT * NUM_EPOCHS_PRE_TRAIN * len(
@@ -335,7 +331,6 @@ if __name__ == "__main__":
 
     time_taken_label = tk.Label(top_frame, font=('Arial', 12), fg='red', text="Total Time: --:--:--")
     time_taken_label.grid(row=0, column=4, padx=10)
-    total_time_taken_label = time_taken_label
 
     # Frame for listbox and scrollbar
     frame = tk.Frame(root)
