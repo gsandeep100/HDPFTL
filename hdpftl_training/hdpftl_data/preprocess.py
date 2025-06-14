@@ -104,7 +104,7 @@ def hybrid_balance(X, y):
     # 🎯 Master Function
     # 🎯 Master function with pre-sampling
 
-    """AI is creating summary for 
+"""AI is creating summary for 
     Summary Table
 'pca_smote'	PCA + SMOTE (faster, low-dimensional)
 'hybrid'	Undersample + SMOTE (original features)
@@ -241,17 +241,16 @@ def safe_clean_dataframe(df: pd.DataFrame,
     return df
 
 
-def preprocess_data(writer=None):
+def preprocess_data(path,writer=None):
     # all_files = glob.glob(path + "*.csv")
     # df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)
     with named_timer("load_and_label_all", writer, tag="load_and_label_all"):
-        df = load_and_label_all(OUTPUT_DATASET_ALL_DATA)
+        df = load_and_label_all(OUTPUT_DATASET_ALL_DATA + path + "/")
     # Replace infinities and -999 or '?' with NaN
     scaler = MinMaxScaler()
     features = df.columns.difference(['Label'])
     df[features] = scaler.fit_transform(df[features])
     X, y = df[features], df['Label']
-
     # downsampling
     # with named_timer("downsample", writer, tag="downsample"):
     #   X_small, y_small = stratified_downsample(X, y, fraction=0.2)

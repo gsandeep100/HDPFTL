@@ -36,7 +36,7 @@ def save(global_model, personalized_models):
     for i, (cid, model_data) in enumerate(personalized_models.items()):
         # model_data is expected to be an OrderedDict (the state_dict)
         if isinstance(model_data, dict):  # Check if it's a dictionary (which OrderedDict is)
-            save_path = os.path.join(TRAINED_MODEL_DIR, f"personalized_model_client_{cid}.pth")
+            save_path = os.path.join(TRAINED_MODEL_DIR + get_today_date() + "/", f"personalized_model_client_{cid}.pth")
             torch.save(model_data, save_path)
             safe_log(f"  Saved personalized model state_dict for client {cid} to {save_path}")
         else:

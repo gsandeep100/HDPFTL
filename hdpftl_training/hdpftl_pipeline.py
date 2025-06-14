@@ -91,7 +91,7 @@ def dirichlet_partition(X, y, alpha, num_clients, seed=42):
     return client_data_dict
 
 
-def dirichlet_partition_with_devices(X, y, alpha=0.3, num_clients=5, num_devices_per_client=2):
+def dirichlet_partition_with_devices(X, y,alpha=0.3, num_clients=5, num_devices_per_client=2):
     """
     Hierarchical partitioning:
       1. Partition dataset among clients via Dirichlet.
@@ -218,6 +218,13 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
 
     Returns:
         Updated global_model with aggregated weights
+        :param epochs:
+        :param hierarchical_data:
+        :param global_model:
+        :param base_model_fn:
+        :param update_callback:
+        :param total_steps:
+        :param current_step:
     """
     device = setup_device()
     client_state_dicts = []
@@ -234,6 +241,7 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
             local_model = copy.deepcopy(global_model).to(device)
             local_state_dict = train_on_device(local_model, device_data, epochs=epochs)
             device_state_dicts.append(local_state_dict)
+
 
         if not device_state_dicts:
             safe_log(f"No devices trained for client {client_id}, skipping client aggregation.", level="warning")
@@ -279,7 +287,7 @@ def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test, writer=Non
 
     # Federated training rounds
     for round_num in range(NUM_FEDERATED_ROUND):
-        #safe_log(f"\n🔁 Federated Round {round_num + 1}/{NUM_FEDERATED_ROUND}")
+        # safe_log(f"\n🔁 Federated Round {round_num + 1}/{NUM_FEDERATED_ROUND}")
         with named_timer(f"federated_round_{round_num + 1}", writer, tag="federated_round"):
             global_model = federated_round(base_model_fn, global_model, hierarchical_data)
             acc = evaluate_global_model(global_model, X_test, y_test)

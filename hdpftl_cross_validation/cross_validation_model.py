@@ -1,8 +1,8 @@
 import numpy as np
 import torch
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import KFold
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import TensorDataset, DataLoader
 
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
@@ -33,7 +33,7 @@ def cross_validate_model(X, y, k=5, batch_size=64, num_epochs=10, lr=0.001):
     accuracies = []
 
     for fold, (train_idx, val_idx) in enumerate(kf.split(X_np)):
-        safe_log(f"🔁 Fold {fold+1}/{k}")
+        safe_log(f"🔁 Fold {fold + 1}/{k}")
 
         # Split data
         X_train, y_train = X_np[train_idx], y_np[train_idx]
@@ -76,14 +76,15 @@ def cross_validate_model(X, y, k=5, batch_size=64, num_epochs=10, lr=0.001):
 
         acc = accuracy_score(all_labels, all_preds)
         accuracies.append(acc)
-        safe_log(f"✅ Fold {fold+1} Accuracy: {acc:.4f}")
+        safe_log(f"✅ Fold {fold + 1} Accuracy: {acc:.4f}")
 
     safe_log(f"📊 Cross-Validation Results: {accuracies}")
     safe_log(f"📈 Mean Accuracy: {np.mean(accuracies):.4f}")
     return accuracies
 
+
 def cross_validate_model_advanced(
-    X, y, k=5, batch_size=64, num_epochs=20, lr=0.001, patience=3, early_stopping=True
+        X, y, k=5, batch_size=64, num_epochs=20, lr=0.001, patience=3, early_stopping=True
 ):
     """
     Advanced cross-validation with F1 score, stratified folds, and optional early stopping.
@@ -150,7 +151,7 @@ def cross_validate_model_advanced(
 
             acc = accuracy_score(all_labels, all_preds)
             f1 = f1_score(all_labels, all_preds, average="macro")
-            safe_log(f"📈 Epoch {epoch+1}: Accuracy = {acc:.4f}, F1 = {f1:.4f}")
+            safe_log(f"📈 Epoch {epoch + 1}: Accuracy = {acc:.4f}, F1 = {f1:.4f}")
 
             # Early stopping logic
             if acc > best_acc:
@@ -164,7 +165,7 @@ def cross_validate_model_advanced(
                     break
 
         fold_results.append({"fold": fold + 1, "accuracy": best_acc, "f1_score": best_f1})
-        safe_log(f"✅ Fold {fold+1} Final: Accuracy = {best_acc:.4f}, F1 = {best_f1:.4f}")
+        safe_log(f"✅ Fold {fold + 1} Final: Accuracy = {best_acc:.4f}, F1 = {best_f1:.4f}")
 
     # Summary
     mean_acc = np.mean([f["accuracy"] for f in fold_results])
@@ -174,4 +175,3 @@ def cross_validate_model_advanced(
     safe_log(f"🔹 Mean F1 Score: {mean_f1:.4f}")
 
     return fold_results
-

@@ -12,12 +12,14 @@
 """
 import os
 import time
+from contextlib import contextmanager
+from datetime import datetime
+from glob import glob
+
 import torch
 from imblearn.over_sampling import SMOTE, SVMSMOTE, KMeansSMOTE
 
 from hdpftl_utility.log import safe_log
-from contextlib import contextmanager
-from datetime import datetime
 
 
 def setup_device():
@@ -67,22 +69,22 @@ def createnewoutputfolder():
 
     safe_log(f"📁 Created folder: {folder_name}")
 
+
 def get_today_date():
     return datetime.now().strftime('%Y-%m-%d')
 
-def is_folder_exist(path):
-    # Get today's date as a string (e.g., "2025-06-12")
-    today_str = datetime.now().strftime('%Y-%m-%d')
-    folder_name = f"{today_str}"
+def number_of_data_folders(folderpath):
+    all_files = glob(os.path.join(folderpath, "*.csv")) + glob(os.path.join(folderpath, "*.CSV"))
+    return len(all_files)
 
-    # Check if the folder exists
-    if os.path.exists(folder_name):
+
+def is_folder_exist(path):
+    if os.path.exists(path):
         return True
     else:
-        os.makedirs(folder_name)
-        return None
+        os.makedirs(path)
+        return False
 
 
 def get_output_folders(folder):
     return [f.name for f in os.scandir(folder) if f.is_dir()]
-

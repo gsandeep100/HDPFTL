@@ -17,13 +17,12 @@ import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
-from torch.utils.tensorboard import writer
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
 from hdpftl_utility.config import BATCH_SIZE, EPOCH_DIR, EPOCH_FILE_FINE, \
     NUM_EPOCHS_PRE_TRAIN, FINETUNE_MODEL_PATH_TEMPLATE, PRE_MODEL_PATH_TEMPLATE
 from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device, named_timer, get_today_date
+from hdpftl_utility.utils import setup_device, get_today_date
 
 """
 2. Fine-tuning phase
@@ -48,8 +47,8 @@ def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
     target_features = to_tensor(X_finetune, dtype=torch.float32)
     finetune_labels = to_tensor(y_finetune, dtype=torch.long)
 
-    #safe_log(f"target_features shape: {target_features.shape}")
-    #safe_log(f"finetune_labels shape: {finetune_labels.shape}")
+    # safe_log(f"target_features shape: {target_features.shape}")
+    # safe_log(f"finetune_labels shape: {finetune_labels.shape}")
 
     # Train-validation split
     X_train, X_val, y_train, y_val = train_test_split(

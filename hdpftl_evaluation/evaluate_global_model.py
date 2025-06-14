@@ -5,7 +5,6 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn, TabularNet
 from hdpftl_utility.config import GLOBAL_MODEL_PATH_TEMPLATE
-
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device, get_today_date
 
@@ -27,7 +26,8 @@ def evaluate_global_model_fromfile():
         torch.serialization.add_safe_globals([TabularNet])
 
         # Load weights
-        global_model.load_state_dict(torch.load(GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date()), map_location=device))
+        global_model.load_state_dict(
+            torch.load(GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date()), map_location=device))
         global_model.eval()
 
         safe_log("✅ Global model loaded and ready for evaluation.")

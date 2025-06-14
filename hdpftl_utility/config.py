@@ -125,19 +125,20 @@ OUTPUT_DATASET_PATH_2024 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/"
 OUTPUT_DATASET_ALL_DATA = "./hdpftl_training/hdpftl_dataset/AllData/"
 
 BATCH_SIZE = 5
-NUM_CLIENTS = 10
-NUM_DEVICES_PER_CLIENT = 10
-#CLIENTS_PER_AGGREGATOR = 5
-#NUM_ROUNDS = 10
+NUM_CLIENTS = 1
+NUM_DEVICES_PER_CLIENT = 1
+# CLIENTS_PER_AGGREGATOR = 5
+# NUM_ROUNDS = 10
 INPUT_DIM = 79  # Your feature size
-NUM_EPOCHS_PRE_TRAIN = 10  # or 50 or 100
-NUM_FEDERATED_ROUND = 10  # or 50 or 100
-#NUM_TRAIN_ON_DEVICE = 10  # or 50 or 100
+NUM_EPOCHS_PRE_TRAIN = 1  # or 50 or 100
+NUM_FEDERATED_ROUND = 2  # or 50 or 100
+# NUM_TRAIN_ON_DEVICE = 10  # or 50 or 100
 NUM_CLASSES = 2  # Suppose you pretrained with 5 classes
-GLOBAL_MODEL_PATH_TEMPLATE = Template("../hdpftl_trained_models/${n}/global_model.pth")
-FINETUNE_MODEL_PATH_TEMPLATE = Template("../hdpftl_trained_models/${n}/fine_tuned_tabular_model.pth")
-PRE_MODEL_PATH_TEMPLATE = Template("../hdpftl_trained_models/${n}/pretrained_tabular_model.pth")
-EPOCH_DIR_TEMPLATE = Template("../hdpftl_trained_models${n}/epochs")
+GLOBAL_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/global_model.pth")
+FINETUNE_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/fine_tuned_tabular_model.pth")
+PRE_MODEL_FOLDER_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
+PRE_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/pretrained_tabular_model.pth")
+EPOCH_DIR_TEMPLATE = Template("./hdpftl_trained_models/${n}/epochs")
 TRAINED_MODEL_DIR = "./hdpftl_trained_models/"
 
 # Substitute to get the string path

@@ -20,9 +20,10 @@ from sklearn.metrics import accuracy_score
 from torch.utils.data import TensorDataset, DataLoader
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import EPOCH_FILE_PRE, NUM_EPOCHS_PRE_TRAIN, EPOCH_DIR, PRE_MODEL_PATH_TEMPLATE
+from hdpftl_utility.config import EPOCH_FILE_PRE, NUM_EPOCHS_PRE_TRAIN, EPOCH_DIR, PRE_MODEL_FOLDER_PATH_TEMPLATE, \
+    PRE_MODEL_PATH_TEMPLATE
 from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import get_today_date
+from hdpftl_utility.utils import get_today_date, is_folder_exist
 
 """
 1. Pretraining phase
@@ -105,6 +106,8 @@ def pretrain_class(X_train, X_test, y_train, y_test, input_dim, early_stop_patie
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
+            folder_path = PRE_MODEL_FOLDER_PATH_TEMPLATE.substitute(n=get_today_date())
+            is_folder_exist(folder_path)
             torch.save(model.state_dict(), PRE_MODEL_PATH_TEMPLATE.substitute(n=get_today_date()))
         else:
             patience_counter += 1
