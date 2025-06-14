@@ -166,14 +166,12 @@ if __name__ == "__main__":
                 X_test, y_test, alpha=0.5, num_clients=NUM_CLIENTS, num_devices_per_client=NUM_DEVICES_PER_CLIENT
             )
 
-        # safe_log("[4]Partitioning hdpftl_data using Dirichlet...")
 
         # If fine-tuned model exists, load and return it
         if not os.path.exists(GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date())):
             # Step 2: Pretrain global model
             with named_timer("pretrain_class", writer, tag="pretrain_class"):
                 pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=INPUT_DIM, early_stop_patience=10)
-            # safe_log("[2]Pretraining completed.")
             # Step 3: Instantiate target model and train on device
             with named_timer("target_class", writer, tag="target_class"):
                 def base_model_fn():
@@ -182,8 +180,6 @@ if __name__ == "__main__":
                         y_finetune,
                         input_dim=X_finetune.shape[1],
                         target_classes=len(np.unique(y_finetune)))
-
-            # safe_log("[3]Fine Tuning completed.")
 
             with named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
                 global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test)
@@ -198,14 +194,6 @@ if __name__ == "__main__":
         plot(global_model)
         stop_clock()
         complete_progress_bar()
-        # plot_confusion_matrix(y_true=y_test, y_pred=predictions, class_names=[str(i) for i in range(num_classes)])
-
-        # plot_training_loss(losses=np.load(EPOCH_FILE_PRE), label='Pre Epoch Losses')
-        # plot_training_loss(losses=np.load(EPOCH_FILE_FINE), label='Fine Tuning Epoch Losses')
-        # plot_accuracy_comparison(client_accs, personalised_acc)
-        # plot_client_accuracies(client_accs, global_acc=global_acc, title="Per-Client vs Global Model Accuracy")
-        # plot_personalized_vs_global(personalised_acc, global_acc)
-
         safe_log("===========================================================================")
         safe_log("===========================Process Completed===============================")
         safe_log("============================================================================")
@@ -311,14 +299,19 @@ if __name__ == "__main__":
     root.title("HDPFTL Architecture")
 
     # Responsive size
-    window_width = 800
-    window_height = 600
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
-    root.minsize(500, 700)
+
+    window_width = int(screen_width * 0.8)
+    window_height = int(screen_height * 0.8)
+
     # Calculate position to center the window
-    x = (screen_width // 2) - (window_width // 2)
-    y = (screen_height // 2) - (window_height // 2)
+    # Calculate position to center the window
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+
+    # Apply minimum size if you want
+    root.minsize(500, 700)  # optional, keep or remove
 
     root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
