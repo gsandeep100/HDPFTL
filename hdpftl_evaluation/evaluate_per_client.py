@@ -11,9 +11,9 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
-from hdpftl_utility.config import BATCH_SIZE, PERSONALISED_MODEL_PATH_TEMPLATE, NUM_CLIENTS
+from hdpftl_utility.config import BATCH_SIZE, NUM_CLIENTS, TRAINED_MODEL_DIR
 from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device
+from hdpftl_utility.utils import setup_device, get_today_date
 
 
 def load_personalized_models_fromfile():
@@ -28,7 +28,8 @@ def load_personalized_models_fromfile():
 
     for cid in range(NUM_CLIENTS):
         model = create_model_fn().to(device)  # New model for each client
-        model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)
+        #model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)
+        model_path = os.path.join(TRAINED_MODEL_DIR + get_today_date() + "/", f"personalized_model_client_{cid}.pth")
 
         if os.path.exists(model_path):
             try:
@@ -86,7 +87,7 @@ def evaluate_personalized_models_per_client(personalized_models, client_data_dic
         x_tensor = torch.tensor(x_client_np).float().to(device)
         y_tensor = torch.tensor(y_client_np).long().to(device)
 
-        loader = DataLoader(TensorDataset(x_tensor, y_tensor), batch_size=BATCH_SIZE)
+        loader = DataLoader(TensorDataset(x_tensor, y_tensor), batch_size=BATCH_SIZE, pin_memory=False)
 
         correct, total = 0, 0
         with torch.no_grad():
@@ -143,7 +144,7 @@ def evaluate_per_client(global_model, client_partitions_test):
         X_tensor = torch.tensor(X_client, dtype=torch.float32).to(device)
         y_tensor = torch.tensor(y_client, dtype=torch.long).to(device)
 
-        loader = DataLoader(TensorDataset(X_tensor, y_tensor), batch_size=BATCH_SIZE)
+        loader = DataLoader(TensorDataset(X_tensor, y_tensor), batch_size=BATCH_SIZE, pin_memory=False)
 
         correct, total = 0, 0
         with torch.no_grad():

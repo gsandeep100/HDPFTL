@@ -1,4 +1,5 @@
 import copy
+import gc
 
 import numpy as np
 import torch
@@ -7,9 +8,9 @@ from torch.utils.data import TensorDataset, DataLoader
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
 from hdpftl_training.hdpftl_aggregation.hdpftl_fedavg import aggregate_models
 from hdpftl_training.save_model import save
-from hdpftl_utility.config import NUM_DEVICES_PER_CLIENT, NUM_FEDERATED_ROUND
+from hdpftl_utility.config import NUM_DEVICES_PER_CLIENT, NUM_FEDERATED_ROUND, BATCH_SIZE_TRAINING
 from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import named_timer, setup_device
+from hdpftl_utility.utils import named_timer, setup_device, clear_memory
 
 
 def split_among_devices(X_client, y_client, seed=42):
@@ -111,9 +112,19 @@ def dirichlet_partition_with_devices(X, y, alpha=0.3, num_clients=5, num_devices
         device_data = []
         for d_idx in device_indices:
             # Convert to torch tensors for training later
-            device_data.append((torch.tensor(X_c[d_idx]).float(), torch.tensor(y_c[d_idx]).long()))
+            X_device = torch.tensor(X_c[d_idx]).float()
+            y_device = torch.tensor(y_c[d_idx]).long()
+            device_data.append((X_device, y_device))
+
+            # Free temp tensors immediately if needed
+            del X_device, y_device
+            gc.collect()
 
         hierarchical_data[client_id] = device_data
+
+        # Free client tensors after use
+        del X_c, y_c, device_indices, device_data
+        gc.collect()
 
     return client_data_dict, hierarchical_data
 
@@ -155,7 +166,7 @@ def average_models(model_state_dicts):
     return avg_state
 
 
-def train_on_device(model, device_data, epochs=1, batch_size=32, lr=0.01):
+def train_on_device(model, device_data, epochs=1, lr=0.01):
     """
     Train a model locally on device data for a few epochs.
 
@@ -187,7 +198,7 @@ def train_on_device(model, device_data, epochs=1, batch_size=32, lr=0.01):
         y_tensor = y_data.long().to(device)
 
     dataset = TensorDataset(X_tensor, y_tensor)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    loader = DataLoader(dataset, batch_size=BATCH_SIZE_TRAINING, shuffle=True, pin_memory=False)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=lr)
     criterion = torch.nn.CrossEntropyLoss()
@@ -308,10 +319,11 @@ def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test, writer=Non
         trained_model.load_state_dict(global_model.state_dict())
 
         # Train on client-specific data
-        trained_model = train_on_device(trained_model, (X_client, y_client), batch_size=32)
+        trained_model = train_on_device(trained_model, (X_client, y_client))
 
         personalized_models[client_id] = trained_model
 
     save(global_model, personalized_models)
     safe_log("\n✅ HDPFTL complete. Returning global and personalized models.\n")
+    clear_memory()
     return global_model, personalized_models

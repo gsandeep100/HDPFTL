@@ -44,8 +44,8 @@ def cross_validate_model(X, y, k=5, batch_size=64, num_epochs=10, lr=0.001):
                                  torch.tensor(y_train, dtype=torch.long))
         val_ds = TensorDataset(torch.tensor(X_val, dtype=torch.float32),
                                torch.tensor(y_val, dtype=torch.long))
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_ds, batch_size=batch_size)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=False)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, pin_memory=False)
 
         # Model setup
         model = create_model_fn().to(device)
@@ -119,8 +119,8 @@ def cross_validate_model_advanced(
                                  torch.tensor(y_train, dtype=torch.long))
         val_ds = TensorDataset(torch.tensor(X_val, dtype=torch.float32),
                                torch.tensor(y_val, dtype=torch.long))
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_ds, batch_size=batch_size)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=False)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, pin_memory=False)
 
         model = create_model_fn().to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)

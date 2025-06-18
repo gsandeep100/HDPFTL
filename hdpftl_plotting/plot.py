@@ -231,6 +231,7 @@ def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", s
 
     # Add global accuracy reference line if provided
     if global_acc is not None:
+
         plt.axhline(global_acc, color='red', linestyle='--', linewidth=2,
                     label=f'Global Accuracy: {global_acc:.2f}')
         plt.legend()
@@ -400,8 +401,8 @@ def cross_validate_model_with_plots(
                                  torch.tensor(y_train, dtype=torch.long))
         val_ds = TensorDataset(torch.tensor(X_val, dtype=torch.float32),
                                torch.tensor(y_val, dtype=torch.long))
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_ds, batch_size=batch_size)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=False)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, pin_memory=False)
 
         model = create_model_fn().to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)

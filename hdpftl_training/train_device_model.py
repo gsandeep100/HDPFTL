@@ -26,13 +26,13 @@ def train_device_model(
     train_labels = train_labels.to(device)
 
     train_dataset = TensorDataset(train_data, train_labels)
-    train_loader = DataLoader(train_dataset, BATCH_SIZE, shuffle=True)
+    train_loader = DataLoader(train_dataset, BATCH_SIZE, shuffle=True, pin_memory=False)
 
     if val_data is not None and val_labels is not None:
         val_data = val_data.to(device)
         val_labels = val_labels.to(device)
         val_dataset = TensorDataset(val_data, val_labels)
-        val_loader = DataLoader(val_dataset, BATCH_SIZE, shuffle=False)
+        val_loader = DataLoader(val_dataset, BATCH_SIZE, shuffle=False, pin_memory=False)
     else:
         val_loader = None
 

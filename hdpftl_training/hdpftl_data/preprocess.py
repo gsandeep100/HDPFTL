@@ -23,7 +23,7 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from hdpftl_training.hdpftl_data.sampling import stratified_downsample
 from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA
 from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import named_timer
+from hdpftl_utility.utils import named_timer, to_float32
 
 """
 🎯 What is PCA (Principal Component Analysis)?
@@ -121,23 +121,31 @@ def prepare_data(X, y, strategy='pca_smote', n_components=30, pre_sample=False, 
         X, y = stratified_downsample(X, y, fraction=sample_fraction)
 
     profile_dataset(X, y)
+    # Force float32 to save memory
+    X = to_float32(X)
 
-    if strategy == 'pca_smote':
-        X_reduced = reduce_dim(X, n_components=n_components)
-        X_final, y_final = fast_safe_smote(X_reduced, y)
-    elif strategy == 'hybrid':
-        X_final, y_final = hybrid_balance(X, y)
-    elif strategy == 'smote_only':
-        X_final, y_final = fast_safe_smote(X, y)
-    elif strategy == 'none':
-        safe_log("\n🚫 No resampling applied. Returning original X, y.")
-        X_final, y_final = X, y
-    else:
-        raise ValueError("❌ Invalid strategy. Choose from 'pca_smote', 'hybrid', 'smote_only', or 'none'.")
+    try:
+        if strategy == 'pca_smote':
+            X_reduced = reduce_dim(X, n_components=n_components)
+            X_final, y_final = fast_safe_smote(X_reduced, y)
+        elif strategy == 'hybrid':
+            X_final, y_final = hybrid_balance(X, y)
+        elif strategy == 'smote_only':
+            X_final, y_final = fast_safe_smote(X, y)
+        elif strategy == 'none':
+            safe_log("\n🚫 No resampling applied. Returning original X, y.")
+            X_final, y_final = X, y
+        else:
+            raise ValueError("❌ Invalid strategy. Choose from 'pca_smote', 'hybrid', 'smote_only', or 'none'.")
 
-    safe_log("\n✅ Final shape:", X_final.shape)
-    safe_log("✅ Final class distribution:", Counter(y_final))
-    return X_final, y_final
+        safe_log("\n✅ Final shape:", X_final.shape)
+        safe_log("✅ Final class distribution:", Counter(y_final))
+        return X_final, y_final
+
+    finally:
+        # Cleanup memory
+        del X, y
+        gc.collect()
 
 
 def safe_smote(X, y):
@@ -193,8 +201,15 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
         # df['Label'] = label
         df = df.select_dtypes(include=[np.number]).dropna(axis=1)
         combined_df.append(df)
+        # Free memory for current loop
+        del df
+        gc.collect()
 
     final_df = pd.concat(combined_df, ignore_index=True)
+    # Final cleanup
+    del combined_df
+    gc.collect()
+
     return final_df
 
 
@@ -250,8 +265,21 @@ def preprocess_data(path, writer=None):
     # Replace infinities and -999 or '?' with NaN
     scaler = MinMaxScaler()
     features = df.columns.difference(['Label'])
-    df[features] = scaler.fit_transform(df[features])
+    # Step 1: Convert to float32 for memory efficiency
+    data = df[features].values.astype(np.float32)
+    print(f"🧮 Data shape before scaling: {data.shape}, dtype: {data.dtype}")
+
+    # Step 2: Fit and transform
+    scaled_data = scaler.fit_transform(data)
+    print(f"✅ Scaling complete. Min: {scaled_data.min():.3f}, Max: {scaled_data.max():.3f}")
+
+    # Step 3: Assign back to DataFrame
+    df[features] = scaled_data
+    print("📊 Scaled data successfully assigned back to DataFrame.")
+
     X, y = df[features], df['Label']
+    X = to_float32(X)
+
     # downsampling
     # with named_timer("downsample", writer, tag="downsample"):
     #   X_small, y_small = stratified_downsample(X, y, fraction=0.2)
@@ -270,6 +298,10 @@ def preprocess_data(path, writer=None):
     with named_timer("safe_smote", writer, tag="safe_smote"):
         # Call the function with your dataset
         X_final, y_final = prepare_data(X, y, strategy='hybrid')
+
+        # Clean up original DataFrame to save RAM
+        del df, X, y
+        gc.collect()
         """
         smote_result = safe_smote(X_small, y_small)
         if smote_result is None:
@@ -291,6 +323,10 @@ def preprocess_data(path, writer=None):
             X_pretrain = X_pretrain.to_frame()
         X_pretrain = scaler.fit_transform(X_pretrain)
         X_test = scaler.fit_transform(X_test)
+
+        # Final cleanup
+        del X_temp, y_temp
+        gc.collect()
 
         return X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test
 

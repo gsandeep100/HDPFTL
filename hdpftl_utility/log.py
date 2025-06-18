@@ -1,7 +1,9 @@
 # === Setup Logging ===
 import logging
+import os
 import sys
 
+import psutil
 import torch
 
 def setup_logging(log_path,log_to_file=True):
@@ -46,3 +48,9 @@ def safe_log(message, extra="", level="info"):
         logging.info(full_msg)  # default
 
     print(full_msg)
+    log_memory(message)
+
+def log_memory(tag=""):
+    process = psutil.Process(os.getpid())
+    mem_mb = process.memory_info().rss / (1024 ** 2)
+    print(f"💾 [MEM] {tag} — {mem_mb:.2f} MB")

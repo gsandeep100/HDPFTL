@@ -10,12 +10,14 @@
    Python3 Version:   3.12.8
 -------------------------------------------------
 """
+import gc
 import os
 import time
 from contextlib import contextmanager
 from datetime import datetime
 from glob import glob
 
+import numpy as np
 import torch
 from imblearn.over_sampling import SMOTE, SVMSMOTE, KMeansSMOTE
 
@@ -89,3 +91,22 @@ def is_folder_exist(path):
 
 def get_output_folders(folder):
     return [f.name for f in os.scandir(folder) if f.is_dir()]
+
+def to_float32(X):
+    if isinstance(X, np.ndarray):
+        return X.astype(np.float32)
+    elif hasattr(X, 'values'):
+        return X.values.astype(np.float32)
+    else:
+        return np.array(X, dtype=np.float32)
+
+def clear_memory():
+    # Collect garbage (Python-level cleanup)
+    gc.collect()
+
+    # Clear PyTorch CUDA cache if using GPU
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+
+    print("🧹 Memory cleared (GC + CUDA)")
