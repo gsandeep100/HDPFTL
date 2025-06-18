@@ -2,6 +2,8 @@ import torch
 from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 
+from hdpftl_utility.config import BATCH_SIZE
+from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device
 
 
@@ -13,7 +15,6 @@ def train_device_model(
         val_labels=None,
         epochs=20,
         lr=0.001,
-        batch_size=32,
         early_stopping_patience=5,
         verbose=True
 ):
@@ -25,13 +26,13 @@ def train_device_model(
     train_labels = train_labels.to(device)
 
     train_dataset = TensorDataset(train_data, train_labels)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, BATCH_SIZE, shuffle=True, pin_memory=False)
 
     if val_data is not None and val_labels is not None:
         val_data = val_data.to(device)
         val_labels = val_labels.to(device)
         val_dataset = TensorDataset(val_data, val_labels)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        val_loader = DataLoader(val_dataset, BATCH_SIZE, shuffle=False, pin_memory=False)
     else:
         val_loader = None
 
@@ -41,6 +42,7 @@ def train_device_model(
 
     best_val_loss = float('inf')
     epochs_no_improve = 0
+    best_model_state = None
 
     for epoch in range(epochs):
         model.train()
@@ -75,7 +77,7 @@ def train_device_model(
             val_accuracy = 100 * correct / total
 
             # if verbose:
-            #   print(f"Epoch [{epoch + 1}/{epochs}] Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val Acc: {val_accuracy:.2f}%")
+            #   safe_log(f"Epoch [{epoch + 1}/{epochs}] Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val Acc: {val_accuracy:.2f}%")
 
             scheduler.step(avg_val_loss)
 
@@ -86,15 +88,15 @@ def train_device_model(
                 best_model_state = model.state_dict()
             else:
                 epochs_no_improve += 1
-                if epochs_no_improve >= early_stopping_patience:
-                    if verbose:
-                        print(f"Early stopping at epoch {epoch + 1}")
+                if verbose:
+                    safe_log(f"Early stopping at epoch {epoch + 1}", level="warning")
+                if best_model_state is not None:
                     model.load_state_dict(best_model_state)
-                    break
+                break
         else:
             # No validation
             # if verbose:
-            #     print(f"Epoch [{epoch + 1}/{epochs}] Train Loss: {avg_train_loss:.4f}")
+            #     safe_log(f"Epoch [{epoch + 1}/{epochs}] Train Loss: {avg_train_loss:.4f}")
             scheduler.step(avg_train_loss)
 
     return model

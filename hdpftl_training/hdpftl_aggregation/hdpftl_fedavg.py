@@ -1,22 +1,40 @@
-import torch
-
 from hdpftl_training.hdpftl_personalised_client.personalize_clients import personalize_clients
 from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device
 
 
-def aggregate_models(models, base_model_fn):
-    device = setup_device()
-    new_model = base_model_fn.to(device)
-    new_state_dict = {}
-    with torch.no_grad():
-        for key in models[0].state_dict().keys():
-            # Average the parameters across all hdpftl_models
-            new_state_dict[key] = torch.stack([m.state_dict()[key].float() for m in models], dim=0).mean(dim=0)
+def aggregate_models(model_state_dicts, base_model_fn):
+    """
+    Aggregate multiple model state_dicts by averaging parameters (FedAvg).
 
-    # Load the averaged weights into the new model
-    new_model.load_state_dict(new_state_dict)
-    return new_model
+    Args:
+        model_state_dicts (list of dict): List of model.state_dict() to average.
+        base_model_fn (callable): Function returning a fresh model instance.
+
+    Returns:
+        dict: Aggregated state_dict.
+    """
+    if not model_state_dicts:
+        return base_model_fn().state_dict()
+
+    # Deep copy and clone tensors to avoid modifying input state_dicts
+    aggregated_state = {}
+    for key in model_state_dicts[0].keys():
+        aggregated_state[key] = model_state_dicts[0][key].clone()
+
+    # Sum remaining models' parameters
+    for state_dict in model_state_dicts[1:]:
+        for key in aggregated_state:
+            aggregated_state[key] += state_dict[key]
+
+    # Average
+    for key in aggregated_state:
+        aggregated_state[key] /= len(model_state_dicts)
+
+    # Load averaged weights into fresh model instance (optional)
+    aggregated_model = base_model_fn()
+    aggregated_model.load_state_dict(aggregated_state)
+
+    return aggregated_model.state_dict()
 
 
 def aggregate_fed_avg(local_models, base_model_fn, X_train, y_train, client_partitions):

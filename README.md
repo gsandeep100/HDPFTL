@@ -240,3 +240,9 @@ If you have 3 classes (cat, dog, car) and 5 clients:
 A Dirichlet α = 1.0 will create roughly balanced distributions.
 
 A Dirichlet α = 0.1 will result in some clients having almost entirely one class — highly non-IID.
+
+# TODO
+
+1. Check for Data leaks on every layer(processing,splitting,training,evaluation)
+2. use only finetune data in dirichet splitting instead of full data
+3. use Bayseian instead of fedavg
