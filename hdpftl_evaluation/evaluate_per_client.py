@@ -28,7 +28,7 @@ def load_personalized_models_fromfile():
 
     for cid in range(NUM_CLIENTS):
         model = create_model_fn().to(device)  # New model for each client
-        #model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)
+        # model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)
         model_path = os.path.join(TRAINED_MODEL_DIR + get_today_date() + "/", f"personalized_model_client_{cid}.pth")
 
         if os.path.exists(model_path):
@@ -75,10 +75,19 @@ def evaluate_personalized_models_per_client(personalized_models, client_data_dic
 
         safe_log(f"Evaluating client: '{client_id}'")
 
-        # Handle model or state_dict
         if isinstance(personalized_models[client_id], dict):
-            model = create_model_fn(x_client_np.shape[1], len(np.unique(y_client_np))).to(device)
-            model.load_state_dict(personalized_models[client_id])
+            num_classes = len(np.unique(y_client_np))
+            model = create_model_fn(x_client_np.shape[1], num_classes).to(device)
+
+            checkpoint = personalized_models[client_id]
+            model_dict = model.state_dict()
+
+            # Filter out classifier weights to avoid size mismatch
+            filtered_checkpoint = {k: v for k, v in checkpoint.items() if not k.startswith('classifier.')}
+
+            # Update model dict with filtered weights and load
+            model_dict.update(filtered_checkpoint)
+            model.load_state_dict(model_dict)
         else:
             model = personalized_models[client_id].to(device)
 

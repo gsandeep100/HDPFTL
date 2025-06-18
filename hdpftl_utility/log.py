@@ -4,14 +4,14 @@ import os
 import sys
 
 import psutil
-import torch
 
-def setup_logging(log_path,log_to_file=True):
+
+def setup_logging(log_path, log_to_file=True):
     log_format = "%(asctime)s [%(levelname)s] %(message)s"
 
     handlers = []
     if log_to_file:
-        handlers.append(logging.FileHandler(log_path+"hdpftl_run.log"))
+        handlers.append(logging.FileHandler(log_path + "hdpftl_run.log"))
 
     # Always also log to console
     handlers.append(logging.StreamHandler(sys.stdout))
@@ -49,6 +49,7 @@ def safe_log(message, extra="", level="info"):
 
     print(full_msg)
     log_memory(message)
+
 
 def log_memory(tag=""):
     process = psutil.Process(os.getpid())

@@ -10,7 +10,7 @@
    Python3 Version:   3.12.8
 -------------------------------------------------
 """
-
+import gc
 import os
 
 import numpy as np
@@ -21,7 +21,7 @@ from torch.utils.data import TensorDataset, DataLoader
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
 from hdpftl_utility.config import EPOCH_FILE_PRE, NUM_EPOCHS_PRE_TRAIN, EPOCH_DIR, PRE_MODEL_FOLDER_PATH_TEMPLATE, \
-    PRE_MODEL_PATH_TEMPLATE
+    PRE_MODEL_PATH_TEMPLATE, BATCH_SIZE_TRAINING
 from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import get_today_date, is_folder_exist
 
@@ -46,8 +46,8 @@ def pretrain_class(X_train, X_test, y_train, y_test, input_dim, early_stop_patie
     test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
     # Create DataLoaders
-    train_loader = DataLoader(train_dataset, shuffle=True, batch_size=32)
-    val_loader = DataLoader(test_dataset, shuffle=False, batch_size=32)
+    train_loader = DataLoader(train_dataset, shuffle=True, batch_size=BATCH_SIZE_TRAINING, pin_memory=False)
+    val_loader = DataLoader(test_dataset, shuffle=False, batch_size=BATCH_SIZE_TRAINING, pin_memory=False)
     safe_log("\n=== Pretraining Phase (Real Data) ===")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -118,3 +118,7 @@ def pretrain_class(X_train, X_test, y_train, y_test, input_dim, early_stop_patie
     # Save metrics to file
     np.save(EPOCH_FILE_PRE, np.array(epoch_metrics))
     safe_log("Pretraining complete. Best model saved.")
+    # === CLEANUP ===
+    del model, optimizer, criterion, train_loader, val_loader
+    torch.cuda.empty_cache()
+    gc.collect()

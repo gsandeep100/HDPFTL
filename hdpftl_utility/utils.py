@@ -92,6 +92,7 @@ def is_folder_exist(path):
 def get_output_folders(folder):
     return [f.name for f in os.scandir(folder) if f.is_dir()]
 
+
 def to_float32(X):
     if isinstance(X, np.ndarray):
         return X.astype(np.float32)
@@ -99,6 +100,7 @@ def to_float32(X):
         return X.values.astype(np.float32)
     else:
         return np.array(X, dtype=np.float32)
+
 
 def clear_memory():
     # Collect garbage (Python-level cleanup)

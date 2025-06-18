@@ -98,7 +98,8 @@ def evaluate_global_model(model, X_test, y_test):
     # or you can make BATCH_SIZE a parameter or global variable.
     # For global evaluation, often a single batch or large batch size is used.
     test_batch_size = 256  # Or define globally like BATCH_SIZE
-    dataloader = DataLoader(TensorDataset(X_test_on_device, y_test_on_device), batch_size=test_batch_size, pin_memory=False)
+    dataloader = DataLoader(TensorDataset(X_test_on_device, y_test_on_device), batch_size=test_batch_size,
+                            pin_memory=False)
 
     correct, total = 0, 0
     with torch.no_grad():  # Disable gradient calculations for inference

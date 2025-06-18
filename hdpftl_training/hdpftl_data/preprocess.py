@@ -17,8 +17,7 @@ from glob import glob
 
 import numpy as np
 from imblearn.over_sampling import SVMSMOTE
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.preprocessing import LabelEncoder
 
 from hdpftl_training.hdpftl_data.sampling import stratified_downsample
 from hdpftl_utility.config import OUTPUT_DATASET_ALL_DATA
@@ -164,49 +163,56 @@ def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=
 
     if not all_files:
         raise FileNotFoundError(f"No CSV files found in: {os.path.abspath(folder_path)}")
+
     safe_log(f"Found {len(all_files)} CSV files in '{folder_path}'")
     combined_df = []
 
     for count, file in enumerate(all_files, start=1):
-        df = pd.read_csv(file)
-        filename = os.path.basename(file).lower()
         safe_log(f"Count: {count}, Processing File: {file}")
+        df = pd.read_csv(file)
+        df.columns = df.columns.str.strip()  # Clean up column names
+        filename = os.path.basename(file).lower()
 
-        # Determine label from filename
-        if any(kw in filename for kw in benign_keywords):
-            df['Label'] = 0
+        # --- Label handling ---
+        if 'Label' not in df.columns:
+            if any(kw in filename for kw in benign_keywords):
+                df['Label'] = 0
+            elif attack_keywords and any(kw in filename for kw in attack_keywords):
+                df['Label'] = 1
+            else:
+                df['Label'] = 1  # Default to attack if unclear
         else:
-            df['Label'] = 1  # assume attack if not explicitly benign
+            # Clean label strings
+            df['Label'] = df['Label'].astype(str).str.strip()
 
-        """
-        df = safe_clean_dataframe(
-            df,
-            chunk_size=5000,
-            invalid_values=[-999, '?'],
-            replace_with=np.nan,
-            log_progress=True
-        )
-        """
+            # Encode labels into integers
+            label_encoder = LabelEncoder()
+            df['Label'] = label_encoder.fit_transform(df['Label'])
+
+            # Optional: Save label mapping
+            label_map = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
+            safe_log(f"Label mapping: {label_map}")
+
+        # --- Clean data ---
         pd.set_option('future.no_silent_downcasting', True)
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
-        # df.replace([np.inf, -np.inf], np.nan, inplace=True)
-        # df.infer_objects(copy=False)
         df.dropna(inplace=True)
         df.drop_duplicates(inplace=True)
+
         df.drop(['Flow ID', 'Source IP', 'Destination IP', 'Timestamp'], axis=1, inplace=True, errors="ignore")
-        df.columns = df.columns.str.strip()
-        # label_encoder = LabelEncoder()
-        # df['Label'] = label_encoder.fit_transform(df['Label'])
-        # label = 0 if 'benign' in os.path.basename(path).lower() else 1
-        # df['Label'] = label
-        df = df.select_dtypes(include=[np.number]).dropna(axis=1)
+
+        # Only numeric features + Label
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        if 'Label' not in numeric_cols:
+            numeric_cols.append('Label')
+        df = df[numeric_cols].dropna(axis=1)
+
         combined_df.append(df)
-        # Free memory for current loop
         del df
         gc.collect()
 
     final_df = pd.concat(combined_df, ignore_index=True)
-    # Final cleanup
+
     del combined_df
     gc.collect()
 
@@ -257,120 +263,48 @@ def safe_clean_dataframe(df: pd.DataFrame,
     return df
 
 
-def preprocess_data(path, writer=None):
-    # all_files = glob.glob(path + "*.csv")
-    # df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.model_selection import train_test_split
+
+
+def preprocess_data(path, writer=None, scaler_type='minmax'):
     with named_timer("load_and_label_all", writer, tag="load_and_label_all"):
-        df = load_and_label_all(OUTPUT_DATASET_ALL_DATA + path + "/")
-    # Replace infinities and -999 or '?' with NaN
-    scaler = MinMaxScaler()
+        df = load_and_label_all(os.path.join(OUTPUT_DATASET_ALL_DATA, path))
+
     features = df.columns.difference(['Label'])
-    # Step 1: Convert to float32 for memory efficiency
-    data = df[features].values.astype(np.float32)
-    print(f"🧮 Data shape before scaling: {data.shape}, dtype: {data.dtype}")
-
-    # Step 2: Fit and transform
-    scaled_data = scaler.fit_transform(data)
-    print(f"✅ Scaling complete. Min: {scaled_data.min():.3f}, Max: {scaled_data.max():.3f}")
-
-    # Step 3: Assign back to DataFrame
-    df[features] = scaled_data
-    print("📊 Scaled data successfully assigned back to DataFrame.")
+    df[features] = df[features].astype(np.float32)
 
     X, y = df[features], df['Label']
     X = to_float32(X)
 
-    # downsampling
-    # with named_timer("downsample", writer, tag="downsample"):
-    #   X_small, y_small = stratified_downsample(X, y, fraction=0.2)
-
-    # safe_log(df.columns)
-
-    # SVMSMOTE- Create synthetic minority points near SVM boundary (critical zones).
-    #           Makes the minority class stronger exactly where it matters — at the decision boundary.
-    # SMOTEENN- Clean noisy samples after oversampling using Edited Nearest Neighbors.
-    #           Removes confusing and overlapped samples, making the classifier much more accurate.
-
-    # resampling_pipeline = Pipeline([
-    #     ('svm_smote', SVMSMOTE(random_state=42)),
-    #     ('smote_enn', SMOTEENN(random_state=42))
-    # ])
     with named_timer("safe_smote", writer, tag="safe_smote"):
-        # Call the function with your dataset
         X_final, y_final = prepare_data(X, y, strategy='hybrid')
-
-        # Clean up original DataFrame to save RAM
         del df, X, y
         gc.collect()
-        """
-        smote_result = safe_smote(X_small, y_small)
-        if smote_result is None:
-            X_final, y_final = X_small, y_small
-        elif isinstance(smote_result, tuple) and len(smote_result) >= 2:
-            X_final, y_final = smote_result[:2]
-        else:
-            X_final, y_final = X_small, y_small
-        """
-    with named_timer("train_test_split", writer, tag="train_test_split"):
-        X_temp, X_test, y_temp, y_test = train_test_split(X_final, y_final, test_size=0.1, random_state=42,
-                                                          stratify=y_final)
-        X_pretrain, X_finetune, y_pretrain, y_finetune = train_test_split(
-            X_temp, y_temp, test_size=0.1, stratify=y_temp, random_state=42
-        )
-        # Scale features
-        scaler = StandardScaler()
-        if isinstance(X_pretrain, pd.Series):
-            X_pretrain = X_pretrain.to_frame()
-        X_pretrain = scaler.fit_transform(X_pretrain)
-        X_test = scaler.fit_transform(X_test)
 
-        # Final cleanup
+    with named_timer("train_test_split", writer, tag="train_test_split"):
+        X_temp, X_test, y_temp, y_test = train_test_split(
+            X_final, y_final, test_size=0.1, stratify=y_final, random_state=42)
+        X_pretrain, X_finetune, y_pretrain, y_finetune = train_test_split(
+            X_temp, y_temp, test_size=0.1, stratify=y_temp, random_state=42)
         del X_temp, y_temp
         gc.collect()
 
-        return X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test
+        if scaler_type == 'minmax':
+            scaler = MinMaxScaler()
+            # Fit+transform on all data before splitting is more typical for minmax,
+            # but here we do it on pretrain/fine tune/test split to be consistent.
+            X_pretrain = scaler.fit_transform(X_pretrain)
+            X_finetune = scaler.transform(X_finetune)
+            X_test = scaler.transform(X_test)
 
+        elif scaler_type == 'standard':
+            scaler = StandardScaler()
+            X_pretrain = scaler.fit_transform(X_pretrain)
+            X_finetune = scaler.transform(X_finetune)
+            X_test = scaler.transform(X_test)
 
-"""
-def preprocess_data_small(csv_path, test_size=0.2):
-    # Load hdpftl_dataset
-    df = pd.read_csv(csv_path + "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv", low_memory=False)
+        else:
+            raise ValueError(f"Unsupported scaler_type: {scaler_type}")
 
-    # Drop unnamed or constant columns
-    df.drop(columns=[col for col in df.columns if 'Unnamed' in col or df[col].nunique() <= 1], inplace=True)
-
-    # Drop rows with NaN or inf
-    df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df.dropna(inplace=True)
-
-    # Separate label
-    y = df[' Label']
-    df.drop(columns=[' Label'], inplace=True)
-
-    # Drop non-numeric columns (e.g., Flow ID, Source IP, etc.)
-    df = df.select_dtypes(include=['float64', 'int64'])
-
-    # Encode label
-    le = LabelEncoder()
-    y_encoded = le.fit_transform(y)
-
-    # Optional: show label mapping
-    safe_log("Label mapping:", dict(zip(le.classes_, le.transform(le.classes_).tolist())))
-
-    # Feature scaling
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(df)
-
-    # Train-test split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y_encoded, test_size=test_size, stratify=y_encoded, random_state=42
-    )
-
-    # Convert to PyTorch tensors
-    X_train = torch.tensor(X_train, dtype=torch.float32)
-    X_test = torch.tensor(X_test, dtype=torch.float32)
-    y_train = torch.tensor(y_train, dtype=torch.long)
-    y_test = torch.tensor(y_test, dtype=torch.long)
-
-    return X_train, X_test, y_train, y_test
-    """
+    return X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test

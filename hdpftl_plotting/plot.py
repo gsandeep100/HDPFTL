@@ -231,7 +231,6 @@ def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", s
 
     # Add global accuracy reference line if provided
     if global_acc is not None:
-
         plt.axhline(global_acc, color='red', linestyle='--', linewidth=2,
                     label=f'Global Accuracy: {global_acc:.2f}')
         plt.legend()

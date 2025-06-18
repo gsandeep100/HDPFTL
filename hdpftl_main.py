@@ -10,6 +10,7 @@
    Python3 Version:   3.12.8
 -------------------------------------------------
 """
+import multiprocessing as mp
 import os
 import pickle
 import threading
@@ -17,8 +18,7 @@ import time
 import tkinter as tk
 import traceback
 import warnings
-
-from multiprocessing import Process, Event, Queue
+from multiprocessing import Process
 from tkinter import scrolledtext, messagebox
 from tkinter import ttk
 
@@ -26,7 +26,8 @@ import numpy as np
 import torch
 from joblib import dump, load
 from torch.utils.tensorboard import SummaryWriter
-import multiprocessing as mp
+from urllib3.filepost import writer
+
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model, evaluate_global_model_fromfile
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client, \
     load_personalized_models_fromfile
@@ -36,14 +37,12 @@ from hdpftl_training.hdpftl_data.preprocess import preprocess_data
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition_with_devices
 from hdpftl_training.hdpftl_pre_training.finetune_model import finetune_model
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
-from hdpftl_utility.config import EPOCH_FILE_FINE, EPOCH_FILE_PRE, INPUT_DIM, NUM_CLIENTS, \
-    NUM_DEVICES_PER_CLIENT, GLOBAL_MODEL_PATH_TEMPLATE, OUTPUT_DATASET_ALL_DATA, LOGS_DIR_TEMPLATE, X_Y_TEST_PATH_TEMPLATE, PARTITIONED_DATA_PATH_TEMPLATE, \
+from hdpftl_utility.config import EPOCH_FILE_FINE, EPOCH_FILE_PRE, NUM_CLIENTS, \
+    NUM_DEVICES_PER_CLIENT, GLOBAL_MODEL_PATH_TEMPLATE, OUTPUT_DATASET_ALL_DATA, LOGS_DIR_TEMPLATE, \
+    X_Y_TEST_PATH_TEMPLATE, PARTITIONED_DATA_PATH_TEMPLATE, \
     RESULTS_PATH_TEMPLATE, PREDICTIONS_PATH_TEMPLATE
 from hdpftl_utility.log import setup_logging, safe_log
-from hdpftl_utility.utils import named_timer, setup_device, get_output_folders, get_today_date, number_of_data_folders, \
-    is_folder_exist
-from typing import BinaryIO
-
+from hdpftl_utility.utils import named_timer, setup_device, get_output_folders, get_today_date, is_folder_exist
 
 warnings.filterwarnings("ignore", message=".*Redirects are currently not supported.*")
 
@@ -55,14 +54,14 @@ if __name__ == "__main__":
     personalized_models = None
     hierarchical_data = {}
     client_data_dict_test = {}
-    hierarchical_data_test={}
+    hierarchical_data_test = {}
     client_accs = {}
     predictions = None
     num_classes = ""
     global_model = {}
     global_acc = 0.0
     personalised_acc = {}
-
+    writer = None
     X_test = {}
     y_test = {}
     client_data_dict = {}
@@ -76,6 +75,7 @@ if __name__ == "__main__":
     after_id = ""
     start_time = float(time.time())
 
+
     def update_progress(value):
         root.after(0, lambda: _update_progress_ui(value))
 
@@ -87,52 +87,61 @@ if __name__ == "__main__":
             progress_label.config(text="✅ Training complete!")
 
 
-    def monitor_process(p, q, done):
-        global num_classes,global_acc,client_accs,personalised_acc,predictions
+    def monitor_process(p, q, done,writer):
+        global num_classes, global_acc, client_accs, personalised_acc, predictions
         p.join()  # Wait for process to finish
         if p.exitcode != 0:
             print(f"❌ Process crashed with exit code {p.exitcode}")
             return
 
-        if not q.empty():
-            results = q.get()
-            if done.is_set():
-                print("✅ Process finished (event received).")
-                global_acc, client_accs, personalised_acc,predictions, num_classes = results
-                print("Global:", global_acc)
-                print("Client:", client_accs)
-                print("Personalised:", personalised_acc)
-                stop_clock()
-                complete_progress_bar()
-            else:
-                print("⚠️ Queue received data but done flag not set.")
+        #if not q.empty():
+            # try :
+            # results = q.get(timeout=5)
+            # If tensors somehow still leak through, convert to CPU
+            # results = tuple(r.cpu() if isinstance(r, torch.Tensor) and r.is_cuda else r for r in results)
+            # except Exception as e:
+            #    print(f"❌ Failed to get results from queue: {e}")
+            #     return
+        if done.is_set():
+            print("✅ Process finished (event received).")
+            load_from_files(writer)
+            # global_acc, client_accs, personalised_acc,predictions, num_classes = results
+            print("Global:", global_acc)
+            print("Client:", client_accs)
+            print("Personalised:", personalised_acc)
+            stop_clock()
+            complete_progress_bar()
         else:
-            print("❌ Queue is empty. Process may have crashed before q.put()")
+            print("⚠️ Queue received data but done flag not set.")
+        #else:
+        #    print("❌ Queue is empty. Process may have crashed before q.put()")
 
 
-    def start_thread():
+    def start_thread(writer):
         ctx = mp.get_context("spawn")  # Use spawn instead of fork
 
         q = ctx.Queue()
         done_event = ctx.Event()
 
-        p = Process(target=start_process, args=(q, done_event))
+        p = Process(target=start_process, args=(q, done_event,writer))
         p.start()
         return p, q, done_event
 
 
     def start_training():
+        global writer
         # Start infinite progress animation
         global start_time
         progress.config(mode='indeterminate')
         progress.start(10)
         progress_label.config(text="Training in progress...")
+        writer = SummaryWriter(log_dir="runs/hdpftl_pipeline")
 
         # Start long-running task in a new thread
         update_clock()
-        p, q, done = start_thread()
+        p, q, done = start_thread(writer)
         # ✅ Run non-blocking monitor in background
-        threading.Thread(target=monitor_process, args=(p, q, done), daemon=True).start()
+        threading.Thread(target=monitor_process, args=(p, q, done,writer), daemon=True).start()
 
 
     def complete_progress_bar():
@@ -145,7 +154,7 @@ if __name__ == "__main__":
             mins, secs = divmod(elapsed_time, 60)
             hh, mm, ss = convert_to_hms(mins, secs)
 
-            #total_time_taken_label.config(text=f"Total Time: {hh}H:{mm}M:{ss}S")
+            # total_time_taken_label.config(text=f"Total Time: {hh}H:{mm}M:{ss}S")
             time_taken_label.config(text=f"📂 {hh}Hours:{mm}Minutes:{ss}seconds")
 
             current_time = time.strftime('%H:%M:%S')
@@ -174,11 +183,11 @@ if __name__ == "__main__":
             after_id = None
 
 
-    def start_process(q, done_event):
+    def start_process(q, done_event,writer):
         global hh, mm, ss
-        global global_model,personalized_models, X_test, y_test, client_data_dict,hierarchical_data,\
-            client_data_dict_test, hierarchical_data_test,personalised_acc, client_accs, global_acc,\
-            predictions,num_classes
+        global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
+            client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
+            predictions, num_classes
 
         try:
             log_path_str = LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date())
@@ -187,16 +196,18 @@ if __name__ == "__main__":
             safe_log("============================================================================")
             safe_log("======================Process Started=======================================")
             safe_log("============================================================================")
-            writer = SummaryWriter(log_dir="runs/hdpftl_pipeline")
             # If fine-tuned model exists, load and return it
             if not os.path.exists(GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date())):
                 # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
                 with named_timer("Preprocessing", writer, tag="Preprocessing"):
                     global X_test, y_test
+                    # For deep learning:
                     X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(
-                        selected_folder)
+                        selected_folder, scaler_type='minmax')
+                    # For classical ML:----Dont Delete the below comment...its for the different parameter different situations models
+                    # X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(selected_folder,scaler_type='standard')
                 # safe_log("[1]Data preprocessing completed.")
-                #device = setup_device()
+                # device = setup_device()
                 """
                 dirichlet_partition is a standard technique to simulate non-IID data — 
                 and it's commonly used in federated learning experiments to control the degree of 
@@ -221,21 +232,22 @@ if __name__ == "__main__":
                         X_pretrain, y_pretrain, alpha=0.5, num_clients=NUM_CLIENTS,
                         num_devices_per_client=NUM_DEVICES_PER_CLIENT
                     )
-                with open(partition_output_path+ "partitioned_data.pkl", "wb") as f:
+                with open(partition_output_path + "partitioned_data.pkl", "wb") as f:
                     pickle.dump((client_data_dict, hierarchical_data), f)
 
                 with named_timer("dirichlet_partition_test", writer, tag="dirichlet_partition_test"):
                     client_data_dict_test, hierarchical_data_test = dirichlet_partition_with_devices(
-                        X_test, y_test, alpha=0.5, num_clients=NUM_CLIENTS, num_devices_per_client=NUM_DEVICES_PER_CLIENT
+                        X_test, y_test, alpha=0.5, num_clients=NUM_CLIENTS,
+                        num_devices_per_client=NUM_DEVICES_PER_CLIENT
                     )
 
-                with open(partition_output_path+"partitioned_data_test.pkl", "wb") as f:
+                with open(partition_output_path + "partitioned_data_test.pkl", "wb") as f:
                     pickle.dump((client_data_dict_test, hierarchical_data_test), f)
-
 
                 # Step 2: Pretrain global model
                 with named_timer("pretrain_class", writer, tag="pretrain_class"):
-                    pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=INPUT_DIM, early_stop_patience=10)
+                    pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=X_pretrain.shape[1],
+                                   early_stop_patience=10)
                     # Step 3: Instantiate target model and train on device
                 with named_timer("target_class", writer, tag="target_class"):
                     def base_model_fn():
@@ -246,7 +258,8 @@ if __name__ == "__main__":
                             target_classes=len(np.unique(y_finetune)))
 
                 with named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
-                    global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test)
+                    global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
+                                                                        y_test)
 
                 personalised_acc, client_accs, global_acc = evaluation(X_test, client_data_dict_test, global_model,
                                                                        personalized_models, writer, y_test)
@@ -263,14 +276,33 @@ if __name__ == "__main__":
                 load_from_files(writer)
 
             # Ensure client_accs and personalised_acc are CPU-safe (if they are tensors)
-            #client_accs = [acc.cpu() if hasattr(acc, 'cpu') else acc for acc in client_accs]
-            #if hasattr(personalised_acc, 'cpu'):
-                #personalised_acc = personalised_acc.cpu()
+            # client_accs = [acc.cpu() if hasattr(acc, 'cpu') else acc for acc in client_accs]
+            # if hasattr(personalised_acc, 'cpu'):
+            # personalised_acc = personalised_acc.cpu()
 
+            def to_cpu_deep(obj):
+                if isinstance(obj, torch.Tensor):
+                    return obj.detach().cpu()
+                elif isinstance(obj, dict):
+                    return {k: to_cpu_deep(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [to_cpu_deep(v) for v in obj]
+                elif isinstance(obj, tuple):
+                    return tuple(to_cpu_deep(v) for v in obj)
+                else:
+                    return obj
 
-            q.put((global_acc, client_accs, personalised_acc,predictions, num_classes))
+            # results = (global_acc, client_accs, personalised_acc, predictions, num_classes)
+            # safe_results = to_cpu_deep(results)  # ✅ ONLY send CPU-safe objects
+            # q.put(safe_results)
+
             # Signal completion
             done_event.set()
+            time.sleep(1)  # Give monitor thread time to get the data
+
+            # safe_log("Sending to queue:")
+            # for i, item in enumerate(safe_results):
+            # safe_log(f" - Item {i}: {type(item)}, CUDA: {getattr(item, 'is_cuda', False)}")
 
             safe_log("===========================================================================")
             safe_log("===========================Process Completed===============================")
@@ -283,14 +315,15 @@ if __name__ == "__main__":
 
     def load_from_files(writer):
         partition_output_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(n=get_today_date()) + "partitioned_data.pkl"
-        partition_output_test_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(n=get_today_date()) + "partitioned_data_test.pkl"
-        xy_output_path = X_Y_TEST_PATH_TEMPLATE.substitute(n=get_today_date())  + "X_y_test.joblib"
+        partition_output_test_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(
+            n=get_today_date()) + "partitioned_data_test.pkl"
+        xy_output_path = X_Y_TEST_PATH_TEMPLATE.substitute(n=get_today_date()) + "X_y_test.joblib"
         result_output_path = RESULTS_PATH_TEMPLATE.substitute(n=get_today_date()) + "results.pkl"
         predictions_output_path = PREDICTIONS_PATH_TEMPLATE.substitute(n=get_today_date()) + "predictions.pkl"
 
-        global global_model,personalized_models, X_test, y_test, client_data_dict,hierarchical_data,\
-            client_data_dict_test, hierarchical_data_test,personalised_acc, client_accs, global_acc,\
-            predictions,num_classes
+        global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
+            client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
+            predictions, num_classes
         with named_timer("Evaluate Global Model From File", writer, tag="EvalFromFile"):
             global_model = evaluate_global_model_fromfile()
         with named_timer("Evaluate Personalized Models From File", writer, tag="PersonalizedEval"):
@@ -305,7 +338,9 @@ if __name__ == "__main__":
         with open(predictions_output_path, "rb") as f:
             predictions, num_classes = pickle.load(f)
 
+
     def evaluation(X_test, client_data_dict_test, global_model, personalized_models, writer, y_test):
+        global personalised_acc, client_accs, global_acc
 
         # Evaluate
         # global_accs = evaluate_global_model(global_model, X_test, y_test, client_partitions_test)
@@ -336,7 +371,7 @@ if __name__ == "__main__":
 
 
     def plot(global_model):
-        global predictions,num_classes
+        global predictions, num_classes
         """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
         #######################  PLOT  #############################
         """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -380,14 +415,14 @@ if __name__ == "__main__":
     def open_log_window():
         try:
             log_path_str = LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date())
-            with open(log_path_str+"hdpftl_run.log", "r") as f:
+            with open(log_path_str + "hdpftl_run.log", "r") as f:
                 log_contents = f.read()
         except FileNotFoundError:
             messagebox.showerror("Error", "hdpftl_run.log not found.")
             return
 
         log_win = tk.Toplevel(root)
-        log_win.title("Log Viewer for dataset:"+ selected_folder+ " and dated:" + get_today_date())
+        log_win.title("Log Viewer for dataset:" + selected_folder + " and dated:" + get_today_date())
         log_win.geometry("600x400")
 
         text_area = scrolledtext.ScrolledText(log_win, wrap=tk.WORD)
@@ -421,7 +456,7 @@ if __name__ == "__main__":
 
     # Label
     tk.Label(top_frame, text="HDPFTL Architecture", font=("Arial", 18, "bold")).grid(row=0, column=1, padx=10)
-    view_log_btn  = tk.Button(top_frame, text="View Log", command=open_log_window, width=10,state="disabled")
+    view_log_btn = tk.Button(top_frame, text="View Log", command=open_log_window, width=10, state="disabled")
     view_log_btn.grid(row=0, column=2, padx=10)
 
     time_taken_label = tk.Label(top_frame, font=('Arial', 12), fg='red', text="Total Time: --:--:--")
@@ -469,7 +504,7 @@ if __name__ == "__main__":
 
 
     def handle_client_label_distribution():
-        p, q, done_event = start_thread()
+        p, q, done_event = start_thread(writer)
         p.join()
         if p.exitcode == 0 and done_event.is_set():
             plot_class_distribution_per_client(client_data_dict)
@@ -488,15 +523,19 @@ if __name__ == "__main__":
 
 
     def handle_confusion_matrix():
-        global num_classes,global_acc,client_accs,personalised_acc,predictions
-        p, q, done_event = start_thread()
+        global num_classes, global_acc, client_accs, personalised_acc, predictions
+        p, q, done_event = start_thread(writer)
         p.join()  # Wait for the process to complete
 
         if p.exitcode == 0 and done_event.is_set():
             try:
                 # Try to get predictions and num_classes from queue if available
-                if not q.empty():
-                    global_acc, client_accs, personalised_acc,predictions, num_classes = q.get()
+                #if not q.empty():
+                    #results = q.get()
+                    # If tensors somehow still leak through, convert to CPU
+                    #results = tuple(r.cpu() if isinstance(r, torch.Tensor) and r.is_cuda else r for r in results)
+
+                    #global_acc, client_accs, personalised_acc, predictions, num_classes = results
 
                 # Validate num_classes
                 if isinstance(num_classes, int) and num_classes > 0:
@@ -522,7 +561,7 @@ if __name__ == "__main__":
 
 
     def handle_pre_epoch_losses():
-        p, q, done_event = start_thread()
+        p, q, done_event = start_thread(writer)
         p.join()  # Wait for process to finish
 
         if p.exitcode == 0 and done_event.is_set():
@@ -543,7 +582,7 @@ if __name__ == "__main__":
 
 
     def handle_fine_tune_losses():
-        p, q, done_event = start_thread()
+        p, q, done_event =  start_thread(writer)
         p.join()  # Wait for process to finish
 
         if p.exitcode == 0 and done_event.is_set():
@@ -564,7 +603,7 @@ if __name__ == "__main__":
 
 
     def handle_plot_personalised_vs_global():
-        p, q, done_event = start_thread()
+        p, q, done_event =  start_thread(writer)
         p.join()  # Wait for process to finish
 
         if p.exitcode == 0 and done_event.is_set():
@@ -585,7 +624,7 @@ if __name__ == "__main__":
 
 
     def handle_personalized_vs_global_bar():
-        p, q, done_event = start_thread()
+        p, q, done_event = start_thread(writer)
         p.join()  # Wait for process to finish
 
         if p.exitcode == 0 and done_event.is_set():
@@ -606,7 +645,7 @@ if __name__ == "__main__":
 
 
     def handle_cross_validation():
-        p, q, done_event = start_thread()
+        p, q, done_event = start_thread(writer)
         p.join()  # Wait for the subprocess to finish
 
         if p.exitcode == 0 and done_event.is_set():

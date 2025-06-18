@@ -19,8 +19,6 @@
 import os
 from string import Template
 
-from bs4 import ResultSet
-
 from hdpftl_utility.utils import get_today_date
 
 # Main Code Flow Based on the Diagrams
@@ -124,7 +122,7 @@ INPUT_DATASET_PATH_2023 = 'https://www.unb.ca/cic/datasets/iotdataset-2023.html'
 INPUT_DATASET_PATH_2024 = 'https://www.unb.ca/cic/datasets/iotdataset-2024.html'
 OUTPUT_DATASET_PATH_2023 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2023/"
 OUTPUT_DATASET_PATH_2024 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/"
-OUTPUT_DATASET_ALL_DATA = "./hdpftl_training/hdpftl_dataset/AllData/"
+OUTPUT_DATASET_ALL_DATA = "./hdpftl_training/hdpftl_dataset/"
 
 BATCH_SIZE = 5
 BATCH_SIZE_TRAINING = 16
@@ -156,4 +154,4 @@ EPOCH_FILE_FINE = os.path.join(EPOCH_DIR, "fine_tune_epoch_losses.npy")
 EPOCH_FILE_PRE = os.path.join(EPOCH_DIR, "pre_epoch_losses.npy")
 
 PLOT_PATH = "./hdpftl_plot_outputs/"
-#PERSONALISED_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/personalized_model_client_${n}.pth")
+# PERSONALISED_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/personalized_model_client_${n}.pth")
