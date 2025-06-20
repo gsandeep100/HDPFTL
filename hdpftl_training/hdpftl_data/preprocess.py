@@ -159,12 +159,12 @@ def safe_smote(X, y):
 
 
 def assign_labels(
-    df,
-    filename,
-    benign_keywords=None,
-    attack_keywords=None,
-    multiclass_keywords=None,
-    manual_label_map=None
+        df,
+        filename,
+        benign_keywords=None,
+        attack_keywords=None,
+        multiclass_keywords=None,
+        manual_label_map=None
 ):
     """
     Assigns 'Label' column to df based on:
@@ -180,7 +180,8 @@ def assign_labels(
         df['Label'] = df['Label'].astype(str).str.strip()
         label_encoder = LabelEncoder()
         df['Label'] = label_encoder.fit_transform(df['Label'])
-        safe_log(f"Label mapping for {filename}: {dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))}")
+        safe_log(
+            f"Label mapping for {filename}: {dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))}")
         return df
 
     # --- Multi-class Mapping ---
@@ -212,16 +213,18 @@ def assign_labels(
     if df['Label'].dtype == object:
         label_encoder = LabelEncoder()
         df['Label'] = label_encoder.fit_transform(df['Label'].astype(str))
-        safe_log(f"Encoded label mapping for {filename}: {dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))}")
+        safe_log(
+            f"Encoded label mapping for {filename}: {dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))}")
 
     return df
 
+
 def load_and_label_all(
-    folder_path,
-    benign_keywords=None,
-    attack_keywords=None,
-    multiclass_keywords=None,
-    manual_label_map=None
+        folder_path,
+        benign_keywords=None,
+        attack_keywords=None,
+        multiclass_keywords=None,
+        manual_label_map=None
 ):
     csv_files = glob(os.path.join(folder_path, "*.csv")) + glob(os.path.join(folder_path, "*.CSV"))
     if not csv_files:

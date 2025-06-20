@@ -87,21 +87,21 @@ if __name__ == "__main__":
             progress_label.config(text="✅ Training complete!")
 
 
-    def monitor_process(p, q, done,writer):
+    def monitor_process(p, q, done, writer):
         global num_classes, global_acc, client_accs, personalised_acc, predictions
         p.join()  # Wait for process to finish
         if p.exitcode != 0:
             print(f"❌ Process crashed with exit code {p.exitcode}")
             return
 
-        #if not q.empty():
-            # try :
-            # results = q.get(timeout=5)
-            # If tensors somehow still leak through, convert to CPU
-            # results = tuple(r.cpu() if isinstance(r, torch.Tensor) and r.is_cuda else r for r in results)
-            # except Exception as e:
-            #    print(f"❌ Failed to get results from queue: {e}")
-            #     return
+        # if not q.empty():
+        # try :
+        # results = q.get(timeout=5)
+        # If tensors somehow still leak through, convert to CPU
+        # results = tuple(r.cpu() if isinstance(r, torch.Tensor) and r.is_cuda else r for r in results)
+        # except Exception as e:
+        #    print(f"❌ Failed to get results from queue: {e}")
+        #     return
         if done.is_set():
             print("✅ Process finished (event received).")
             load_from_files(writer)
@@ -113,7 +113,7 @@ if __name__ == "__main__":
             complete_progress_bar()
         else:
             print("⚠️ Queue received data but done flag not set.")
-        #else:
+        # else:
         #    print("❌ Queue is empty. Process may have crashed before q.put()")
 
 
@@ -123,7 +123,7 @@ if __name__ == "__main__":
         q = ctx.Queue()
         done_event = ctx.Event()
 
-        p = Process(target=start_process, args=(q, done_event,writer))
+        p = Process(target=start_process, args=(q, done_event, writer))
         p.start()
         return p, q, done_event
 
@@ -141,7 +141,7 @@ if __name__ == "__main__":
         update_clock()
         p, q, done = start_thread(writer)
         # ✅ Run non-blocking monitor in background
-        threading.Thread(target=monitor_process, args=(p, q, done,writer), daemon=True).start()
+        threading.Thread(target=monitor_process, args=(p, q, done, writer), daemon=True).start()
 
 
     def complete_progress_bar():
@@ -183,7 +183,7 @@ if __name__ == "__main__":
             after_id = None
 
 
-    def start_process(q, done_event,writer):
+    def start_process(q, done_event, writer):
         global hh, mm, ss
         global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
             client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
@@ -530,12 +530,12 @@ if __name__ == "__main__":
         if p.exitcode == 0 and done_event.is_set():
             try:
                 # Try to get predictions and num_classes from queue if available
-                #if not q.empty():
-                    #results = q.get()
-                    # If tensors somehow still leak through, convert to CPU
-                    #results = tuple(r.cpu() if isinstance(r, torch.Tensor) and r.is_cuda else r for r in results)
+                # if not q.empty():
+                # results = q.get()
+                # If tensors somehow still leak through, convert to CPU
+                # results = tuple(r.cpu() if isinstance(r, torch.Tensor) and r.is_cuda else r for r in results)
 
-                    #global_acc, client_accs, personalised_acc, predictions, num_classes = results
+                # global_acc, client_accs, personalised_acc, predictions, num_classes = results
 
                 # Validate num_classes
                 if isinstance(num_classes, int) and num_classes > 0:
@@ -582,7 +582,7 @@ if __name__ == "__main__":
 
 
     def handle_fine_tune_losses():
-        p, q, done_event =  start_thread(writer)
+        p, q, done_event = start_thread(writer)
         p.join()  # Wait for process to finish
 
         if p.exitcode == 0 and done_event.is_set():
@@ -603,7 +603,7 @@ if __name__ == "__main__":
 
 
     def handle_plot_personalised_vs_global():
-        p, q, done_event =  start_thread(writer)
+        p, q, done_event = start_thread(writer)
         p.join()  # Wait for process to finish
 
         if p.exitcode == 0 and done_event.is_set():
