@@ -18,6 +18,7 @@ import time
 import tkinter as tk
 import traceback
 import warnings
+import multiprocessing as mp
 from multiprocessing import Process
 from tkinter import scrolledtext, messagebox
 from tkinter import ttk
@@ -49,33 +50,162 @@ warnings.filterwarnings("ignore", message=".*Redirects are currently not support
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
+
+personalized_models = None
+hierarchical_data = {}
+client_data_dict_test = {}
+hierarchical_data_test = {}
+client_accs = {}
+predictions = None
+num_classes = ""
+global_model = {}
+global_acc = 0.0
+personalised_acc = {}
+writer = None
+X_test = {}
+y_test = {}
+client_data_dict = {}
+y_pred = None
+selected_folder = ""
+start_time_label = None
+end_time_label = None
+hh = None
+mm = None
+ss = None
+after_id = ""
+start_time = float(time.time())
+
+def start_process(selected_folder,done_event):
+    global hh, mm, ss
+    global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
+        client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
+        predictions, num_classes
+
+    try:
+        log_path_str = LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date())
+        is_folder_exist(log_path_str)
+        setup_logging(log_path_str)
+        safe_log("============================================================================")
+        safe_log("======================Process Started=======================================")
+        safe_log("============================================================================")
+        # If fine-tuned model exists, load and return it
+        if not os.path.exists(GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date())):
+            # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
+            with named_timer("Preprocessing", writer, tag="Preprocessing"):
+                global X_test, y_test
+                # For deep learning:
+                X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(
+                    selected_folder, scaler_type='minmax')
+                # For classical ML:----Dont Delete the below comment...its for the different parameter different situations models
+                # X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(selected_folder,scaler_type='standard')
+            # safe_log("[1]Data preprocessing completed.")
+            # device = setup_device()
+            """
+            dirichlet_partition is a standard technique to simulate non-IID data — 
+            and it's commonly used in federated learning experiments to control the degree of 
+            heterogeneity among clients.
+            Smaller alpha → more skewed, clients have few classes dominating.
+            Larger alpha → more uniform data distribution across clients.
+            """
+            partition_output_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(n=get_today_date())
+            os.makedirs(os.path.dirname(partition_output_path), exist_ok=True)
+            xy_output_path = X_Y_TEST_PATH_TEMPLATE.substitute(n=get_today_date())
+            os.makedirs(os.path.dirname(xy_output_path), exist_ok=True)
+            result_output_path = RESULTS_PATH_TEMPLATE.substitute(n=get_today_date())
+            os.makedirs(os.path.dirname(result_output_path), exist_ok=True)
+            predictions_output_path = PREDICTIONS_PATH_TEMPLATE.substitute(n=get_today_date())
+            os.makedirs(os.path.dirname(predictions_output_path), exist_ok=True)
+
+            save_path = os.path.join(xy_output_path + "X_y_test.joblib")
+            dump((X_test, y_test), save_path)
+
+            with named_timer("dirichlet_partition", writer, tag="dirichlet_partition"):
+                client_data_dict, hierarchical_data = dirichlet_partition_with_devices(
+                    X_pretrain, y_pretrain, alpha=0.5, num_clients=NUM_CLIENTS,
+                    num_devices_per_client=NUM_DEVICES_PER_CLIENT
+                )
+            with open(partition_output_path + "partitioned_data.pkl", "wb") as f:
+                pickle.dump((client_data_dict, hierarchical_data), f)
+
+            with named_timer("dirichlet_partition_test", writer, tag="dirichlet_partition_test"):
+                client_data_dict_test, hierarchical_data_test = dirichlet_partition_with_devices(
+                    X_test, y_test, alpha=0.5, num_clients=NUM_CLIENTS,
+                    num_devices_per_client=NUM_DEVICES_PER_CLIENT
+                )
+
+            with open(partition_output_path + "partitioned_data_test.pkl", "wb") as f:
+                pickle.dump((client_data_dict_test, hierarchical_data_test), f)
+
+            # Step 2: Pretrain global model
+            with named_timer("pretrain_class", writer, tag="pretrain_class"):
+                pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=X_pretrain.shape[1],
+                               early_stop_patience=10)
+                # Step 3: Instantiate target model and train on device
+            with named_timer("target_class", writer, tag="target_class"):
+                def base_model_fn():
+                    return finetune_model(
+                        X_finetune,
+                        y_finetune,
+                        input_dim=X_finetune.shape[1],
+                        target_classes=len(np.unique(y_finetune)))
+
+            with named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
+                global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
+                                                                    y_test)
+
+            personalised_acc, client_accs, global_acc = evaluation(X_test, client_data_dict_test, global_model,
+                                                                   personalized_models, writer, y_test)
+            with open(result_output_path + "results.pkl", "wb") as f:
+                pickle.dump((personalised_acc, client_accs, global_acc), f)
+
+            predictions, num_classes = plot(global_model)
+            # Save predictions and num_classes
+            with open(predictions_output_path + "predictions.pkl", "wb") as f:
+                pickle.dump((predictions.cpu().numpy(), num_classes), f)
+
+        #######################  LOAD FROM FILES ##################################
+        else:
+            load_from_files(writer)
+
+        # Ensure client_accs and personalised_acc are CPU-safe (if they are tensors)
+        # client_accs = [acc.cpu() if hasattr(acc, 'cpu') else acc for acc in client_accs]
+        # if hasattr(personalised_acc, 'cpu'):
+        # personalised_acc = personalised_acc.cpu()
+
+        def to_cpu_deep(obj):
+            if isinstance(obj, torch.Tensor):
+                return obj.detach().cpu()
+            elif isinstance(obj, dict):
+                return {k: to_cpu_deep(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [to_cpu_deep(v) for v in obj]
+            elif isinstance(obj, tuple):
+                return tuple(to_cpu_deep(v) for v in obj)
+            else:
+                return obj
+
+        # results = (global_acc, client_accs, personalised_acc, predictions, num_classes)
+        # safe_results = to_cpu_deep(results)  # ✅ ONLY send CPU-safe objects
+        # q.put(safe_results)
+
+        # Signal completion
+        done_event.set()
+        time.sleep(1)  # Give monitor thread time to get the data
+
+        # safe_log("Sending to queue:")
+        # for i, item in enumerate(safe_results):
+        # safe_log(f" - Item {i}: {type(item)}, CUDA: {getattr(item, 'is_cuda', False)}")
+
+        safe_log("===========================================================================")
+        safe_log("===========================Process Completed===============================")
+        safe_log("============================================================================")
+
+    except Exception as e:
+        safe_log("Exception in thread:", e, level="error")
+        traceback.print_exc()
+
+
 if __name__ == "__main__":
-
-    personalized_models = None
-    hierarchical_data = {}
-    client_data_dict_test = {}
-    hierarchical_data_test = {}
-    client_accs = {}
-    predictions = None
-    num_classes = ""
-    global_model = {}
-    global_acc = 0.0
-    personalised_acc = {}
-    writer = None
-    X_test = {}
-    y_test = {}
-    client_data_dict = {}
-    y_pred = None
-    selected_folder = ""
-    start_time_label = None
-    end_time_label = None
-    hh = None
-    mm = None
-    ss = None
-    after_id = ""
-    start_time = float(time.time())
-
-
     def update_progress(value):
         root.after(0, lambda: _update_progress_ui(value))
 
@@ -86,9 +216,8 @@ if __name__ == "__main__":
         if value == 100:
             progress_label.config(text="✅ Training complete!")
 
-
-    def monitor_process(p, q, done, writer):
-        global num_classes, global_acc, client_accs, personalised_acc, predictions
+    def monitor_process(p, done):
+        global num_classes, global_acc, client_accs, personalised_acc, predictions,writer
         p.join()  # Wait for process to finish
         if p.exitcode != 0:
             print(f"❌ Process crashed with exit code {p.exitcode}")
@@ -104,11 +233,15 @@ if __name__ == "__main__":
         #     return
         if done.is_set():
             print("✅ Process finished (event received).")
+            writer = SummaryWriter(log_dir="runs/hdpftl_pipeline")
+            writer.add_scalar("Accuracy/Global", global_acc)
             load_from_files(writer)
             # global_acc, client_accs, personalised_acc,predictions, num_classes = results
             print("Global:", global_acc)
             print("Client:", client_accs)
             print("Personalised:", personalised_acc)
+            writer.close()
+
             stop_clock()
             complete_progress_bar()
         else:
@@ -116,32 +249,28 @@ if __name__ == "__main__":
         # else:
         #    print("❌ Queue is empty. Process may have crashed before q.put()")
 
-
-    def start_thread(writer):
+    def start_thread():
         ctx = mp.get_context("spawn")  # Use spawn instead of fork
 
         q = ctx.Queue()
         done_event = ctx.Event()
 
-        p = Process(target=start_process, args=(q, done_event, writer))
+        p = Process(target=start_process, args=(selected_folder,done_event,))
         p.start()
         return p, q, done_event
 
-
     def start_training():
-        global writer
         # Start infinite progress animation
         global start_time
         progress.config(mode='indeterminate')
         progress.start(10)
         progress_label.config(text="Training in progress...")
-        writer = SummaryWriter(log_dir="runs/hdpftl_pipeline")
 
         # Start long-running task in a new thread
         update_clock()
-        p, q, done = start_thread(writer)
+        p, q, done = start_thread()
         # ✅ Run non-blocking monitor in background
-        threading.Thread(target=monitor_process, args=(p, q, done, writer), daemon=True).start()
+        threading.Thread(target=monitor_process, args=(p, done), daemon=True).start()
 
 
     def complete_progress_bar():
@@ -182,137 +311,6 @@ if __name__ == "__main__":
             root.after_cancel(after_id)  # cancel the scheduled call
             after_id = None
 
-
-    def start_process(q, done_event, writer):
-        global hh, mm, ss
-        global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
-            client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
-            predictions, num_classes
-
-        try:
-            log_path_str = LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date())
-            is_folder_exist(log_path_str)
-            setup_logging(log_path_str)
-            safe_log("============================================================================")
-            safe_log("======================Process Started=======================================")
-            safe_log("============================================================================")
-            # If fine-tuned model exists, load and return it
-            if not os.path.exists(GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date())):
-                # download_dataset(INPUT_DATASET_PATH_2024, OUTPUT_DATASET_PATH_2024)
-                with named_timer("Preprocessing", writer, tag="Preprocessing"):
-                    global X_test, y_test
-                    # For deep learning:
-                    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(
-                        selected_folder, scaler_type='minmax')
-                    # For classical ML:----Dont Delete the below comment...its for the different parameter different situations models
-                    # X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(selected_folder,scaler_type='standard')
-                # safe_log("[1]Data preprocessing completed.")
-                # device = setup_device()
-                """
-                dirichlet_partition is a standard technique to simulate non-IID data — 
-                and it's commonly used in federated learning experiments to control the degree of 
-                heterogeneity among clients.
-                Smaller alpha → more skewed, clients have few classes dominating.
-                Larger alpha → more uniform data distribution across clients.
-                """
-                partition_output_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(n=get_today_date())
-                os.makedirs(os.path.dirname(partition_output_path), exist_ok=True)
-                xy_output_path = X_Y_TEST_PATH_TEMPLATE.substitute(n=get_today_date())
-                os.makedirs(os.path.dirname(xy_output_path), exist_ok=True)
-                result_output_path = RESULTS_PATH_TEMPLATE.substitute(n=get_today_date())
-                os.makedirs(os.path.dirname(result_output_path), exist_ok=True)
-                predictions_output_path = PREDICTIONS_PATH_TEMPLATE.substitute(n=get_today_date())
-                os.makedirs(os.path.dirname(predictions_output_path), exist_ok=True)
-
-                save_path = os.path.join(xy_output_path + "X_y_test.joblib")
-                dump((X_test, y_test), save_path)
-
-                with named_timer("dirichlet_partition", writer, tag="dirichlet_partition"):
-                    client_data_dict, hierarchical_data = dirichlet_partition_with_devices(
-                        X_pretrain, y_pretrain, alpha=0.5, num_clients=NUM_CLIENTS,
-                        num_devices_per_client=NUM_DEVICES_PER_CLIENT
-                    )
-                with open(partition_output_path + "partitioned_data.pkl", "wb") as f:
-                    pickle.dump((client_data_dict, hierarchical_data), f)
-
-                with named_timer("dirichlet_partition_test", writer, tag="dirichlet_partition_test"):
-                    client_data_dict_test, hierarchical_data_test = dirichlet_partition_with_devices(
-                        X_test, y_test, alpha=0.5, num_clients=NUM_CLIENTS,
-                        num_devices_per_client=NUM_DEVICES_PER_CLIENT
-                    )
-
-                with open(partition_output_path + "partitioned_data_test.pkl", "wb") as f:
-                    pickle.dump((client_data_dict_test, hierarchical_data_test), f)
-
-                # Step 2: Pretrain global model
-                with named_timer("pretrain_class", writer, tag="pretrain_class"):
-                    pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=X_pretrain.shape[1],
-                                   early_stop_patience=10)
-                    # Step 3: Instantiate target model and train on device
-                with named_timer("target_class", writer, tag="target_class"):
-                    def base_model_fn():
-                        return finetune_model(
-                            X_finetune,
-                            y_finetune,
-                            input_dim=X_finetune.shape[1],
-                            target_classes=len(np.unique(y_finetune)))
-
-                with named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
-                    global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
-                                                                        y_test)
-
-                personalised_acc, client_accs, global_acc = evaluation(X_test, client_data_dict_test, global_model,
-                                                                       personalized_models, writer, y_test)
-                with open(result_output_path + "results.pkl", "wb") as f:
-                    pickle.dump((personalised_acc, client_accs, global_acc), f)
-
-                predictions, num_classes = plot(global_model)
-                # Save predictions and num_classes
-                with open(predictions_output_path + "predictions.pkl", "wb") as f:
-                    pickle.dump((predictions.cpu().numpy(), num_classes), f)
-
-            #######################  LOAD FROM FILES ##################################
-            else:
-                load_from_files(writer)
-
-            # Ensure client_accs and personalised_acc are CPU-safe (if they are tensors)
-            # client_accs = [acc.cpu() if hasattr(acc, 'cpu') else acc for acc in client_accs]
-            # if hasattr(personalised_acc, 'cpu'):
-            # personalised_acc = personalised_acc.cpu()
-
-            def to_cpu_deep(obj):
-                if isinstance(obj, torch.Tensor):
-                    return obj.detach().cpu()
-                elif isinstance(obj, dict):
-                    return {k: to_cpu_deep(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [to_cpu_deep(v) for v in obj]
-                elif isinstance(obj, tuple):
-                    return tuple(to_cpu_deep(v) for v in obj)
-                else:
-                    return obj
-
-            # results = (global_acc, client_accs, personalised_acc, predictions, num_classes)
-            # safe_results = to_cpu_deep(results)  # ✅ ONLY send CPU-safe objects
-            # q.put(safe_results)
-
-            # Signal completion
-            done_event.set()
-            time.sleep(1)  # Give monitor thread time to get the data
-
-            # safe_log("Sending to queue:")
-            # for i, item in enumerate(safe_results):
-            # safe_log(f" - Item {i}: {type(item)}, CUDA: {getattr(item, 'is_cuda', False)}")
-
-            safe_log("===========================================================================")
-            safe_log("===========================Process Completed===============================")
-            safe_log("============================================================================")
-
-        except Exception as e:
-            safe_log("Exception in thread:", e, level="error")
-            traceback.print_exc()
-
-
     def load_from_files(writer):
         partition_output_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(n=get_today_date()) + "partitioned_data.pkl"
         partition_output_test_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(
@@ -337,7 +335,6 @@ if __name__ == "__main__":
             personalised_acc, client_accs, global_acc = pickle.load(f)
         with open(predictions_output_path, "rb") as f:
             predictions, num_classes = pickle.load(f)
-
 
     def evaluation(X_test, client_data_dict_test, global_model, personalized_models, writer, y_test):
         global personalised_acc, client_accs, global_acc
@@ -431,6 +428,7 @@ if __name__ == "__main__":
         text_area.config(state='disabled')  # Make read-only
 
 
+    mp.set_start_method("spawn")
     root = tk.Tk()
     root.title("HDPFTL Architecture")
 
@@ -504,7 +502,7 @@ if __name__ == "__main__":
 
 
     def handle_client_label_distribution():
-        p, q, done_event = start_thread(writer)
+        p, q, done_event = start_thread()
         p.join()
         if p.exitcode == 0 and done_event.is_set():
             plot_class_distribution_per_client(client_data_dict)

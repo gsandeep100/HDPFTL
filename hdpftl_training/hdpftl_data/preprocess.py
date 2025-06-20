@@ -312,9 +312,9 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.model_selection import train_test_split
 
 
-def preprocess_data(path, writer=None, scaler_type='minmax'):
+def preprocess_data(selected_folder, writer=None, scaler_type='minmax'):
     with named_timer("load_and_label_all", writer, tag="load_and_label_all"):
-        df = load_and_label_all(os.path.join(OUTPUT_DATASET_ALL_DATA, path))
+        df = load_and_label_all(os.path.join(OUTPUT_DATASET_ALL_DATA, selected_folder))
 
     features = df.columns.difference(['Label'])
     df[features] = df[features].astype(np.float32)
