@@ -158,64 +158,106 @@ def safe_smote(X, y):
     return smote.fit_resample(X, y)
 
 
-def load_and_label_all(folder_path, benign_keywords=['benign'], attack_keywords=None):
-    all_files = glob(os.path.join(folder_path, "*.csv")) + glob(os.path.join(folder_path, "*.CSV"))
+def assign_labels(
+    df,
+    filename,
+    benign_keywords=None,
+    attack_keywords=None,
+    multiclass_keywords=None,
+    manual_label_map=None
+):
+    """
+    Assigns 'Label' column to df based on:
+    - Existing column (re-encodes it)
+    - Multi-class keyword mapping (if provided)
+    - Binary classification (fallback)
+    - Manual mapping (by filename)
+    """
+    filename_lower = os.path.basename(filename).lower()
 
-    if not all_files:
+    # If label already present → encode
+    if 'Label' in df.columns:
+        df['Label'] = df['Label'].astype(str).str.strip()
+        label_encoder = LabelEncoder()
+        df['Label'] = label_encoder.fit_transform(df['Label'])
+        safe_log(f"Label mapping for {filename}: {dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))}")
+        return df
+
+    # --- Multi-class Mapping ---
+    if multiclass_keywords:
+        for label_value, keywords in multiclass_keywords.items():
+            if any(kw in filename_lower for kw in keywords):
+                df['Label'] = label_value
+                break
+
+    # --- Binary Fallback ---
+    if 'Label' not in df.columns:
+        if benign_keywords and any(kw in filename_lower for kw in benign_keywords):
+            df['Label'] = 0
+        elif attack_keywords and any(kw in filename_lower for kw in attack_keywords):
+            df['Label'] = 1
+
+    # --- Manual Mapping by Filename ---
+    if 'Label' not in df.columns and manual_label_map:
+        label = manual_label_map.get(filename_lower)
+        if label is not None:
+            df['Label'] = label
+
+    # --- If still not labeled: mark as unknown (NaN) ---
+    if 'Label' not in df.columns:
+        df['Label'] = np.nan
+        safe_log(f"⚠️ Could not infer label for: {filename_lower}")
+
+    # Optional encoding for consistency
+    if df['Label'].dtype == object:
+        label_encoder = LabelEncoder()
+        df['Label'] = label_encoder.fit_transform(df['Label'].astype(str))
+        safe_log(f"Encoded label mapping for {filename}: {dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))}")
+
+    return df
+
+def load_and_label_all(
+    folder_path,
+    benign_keywords=None,
+    attack_keywords=None,
+    multiclass_keywords=None,
+    manual_label_map=None
+):
+    csv_files = glob(os.path.join(folder_path, "*.csv")) + glob(os.path.join(folder_path, "*.CSV"))
+    if not csv_files:
         raise FileNotFoundError(f"No CSV files found in: {os.path.abspath(folder_path)}")
 
-    safe_log(f"Found {len(all_files)} CSV files in '{folder_path}'")
-    combined_df = []
+    safe_log(f"Found {len(csv_files)} CSV files in '{folder_path}'")
+    all_data = []
 
-    for count, file in enumerate(all_files, start=1):
-        safe_log(f"Count: {count}, Processing File: {file}")
-        df = pd.read_csv(file)
-        df.columns = df.columns.str.strip()  # Clean up column names
-        filename = os.path.basename(file).lower()
+    for idx, file in enumerate(csv_files, start=1):
+        safe_log(f"[{idx}] Loading: {file}")
+        try:
+            df = pd.read_csv(file)
+        except Exception as e:
+            safe_log(f"⚠️ Error reading {file}: {e}")
+            continue
 
-        # --- Label handling ---
-        if 'Label' not in df.columns:
-            if any(kw in filename for kw in benign_keywords):
-                df['Label'] = 0
-            elif attack_keywords and any(kw in filename for kw in attack_keywords):
-                df['Label'] = 1
-            else:
-                df['Label'] = 1  # Default to attack if unclear
-        else:
-            # Clean label strings
-            df['Label'] = df['Label'].astype(str).str.strip()
+        df.columns = df.columns.str.strip()
+        df = assign_labels(df, file, benign_keywords, attack_keywords, multiclass_keywords, manual_label_map)
 
-            # Encode labels into integers
-            label_encoder = LabelEncoder()
-            df['Label'] = label_encoder.fit_transform(df['Label'])
-
-            # Optional: Save label mapping
-            label_map = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
-            safe_log(f"Label mapping: {label_map}")
-
-        # --- Clean data ---
-        pd.set_option('future.no_silent_downcasting', True)
+        # Clean
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
         df.dropna(inplace=True)
         df.drop_duplicates(inplace=True)
+        df.drop(['Flow ID', 'Source IP', 'Destination IP', 'Timestamp'], axis=1, inplace=True, errors='ignore')
 
-        df.drop(['Flow ID', 'Source IP', 'Destination IP', 'Timestamp'], axis=1, inplace=True, errors="ignore")
-
-        # Only numeric features + Label
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if 'Label' not in numeric_cols:
             numeric_cols.append('Label')
         df = df[numeric_cols].dropna(axis=1)
 
-        combined_df.append(df)
+        all_data.append(df)
         del df
         gc.collect()
 
-    final_df = pd.concat(combined_df, ignore_index=True)
-
-    del combined_df
-    gc.collect()
-
+    final_df = pd.concat(all_data, ignore_index=True)
+    safe_log(f"Final shape: {final_df.shape}")
     return final_df
 
 
