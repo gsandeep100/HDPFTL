@@ -75,6 +75,37 @@ ss = None
 after_id = ""
 start_time = float(time.time())
 
+
+def load_from_files(writer):
+    partition_output_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(n=get_today_date()) + "partitioned_data.pkl"
+    partition_output_test_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(
+        n=get_today_date()) + "partitioned_data_test.pkl"
+    xy_output_path = X_Y_TEST_PATH_TEMPLATE.substitute(n=get_today_date()) + "X_y_test.joblib"
+    result_output_path = RESULTS_PATH_TEMPLATE.substitute(n=get_today_date()) + "results.pkl"
+    predictions_output_path = PREDICTIONS_PATH_TEMPLATE.substitute(n=get_today_date()) + "predictions.pkl"
+
+    global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
+        client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
+        predictions, num_classes
+    with named_timer("Evaluate Global Model From File", writer, tag="EvalFromFile"):
+        global_model = evaluate_global_model_fromfile()
+    with named_timer("Evaluate Personalized Models From File", writer, tag="PersonalizedEval"):
+        personalized_models = load_personalized_models_fromfile()
+    X_test, y_test = load(xy_output_path)
+    with open(partition_output_path, "rb") as f:
+        client_data_dict, hierarchical_data = pickle.load(f)
+    with open(partition_output_test_path, "rb") as f:
+        client_data_dict_test, hierarchical_data_test = pickle.load(f)
+    with open(result_output_path, "rb") as f:
+        personalised_acc, client_accs, global_acc = pickle.load(f)
+    with open(predictions_output_path, "rb") as f:
+        predictions, num_classes = pickle.load(f)
+    return  global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
+        client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
+        predictions, num_classes
+
+
+
 def start_process(selected_folder,done_event):
     global hh, mm, ss
     global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
@@ -171,7 +202,7 @@ def start_process(selected_folder,done_event):
         # client_accs = [acc.cpu() if hasattr(acc, 'cpu') else acc for acc in client_accs]
         # if hasattr(personalised_acc, 'cpu'):
         # personalised_acc = personalised_acc.cpu()
-
+        """
         def to_cpu_deep(obj):
             if isinstance(obj, torch.Tensor):
                 return obj.detach().cpu()
@@ -183,6 +214,7 @@ def start_process(selected_folder,done_event):
                 return tuple(to_cpu_deep(v) for v in obj)
             else:
                 return obj
+        """
 
         # results = (global_acc, client_accs, personalised_acc, predictions, num_classes)
         # safe_results = to_cpu_deep(results)  # ✅ ONLY send CPU-safe objects
@@ -218,6 +250,10 @@ if __name__ == "__main__":
 
     def monitor_process(p, done):
         global num_classes, global_acc, client_accs, personalised_acc, predictions,writer
+        global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
+        client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
+        predictions, num_classes
+
         p.join()  # Wait for process to finish
         if p.exitcode != 0:
             print(f"❌ Process crashed with exit code {p.exitcode}")
@@ -235,7 +271,9 @@ if __name__ == "__main__":
             print("✅ Process finished (event received).")
             writer = SummaryWriter(log_dir="runs/hdpftl_pipeline")
             writer.add_scalar("Accuracy/Global", global_acc)
-            load_from_files(writer)
+            global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
+                client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
+                predictions, num_classes = load_from_files(writer)
             # global_acc, client_accs, personalised_acc,predictions, num_classes = results
             print("Global:", global_acc)
             print("Client:", client_accs)
@@ -310,31 +348,6 @@ if __name__ == "__main__":
         if after_id is not None:
             root.after_cancel(after_id)  # cancel the scheduled call
             after_id = None
-
-    def load_from_files(writer):
-        partition_output_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(n=get_today_date()) + "partitioned_data.pkl"
-        partition_output_test_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(
-            n=get_today_date()) + "partitioned_data_test.pkl"
-        xy_output_path = X_Y_TEST_PATH_TEMPLATE.substitute(n=get_today_date()) + "X_y_test.joblib"
-        result_output_path = RESULTS_PATH_TEMPLATE.substitute(n=get_today_date()) + "results.pkl"
-        predictions_output_path = PREDICTIONS_PATH_TEMPLATE.substitute(n=get_today_date()) + "predictions.pkl"
-
-        global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
-            client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
-            predictions, num_classes
-        with named_timer("Evaluate Global Model From File", writer, tag="EvalFromFile"):
-            global_model = evaluate_global_model_fromfile()
-        with named_timer("Evaluate Personalized Models From File", writer, tag="PersonalizedEval"):
-            personalized_models = load_personalized_models_fromfile()
-        X_test, y_test = load(xy_output_path)
-        with open(partition_output_path, "rb") as f:
-            client_data_dict, hierarchical_data = pickle.load(f)
-        with open(partition_output_test_path, "rb") as f:
-            client_data_dict_test, hierarchical_data_test = pickle.load(f)
-        with open(result_output_path, "rb") as f:
-            personalised_acc, client_accs, global_acc = pickle.load(f)
-        with open(predictions_output_path, "rb") as f:
-            predictions, num_classes = pickle.load(f)
 
     def evaluation(X_test, client_data_dict_test, global_model, personalized_models, writer, y_test):
         global personalised_acc, client_accs, global_acc
