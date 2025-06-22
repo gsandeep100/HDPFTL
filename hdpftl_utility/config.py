@@ -136,10 +136,7 @@ NUM_FEDERATED_ROUND = 5  # or 50 or 100
 # NUM_TRAIN_ON_DEVICE = 10  # or 50 or 100
 NUM_CLASSES = 2  # Suppose you pretrained with 5 classes
 GLOBAL_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/global_model.pth")
-X_Y_TEST_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
-PARTITIONED_DATA_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
-RESULTS_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
-PREDICTIONS_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
+TRAINED_MODEL_FOLDER_PATH = Template("./hdpftl_trained_models/${n}/")
 
 FINETUNE_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/fine_tuned_tabular_model.pth")
 PRE_MODEL_FOLDER_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")

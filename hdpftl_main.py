@@ -13,12 +13,12 @@
 import multiprocessing as mp
 import os
 import pickle
+import shutil
 import threading
 import time
 import tkinter as tk
 import traceback
 import warnings
-import multiprocessing as mp
 from multiprocessing import Process
 from tkinter import scrolledtext, messagebox
 from tkinter import ttk
@@ -27,7 +27,6 @@ import numpy as np
 import torch
 from joblib import dump, load
 from torch.utils.tensorboard import SummaryWriter
-from urllib3.filepost import writer
 
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model, evaluate_global_model_fromfile
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client, \
@@ -40,8 +39,7 @@ from hdpftl_training.hdpftl_pre_training.finetune_model import finetune_model
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_utility.config import EPOCH_FILE_FINE, EPOCH_FILE_PRE, NUM_CLIENTS, \
     NUM_DEVICES_PER_CLIENT, GLOBAL_MODEL_PATH_TEMPLATE, OUTPUT_DATASET_ALL_DATA, LOGS_DIR_TEMPLATE, \
-    X_Y_TEST_PATH_TEMPLATE, PARTITIONED_DATA_PATH_TEMPLATE, \
-    RESULTS_PATH_TEMPLATE, PREDICTIONS_PATH_TEMPLATE
+    TRAINED_MODEL_FOLDER_PATH, EPOCH_DIR
 from hdpftl_utility.log import setup_logging, safe_log
 from hdpftl_utility.utils import named_timer, setup_device, get_output_folders, get_today_date, is_folder_exist
 
@@ -49,7 +47,6 @@ warnings.filterwarnings("ignore", message=".*Redirects are currently not support
 
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-
 
 personalized_models = None
 hierarchical_data = {}
@@ -61,7 +58,7 @@ num_classes = ""
 global_model = {}
 global_acc = 0.0
 personalised_acc = {}
-writer = None
+writer = SummaryWriter(log_dir="runs/hdpftl_pipeline")
 X_test = {}
 y_test = {}
 client_data_dict = {}
@@ -74,22 +71,74 @@ mm = None
 ss = None
 after_id = ""
 start_time = float(time.time())
+is_training = None
+training_process: Process | None = None
+done_flag = None
 
 
-def load_from_files(writer):
-    partition_output_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(n=get_today_date()) + "partitioned_data.pkl"
-    partition_output_test_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(
+def evaluation(X_test_param, client_data_dict_test_param, global_model_param, personalized_models_param, writer_param,
+               y_test_param):
+    global personalised_acc, client_accs, global_acc
+    result_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date())
+    os.makedirs(os.path.dirname(result_output_path), exist_ok=True)
+    predictions_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date())
+    os.makedirs(os.path.dirname(predictions_output_path), exist_ok=True)
+
+    # Evaluate
+    # global_accs = evaluate_global_model(global_model, X_test, y_test, client_partitions_test)
+    # personalized_accs = evaluate_personalized_models_per_client(personalized_models, X_test, y_test, client_partitions_test)
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    #######################  EVALUATION  #######################
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    """During evaluation: Use  global model for generalization tests 
+            Use personalized models to report per - client performance"""
+    with named_timer("Evaluate Personalized Models", writer_param, tag="PersonalizedEval"):
+        personalised_acc = evaluate_personalized_models_per_client(personalized_models_param,
+                                                                   client_data_dict_test_param)
+    with named_timer("Evaluate Personalized Models Per Client", writer, tag="PersonalizedEvalperClient"):
+        client_accs = evaluate_per_client(global_model_param, client_data_dict_test_param)
+    with named_timer("Evaluate Global Model", writer, tag="GlobalEval"):
+        global_acc = evaluate_global_model(global_model_param, X_test_param, y_test_param)
+
+        with open(result_output_path + "results.pkl", "wb") as f:
+            pickle.dump((personalised_acc, client_accs, global_acc), f)
+
+        prediction, num_of_classes = plot(global_model)
+        # Save predictions and num_classes
+        with open(predictions_output_path + "predictions.pkl", "wb") as f:
+            pickle.dump((prediction.cpu().numpy(), num_of_classes), f)
+
+    return personalised_acc, client_accs, global_acc
+
+
+def plot(global_model_param):
+    global predictions, num_classes
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    #######################  PLOT  #############################
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    with torch.no_grad():
+        X_test_tensor = torch.from_numpy(X_test).float().to(setup_device())
+        outputs = global_model_param(X_test_tensor)
+        _, predictions = torch.max(outputs, 1)
+    num_classes = int(max(y_test.max().item(), predictions.cpu().max().item()) + 1)
+    safe_log("Number of classes:::", num_classes)
+    return predictions, num_classes
+
+
+def load_from_files(writer_param):
+    partition_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "partitioned_data.pkl"
+    partition_output_test_path = TRAINED_MODEL_FOLDER_PATH.substitute(
         n=get_today_date()) + "partitioned_data_test.pkl"
-    xy_output_path = X_Y_TEST_PATH_TEMPLATE.substitute(n=get_today_date()) + "X_y_test.joblib"
-    result_output_path = RESULTS_PATH_TEMPLATE.substitute(n=get_today_date()) + "results.pkl"
-    predictions_output_path = PREDICTIONS_PATH_TEMPLATE.substitute(n=get_today_date()) + "predictions.pkl"
+    xy_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "X_y_test.joblib"
+    result_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "results.pkl"
+    predictions_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "predictions.pkl"
 
     global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
         client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
         predictions, num_classes
-    with named_timer("Evaluate Global Model From File", writer, tag="EvalFromFile"):
+    with named_timer("Evaluate Global Model From File", writer_param, tag="EvalFromFile"):
         global_model = evaluate_global_model_fromfile()
-    with named_timer("Evaluate Personalized Models From File", writer, tag="PersonalizedEval"):
+    with named_timer("Evaluate Personalized Models From File", writer_param, tag="PersonalizedEval"):
         personalized_models = load_personalized_models_fromfile()
     X_test, y_test = load(xy_output_path)
     with open(partition_output_path, "rb") as f:
@@ -100,20 +149,19 @@ def load_from_files(writer):
         personalised_acc, client_accs, global_acc = pickle.load(f)
     with open(predictions_output_path, "rb") as f:
         predictions, num_classes = pickle.load(f)
-    return  global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
+    return global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
         client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
         predictions, num_classes
 
 
-
-def start_process(selected_folder,done_event):
+def start_process(selected_folder_param, done_event):
     global hh, mm, ss
     global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
         client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
         predictions, num_classes
 
     try:
-        log_path_str = LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date())
+        log_path_str = LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder_param, date=get_today_date())
         is_folder_exist(log_path_str)
         setup_logging(log_path_str)
         safe_log("============================================================================")
@@ -126,7 +174,7 @@ def start_process(selected_folder,done_event):
                 global X_test, y_test
                 # For deep learning:
                 X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(
-                    selected_folder, scaler_type='minmax')
+                    selected_folder_param, scaler_type='minmax')
                 # For classical ML:----Dont Delete the below comment...its for the different parameter different situations models
                 # X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(selected_folder,scaler_type='standard')
             # safe_log("[1]Data preprocessing completed.")
@@ -138,14 +186,10 @@ def start_process(selected_folder,done_event):
             Smaller alpha → more skewed, clients have few classes dominating.
             Larger alpha → more uniform data distribution across clients.
             """
-            partition_output_path = PARTITIONED_DATA_PATH_TEMPLATE.substitute(n=get_today_date())
+            partition_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date())
             os.makedirs(os.path.dirname(partition_output_path), exist_ok=True)
-            xy_output_path = X_Y_TEST_PATH_TEMPLATE.substitute(n=get_today_date())
+            xy_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date())
             os.makedirs(os.path.dirname(xy_output_path), exist_ok=True)
-            result_output_path = RESULTS_PATH_TEMPLATE.substitute(n=get_today_date())
-            os.makedirs(os.path.dirname(result_output_path), exist_ok=True)
-            predictions_output_path = PREDICTIONS_PATH_TEMPLATE.substitute(n=get_today_date())
-            os.makedirs(os.path.dirname(predictions_output_path), exist_ok=True)
 
             save_path = os.path.join(xy_output_path + "X_y_test.joblib")
             dump((X_test, y_test), save_path)
@@ -186,14 +230,6 @@ def start_process(selected_folder,done_event):
 
             personalised_acc, client_accs, global_acc = evaluation(X_test, client_data_dict_test, global_model,
                                                                    personalized_models, writer, y_test)
-            with open(result_output_path + "results.pkl", "wb") as f:
-                pickle.dump((personalised_acc, client_accs, global_acc), f)
-
-            predictions, num_classes = plot(global_model)
-            # Save predictions and num_classes
-            with open(predictions_output_path + "predictions.pkl", "wb") as f:
-                pickle.dump((predictions.cpu().numpy(), num_classes), f)
-
         #######################  LOAD FROM FILES ##################################
         else:
             load_from_files(writer)
@@ -248,15 +284,20 @@ if __name__ == "__main__":
         if value == 100:
             progress_label.config(text="✅ Training complete!")
 
-    def monitor_process(p, done):
-        global num_classes, global_acc, client_accs, personalised_acc, predictions,writer
+
+    def monitor_process(p, q, done_event):
+        global num_classes, global_acc, client_accs, personalised_acc, predictions, writer, is_training
         global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
-        client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
-        predictions, num_classes
+            client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
+            predictions, num_classes
 
         p.join()  # Wait for process to finish
         if p.exitcode != 0:
             print(f"❌ Process crashed with exit code {p.exitcode}")
+            is_training = False
+            start_button.config(text="Start Training")
+            stop_clock()
+            complete_progress_bar()
             return
 
         # if not q.empty():
@@ -267,9 +308,8 @@ if __name__ == "__main__":
         # except Exception as e:
         #    print(f"❌ Failed to get results from queue: {e}")
         #     return
-        if done.is_set():
+        if done_event.is_set():
             print("✅ Process finished (event received).")
-            writer = SummaryWriter(log_dir="runs/hdpftl_pipeline")
             writer.add_scalar("Accuracy/Global", global_acc)
             global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
                 client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
@@ -279,7 +319,8 @@ if __name__ == "__main__":
             print("Client:", client_accs)
             print("Personalised:", personalised_acc)
             writer.close()
-
+            is_training = False
+            start_button.config(text="Start Training")
             stop_clock()
             complete_progress_bar()
         else:
@@ -287,28 +328,51 @@ if __name__ == "__main__":
         # else:
         #    print("❌ Queue is empty. Process may have crashed before q.put()")
 
+
     def start_thread():
         ctx = mp.get_context("spawn")  # Use spawn instead of fork
 
         q = ctx.Queue()
         done_event = ctx.Event()
 
-        p = Process(target=start_process, args=(selected_folder,done_event,))
+        p = Process(target=start_process, args=(selected_folder, done_event,))
         p.start()
         return p, q, done_event
 
+
     def start_training():
+        global is_training, start_time
+        global training_process, done_flag
         # Start infinite progress animation
-        global start_time
+        if is_training:
+            if training_process and training_process.is_alive():
+                print("⚠️ Terminating training process...")
+                training_process.terminate()
+                training_process.join()
+                start_time_label.config(text="Start Time: --:--:--")
+                end_time_label.config(text="End Time: --:--:--")
+                time_taken_label.config(text="Total Time: --:--:--")
+
+            is_training = False
+            start_button.config(text="Start Training")
+            stop_clock()
+            complete_progress_bar()
+            writer.close()
+            shutil.rmtree(LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date()))
+            shutil.rmtree(EPOCH_DIR)
+            shutil.rmtree(TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()))
+            return
+
+        is_training = True
         progress.config(mode='indeterminate')
         progress.start(10)
         progress_label.config(text="Training in progress...")
-
+        start_button.config(text="Stop Training")
         # Start long-running task in a new thread
         update_clock()
-        p, q, done = start_thread()
+        training_process, q, done_event = start_thread()
         # ✅ Run non-blocking monitor in background
-        threading.Thread(target=monitor_process, args=(p, done), daemon=True).start()
+        threading.Thread(target=monitor_process, args=(training_process, q, done_event), daemon=True).start()
 
 
     def complete_progress_bar():
@@ -322,7 +386,7 @@ if __name__ == "__main__":
             hh, mm, ss = convert_to_hms(mins, secs)
 
             # total_time_taken_label.config(text=f"Total Time: {hh}H:{mm}M:{ss}S")
-            time_taken_label.config(text=f"📂 {hh}Hours:{mm}Minutes:{ss}seconds")
+            time_taken_label.config(text=f"Total Time: {hh}Hours:{mm}Minutes:{ss}seconds")
 
             current_time = time.strftime('%H:%M:%S')
             end_time_label.config(text=f"End Time: {current_time}")
@@ -349,25 +413,6 @@ if __name__ == "__main__":
             root.after_cancel(after_id)  # cancel the scheduled call
             after_id = None
 
-    def evaluation(X_test, client_data_dict_test, global_model, personalized_models, writer, y_test):
-        global personalised_acc, client_accs, global_acc
-
-        # Evaluate
-        # global_accs = evaluate_global_model(global_model, X_test, y_test, client_partitions_test)
-        # personalized_accs = evaluate_personalized_models_per_client(personalized_models, X_test, y_test, client_partitions_test)
-        """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-        #######################  EVALUATION  #######################
-        """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-        """During evaluation: Use  global model for generalization tests 
-                Use personalized models to report per - client performance"""
-        with named_timer("Evaluate Personalized Models", writer, tag="PersonalizedEval"):
-            personalised_acc = evaluate_personalized_models_per_client(personalized_models, client_data_dict_test)
-        with named_timer("Evaluate Personalized Models Per Client", writer, tag="PersonalizedEvalperClient"):
-            client_accs = evaluate_per_client(global_model, client_data_dict_test)
-        with named_timer("Evaluate Global Model", writer, tag="GlobalEval"):
-            global_acc = evaluate_global_model(global_model, X_test, y_test)
-        return personalised_acc, client_accs, global_acc
-
 
     """
         safe_log("[12] Cross Validate Model...")
@@ -378,20 +423,6 @@ if __name__ == "__main__":
         with named_timer("Cross Validate Model with F1 Score", writer, tag="ValidateModelF1"):
             fold_results = cross_validate_model_advanced(X_test, y_test, k=5, num_epochs=20, early_stopping=True)
     """
-
-
-    def plot(global_model):
-        global predictions, num_classes
-        """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-        #######################  PLOT  #############################
-        """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-        with torch.no_grad():
-            X_test_tensor = torch.from_numpy(X_test).float().to(setup_device())
-            outputs = global_model(X_test_tensor)
-            _, predictions = torch.max(outputs, 1)
-        num_classes = int(max(y_test.max().item(), predictions.cpu().max().item()) + 1)
-        safe_log("Number of classes:::", num_classes)
-        return predictions, num_classes
 
 
     def convert_to_hms(mins, secs):
@@ -470,9 +501,6 @@ if __name__ == "__main__":
     view_log_btn = tk.Button(top_frame, text="View Log", command=open_log_window, width=10, state="disabled")
     view_log_btn.grid(row=0, column=2, padx=10)
 
-    time_taken_label = tk.Label(top_frame, font=('Arial', 12), fg='red', text="Total Time: --:--:--")
-    time_taken_label.grid(row=0, column=4, padx=10)
-
     # Frame for listbox and scrollbar
     frame = tk.Frame(root)
     frame.pack(fill="both", expand=True, padx=20, pady=10)
@@ -535,7 +563,7 @@ if __name__ == "__main__":
 
     def handle_confusion_matrix():
         global num_classes, global_acc, client_accs, personalised_acc, predictions
-        p, q, done_event = start_thread(writer)
+        p, q, done_event = start_thread()
         p.join()  # Wait for the process to complete
 
         if p.exitcode == 0 and done_event.is_set():
@@ -572,7 +600,7 @@ if __name__ == "__main__":
 
 
     def handle_pre_epoch_losses():
-        p, q, done_event = start_thread(writer)
+        p, q, done_event = start_thread()
         p.join()  # Wait for process to finish
 
         if p.exitcode == 0 and done_event.is_set():
@@ -593,7 +621,7 @@ if __name__ == "__main__":
 
 
     def handle_fine_tune_losses():
-        p, q, done_event = start_thread(writer)
+        p, q, done_event = start_thread()
         p.join()  # Wait for process to finish
 
         if p.exitcode == 0 and done_event.is_set():
@@ -614,7 +642,7 @@ if __name__ == "__main__":
 
 
     def handle_plot_personalised_vs_global():
-        p, q, done_event = start_thread(writer)
+        p, q, done_event = start_thread()
         p.join()  # Wait for process to finish
 
         if p.exitcode == 0 and done_event.is_set():
@@ -635,7 +663,7 @@ if __name__ == "__main__":
 
 
     def handle_personalized_vs_global_bar():
-        p, q, done_event = start_thread(writer)
+        p, q, done_event = start_thread()
         p.join()  # Wait for process to finish
 
         if p.exitcode == 0 and done_event.is_set():
@@ -656,7 +684,7 @@ if __name__ == "__main__":
 
 
     def handle_cross_validation():
-        p, q, done_event = start_thread(writer)
+        p, q, done_event = start_thread()
         p.join()  # Wait for the subprocess to finish
 
         if p.exitcode == 0 and done_event.is_set():
@@ -732,6 +760,9 @@ if __name__ == "__main__":
     # End time label
     clock_label_end = tk.Label(bottom_frame, font=('Arial', 12), fg='red', text="End Time: --:--:--")
     clock_label_end.grid(row=0, column=2, padx=10)
+
+    time_taken_label = tk.Label(top_frame, font=('Arial', 12), fg='red', text="Total Time: --:--:--")
+    time_taken_label.grid(row=0, column=4, padx=10)
 
     start_time_label = clock_label_start
     end_time_label = clock_label_end
