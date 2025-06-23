@@ -17,6 +17,7 @@ import shutil
 import threading
 import time
 import tkinter as tk
+import platform
 from tkinter import ttk
 
 import traceback
@@ -906,8 +907,16 @@ if __name__ == "__main__":
     def on_enter(e):
         e.widget.config(bg="#005f73", fg="purple", cursor="hand2")
 
+
     def on_leave(e):
-        default_bg = e.widget.master.cget("bg")
+        system = platform.system()
+        if system == "Windows":
+            default_bg = "SystemButtonFace"
+        elif system == "Darwin":  # macOS
+            default_bg = "#ececec"
+        else:  # Linux (Pop!_OS etc)
+            default_bg = "#f0f0f0"
+
         e.widget.config(bg=default_bg, fg="black", cursor="arrow")
 
 
