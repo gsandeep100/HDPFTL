@@ -11,22 +11,22 @@
 -------------------------------------------------
 """
 import multiprocessing as mp
-import os
 import pickle
 import platform
-import re
 import shutil
 import threading
 import time
-import tkinter as tk
 import traceback
 import warnings
 from multiprocessing import Process
 from tkinter import scrolledtext, messagebox, font
-from tkinter import ttk
-
 import numpy as np
 import torch
+import os
+import re
+import tkinter as tk
+from tkinter import ttk, filedialog
+import pandas as pd
 from joblib import dump, load
 from torch.utils.tensorboard import SummaryWriter
 
@@ -78,6 +78,7 @@ is_training = None
 training_process: Process | None = None
 done_flag = None
 result_buttons = {}
+loaded_files = []
 # Global config dictionary to hold parameters
 config_params = {
     "BATCH_SIZE": 5,
@@ -89,28 +90,108 @@ config_params = {
 }
 
 
+def sync_config_params(config_params):
+    """
+    Update config_params dict values from config module attributes if they exist.
+    Keeps existing value if attribute not found.
+    """
+    for key in config_params.keys():
+        if hasattr(config, key):
+            config_params[key] = getattr(config, key)
+    return config_params
+
+
+config_params = sync_config_params(config_params)
+
+def get_os():
+    os_name = platform.system()
+    if os_name == "Darwin":
+        return "macOS"
+    elif os_name == "Linux":
+        # Further check if it's Pop!_OS
+        try:
+            with open("/etc/os-release") as f:
+                release_info = f.read()
+                if "Pop!_OS" in release_info:
+                    return "Pop!_OS"
+                elif "Ubuntu" in release_info:
+                    return "Ubuntu"
+                else:
+                    return "Other Linux"
+        except FileNotFoundError:
+            return "Linux (unknown distro)"
+    else:
+        return os_name
+
 def open_settings_window():
-    settings_win = tk.Toplevel(root)
-    settings_win.title("Training Settings")
-    # Remove fixed geometry for auto-sizing
-    # settings_win.geometry("350x350")
-    # settings_win.resizable(False, False)
-    settings_win.minsize(300, 200)
-    settings_win.resizable(True, False)
+    sync_config_params(config_params)
+    # ----------- Select Function -----------
+    def select_test_csv():
+        file_paths = filedialog.askopenfilenames(
+            title="Select One or More Test CSV Files",
+            filetypes=[("CSV Files", "*.csv")],
+            defaultextension=".csv"
+        )
+        if file_paths:
+            config.TEST_CSV_PATHS = file_paths
+            config.test_dfs = []
+            csv_listbox.delete(0, tk.END)  # Clear previous list
 
-    settings_win.columnconfigure(1, weight=1)  # Make entry column expand
+            for path in file_paths:
+                try:
+                    df = pd.read_csv(path)
+                    config.test_dfs.append(df)
+                    filename = path
+                    loaded_files.append(filename)
+                    csv_listbox.insert(tk.END, filename)  # Show in list
+                except Exception as e:
+                    print(f"Error loading {path}:", e)
 
-    entries = {}
+            if loaded_files:
+                csv_label.config(text=f"Loaded {len(loaded_files)} file(s)", foreground="green")
+                #print(f"{len(loaded_files)} CSV files loaded.")
+            else:
+                csv_label.config(text="No valid CSVs loaded", foreground="red")
+    # ----------- Load Function -----------
+    def load_previous_test_csvs():
+        global loaded_files
 
-    for idx, (key, val) in enumerate(config_params.items()):
-        ttk.Label(settings_win, text=f"{key}:").grid(row=idx, column=0, padx=10, pady=8, sticky="w")
-        entry = ttk.Entry(settings_win)
-        entry.grid(row=idx, column=1, padx=10, pady=8, sticky="ew")
-        entry.insert(0, str(val))
-        entries[key] = entry
+        """
+        Autoload previously selected test CSV files stored in config.TEST_CSV_PATHS.
+        Loaded DataFrames are stored in config.test_dfs.
+        Also updates the listbox and label in the GUI.
+        """
+        config_path = os.path.join(os.path.dirname(__file__), "hdpftl_utility/config.py")
 
+        if not hasattr(config, "TEST_CSV_PATHS") or not config.TEST_CSV_PATHS:
+            print("No TEST_CSV_PATHS found in config.")
+            config.test_dfs = []
+            csv_listbox.delete(0, tk.END)
+            csv_label.config(text="No saved CSV paths", foreground="red")
+            return
+
+        config.test_dfs = []  # Clear any existing data
+        csv_listbox.delete(0, tk.END)  # Clear the listbox
+
+        for path in config.TEST_CSV_PATHS:
+            if os.path.exists(path):
+                try:
+                    df = pd.read_csv(path)
+                    config.test_dfs.append(df)
+                    csv_listbox.insert(tk.END, path)  # ✅ Show the file path in listbox
+                    loaded_files.append(path)
+                    print(f"Auto-loaded CSV: {os.path.basename(path)}")
+                except Exception as e:
+                    print(f"Error loading {path}: {e}")
+            else:
+                print(f"File not found: {path}")
+
+        if loaded_files:
+            csv_label.config(text=f"Auto-loaded {len(loaded_files)} file(s)", foreground="green")
+        else:
+            csv_label.config(text="No valid CSVs loaded", foreground="red")
+    # ----------- Save Function -----------
     def save_settings():
-        # Update config module in memory first
         for key, entry in entries.items():
             val = entry.get()
             if val.isdigit():
@@ -126,14 +207,11 @@ def open_settings_window():
             print("config.py not found! Cannot update.")
             return
 
-        # Read all lines of config.py
         with open(config_path, "r") as f:
             lines = f.readlines()
 
-        # Prepare regex patterns to match each key assignment
         patterns = {key: re.compile(rf"^{key}\s*=\s*.*$") for key in entries.keys()}
 
-        # Prepare replacement lines for updated keys
         replacements = {}
         for key in entries.keys():
             val = getattr(config, key)
@@ -142,7 +220,6 @@ def open_settings_window():
             else:
                 replacements[key] = f"{key} = {val}\n"
 
-        # Update lines if key found, else append new assignments at end
         updated_keys = set()
         for i, line in enumerate(lines):
             for key, pattern in patterns.items():
@@ -151,24 +228,112 @@ def open_settings_window():
                     updated_keys.add(key)
                     break
 
-        # Append keys not found in file (new keys)
         for key in entries.keys():
             if key not in updated_keys:
                 lines.append(replacements[key])
 
-        # Write back updated lines
         with open(config_path, "w") as f:
             f.writelines(lines)
+
+        # Read the original config.py file
+        # Save TEST_CSV_PATHS to config.py
+        if hasattr(config, "TEST_CSV_PATHS"):
+            with open(config_path, "r") as file:
+                lines = file.readlines()
+
+            new_test_paths = config.TEST_CSV_PATHS  # ✅ This is your updated list
+
+            with open(config_path, "w") as file:
+                test_path_written = False
+                for line in lines:
+                    if line.strip().startswith("TEST_CSV_PATHS"):
+                        file.write(f'TEST_CSV_PATHS = {repr(new_test_paths)}\n')
+                        test_path_written = True
+                    else:
+                        file.write(line)
+
+                # If the TEST_CSV_PATHS line was not found, add it at the end
+                if not test_path_written:
+                    file.write(f'\nTEST_CSV_PATHS = {repr(new_test_paths)}\n')
 
         print("Config updated with changed values.")
         settings_win.destroy()
 
-    # Save and Cancel buttons
-    btn_frame = ttk.Frame(settings_win)
-    btn_frame.grid(row=len(config_params), column=0, columnspan=2, pady=20)
+    settings_win = tk.Toplevel(root)
+    settings_win.title("Training Settings")
+    settings_win.minsize(400, 350)
+    settings_win.resizable(False, False)  # Fixed size for neatness
+    settings_win.columnconfigure(1, weight=1)
 
-    ttk.Button(btn_frame, text="Save", command=save_settings).pack(side="left", padx=10)
-    ttk.Button(btn_frame, text="Cancel", command=settings_win.destroy).pack(side="left", padx=10)
+    entries = {}
+    # ----------- Configuration Entries -----------
+    for idx, (key, val) in enumerate(config_params.items()):
+        ttk.Label(settings_win, text=f"{key}:", anchor="w").grid(row=idx, column=0, padx=15, pady=8, sticky="w")
+        entry = ttk.Entry(settings_win)
+        entry.grid(row=idx, column=1, padx=15, pady=8, sticky="ew")
+        entry.insert(0, str(val))
+        entries[key] = entry
+
+        # ----------- CSV Selection Area -----------
+        csv_row = len(config_params)
+
+        csv_label = ttk.Label(settings_win, text="No CSVs selected", foreground="gray", anchor="w")
+        csv_label.grid(row=csv_row, column=0, columnspan=2, sticky="w", padx=15, pady=(15, 5))
+
+        csv_button = ttk.Button(settings_win, text="Select Test CSV(s)", command=select_test_csv)
+        csv_button.grid(row=csv_row + 1, column=0, columnspan=2, pady=(0, 10), padx=15, sticky="ew")
+
+        # ----------- Scrollable Listbox for file display -----------
+        listbox_frame = ttk.Frame(settings_win, borderwidth=1, relief="solid")
+        listbox_frame.grid(row=csv_row + 2, column=0, columnspan=2, padx=15, pady=(0, 15), sticky="nsew")
+        settings_win.rowconfigure(csv_row + 2, weight=1)
+
+        scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical")
+        csv_listbox = tk.Listbox(
+            listbox_frame,
+            height=6,
+            yscrollcommand=scrollbar.set,
+            selectmode="browse",
+            exportselection=False,
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        scrollbar.config(command=csv_listbox.yview)
+
+        csv_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Load previously saved CSV paths and show
+        load_previous_test_csvs()
+
+        # ----------- Save / Cancel Buttons -----------
+        btn_row = csv_row + 3
+        btn_frame = ttk.Frame(settings_win)
+        btn_frame.grid(row=btn_row, column=0, columnspan=2, pady=10, padx=15, sticky="ew")
+
+        save_btn = ttk.Button(btn_frame, text="Save", command=save_settings)
+        save_btn.pack(side="right", padx=5)
+        cancel_btn = ttk.Button(btn_frame, text="Cancel", command=settings_win.destroy)
+        cancel_btn.pack(side="right", padx=5)
+
+        settings_win.transient(root)  # Keep on top of root
+        settings_win.grab_set()
+        settings_win.focus_set()
+
+        # Custom close handler
+        def on_close():
+            # Optional: prompt user, save data, cleanup, etc.
+            # For example, just destroy the window:
+            settings_win.grab_release()  # Release grab before destroying
+            settings_win.destroy()
+
+        settings_win.protocol("WM_DELETE_WINDOW", on_close)
+
+        # Bind ESC key to close window
+        def on_esc(event):
+            on_close()
+
+        settings_win.bind("<Escape>", on_esc)
 
 
 def evaluation(X_test_param, client_data_dict_test_param, global_model_param, personalized_models_param, writer_param,
@@ -487,7 +652,6 @@ if __name__ == "__main__":
                 print(f"Directory does not exist: {dir_path}")
         disable_result_buttons()
 
-
     def start_training():
         global is_training, start_time
         global training_process, done_flag
@@ -525,7 +689,6 @@ if __name__ == "__main__":
         # ✅ Run non-blocking monitor in background
         threading.Thread(target=monitor_process, args=(training_process, q, done_event), daemon=True).start()
 
-
     def complete_progress_bar():
         def finish():
             progress.stop()
@@ -550,20 +713,17 @@ if __name__ == "__main__":
 
         root.after(0, finish)
 
-
     def update_clock():
         global after_id
         current_time = time.strftime('%H:%M:%S')
         clock_label_start.config(text=f"🕒 {current_time}")
         after_id = root.after(1000, update_clock)  # schedule next update
 
-
     def stop_clock():
         global after_id
         if after_id is not None:
             root.after_cancel(after_id)  # cancel the scheduled call
             after_id = None
-
 
     """
         safe_log("[12] Cross Validate Model...")
@@ -584,8 +744,6 @@ if __name__ == "__main__":
         return hh, mm, ss
 
         # GUI
-
-
     def on_selection(event):
         global selected_folder, result_buttons
         selection = listbox.curselection()
@@ -631,7 +789,6 @@ if __name__ == "__main__":
             for label, btn in result_buttons.items():
                 btn.config(state="disabled")
 
-
     def open_log_window():
         try:
             log_path_str = LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date())
@@ -657,7 +814,7 @@ if __name__ == "__main__":
     root.title("HDPFTL Architecture")
     # 1. Set default font for all widgets in this root window
     default_font = font.nametofont("TkDefaultFont")
-    default_font.configure(family="Helvetica", size=9)  # Smaller font
+    default_font.configure(family="Helvetica", size=12)  # Smaller font
     root.option_add("*Font", default_font)
 
     # Responsive size
@@ -757,7 +914,6 @@ if __name__ == "__main__":
     # Bind selection event
     listbox.bind('<<ListboxSelect>>', on_selection)
 
-
     # ---------- Frame 2: Control Area ----------
     # ------------------ Tooltip Class ------------------ #
     class ToolTip:
@@ -785,7 +941,6 @@ if __name__ == "__main__":
             if self.tip_window:
                 self.tip_window.destroy()
                 self.tip_window = None
-
 
     # ------------------ Control Area ------------------ #
     # Create style for LabelFrame
@@ -876,7 +1031,6 @@ if __name__ == "__main__":
     # ------------------ Dark/Light Theme Toggle ------------------ #
     is_dark_mode = False
 
-
     def toggle_theme():
         global is_dark_mode
         if is_dark_mode:
@@ -888,7 +1042,6 @@ if __name__ == "__main__":
             style.configure(".", background='#2e2e2e', foreground='white')
             style.configure("Custom.Horizontal.TProgressbar", troughcolor='#3c3c3c', background='#81c784')
         is_dark_mode = not is_dark_mode
-
 
     # Button to open settings window
     settings_button = ttk.Button(control_frame, text="⚙️ Settings", command=open_settings_window)
@@ -911,7 +1064,6 @@ if __name__ == "__main__":
     # ------------------ Optional: Animated Progress ------------------ #
     is_training = False  # Controlled externally
 
-
     def animate_progress_label():
         current = progress_label.cget("text")
         if current.endswith("..."):
@@ -921,15 +1073,21 @@ if __name__ == "__main__":
         if is_training:
             root.after(500, animate_progress_label)
 
-
     # ---------- Frame 3: Result Area ----------
 
     # --- Button styling ---
-    button_params = {
-        "font": ("Arial", 7),
-        "height": 2,
-        "width": 25
-    }
+    if get_os() == "macOS":
+        button_params = {
+            "font": ("Arial", 13),
+            "height": 2,
+            "width": 25
+        }
+    else:
+        button_params = {
+            "font": ("Arial", 7),
+            "height": 2,
+            "width": 25
+        }
 
     # Style for result_frame LabelFrame
     style.configure(
@@ -954,7 +1112,6 @@ if __name__ == "__main__":
     button_grid_frame = ttk.Frame(result_frame, padding=5)
     button_grid_frame.pack(fill="both", expand=True)
 
-
     # --- Button action handlers ---
     def handle_client_label_distribution():
         p, q, done_event = start_thread()
@@ -963,7 +1120,6 @@ if __name__ == "__main__":
             plot_class_distribution_per_client(client_data_dict)
         else:
             print("❌ Subprocess failed or did not complete properly.")
-
 
     def handle_confusion_matrix():
         global num_classes, global_acc, client_accs, personalised_acc, predictions
@@ -981,7 +1137,6 @@ if __name__ == "__main__":
         else:
             print("❌ Subprocess failed or did not complete properly.")
 
-
     def handle_pre_epoch_losses():
         p, q, done_event = start_thread()
         p.join()
@@ -989,7 +1144,6 @@ if __name__ == "__main__":
             plot_training_loss(np.load(EPOCH_FILE_PRE), 'epoch_loss_pre.png', 'Pre Epoch Losses')
         else:
             print("❌ Failed to complete pre-epoch process.")
-
 
     def handle_fine_tune_losses():
         p, q, done_event = start_thread()
@@ -999,7 +1153,6 @@ if __name__ == "__main__":
         else:
             print("❌ Fine-tuning process failed or did not signal completion.")
 
-
     def handle_plot_personalised_vs_global():
         p, q, done_event = start_thread()
         p.join()
@@ -1007,7 +1160,6 @@ if __name__ == "__main__":
             plot_client_accuracies(client_accs, global_acc, "Personalized vs Global--Dotted")
         else:
             print("❌ Failed to generate plot. Process exited with error or did not complete.")
-
 
     def handle_personalized_vs_global_bar():
         p, q, done_event = start_thread()
@@ -1017,7 +1169,6 @@ if __name__ == "__main__":
         else:
             print("❌ Process failed or did not finish properly.")
 
-
     def handle_cross_validation():
         p, q, done_event = start_thread()
         p.join()
@@ -1025,7 +1176,6 @@ if __name__ == "__main__":
             cross_validate_model_with_plots(X_test, y_test)
         else:
             print("❌ Cross-validation process failed or didn’t signal completion.")
-
 
     # --- Button list ---
     buttons = [
@@ -1039,11 +1189,9 @@ if __name__ == "__main__":
         ("📄 View Log", open_log_window)
     ]
 
-
     # --- Hover effect ---
     def on_enter(e):
         e.widget.config(bg="#005f73", fg="purple", cursor="hand2")
-
 
     def on_leave(e):
         system = platform.system()
@@ -1055,7 +1203,6 @@ if __name__ == "__main__":
             default_bg = "#f0f0f0"
 
         e.widget.config(bg=default_bg, fg="black", cursor="arrow")
-
 
     # --- Add buttons in a 3-column grid ---
     for idx, (label, command) in enumerate(buttons):
