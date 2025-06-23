@@ -324,6 +324,33 @@ if __name__ == "__main__":
             writer.close()
             is_training = False
             start_button.config(text="Start Training")
+            partition_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "partitioned_data.pkl"
+            xy_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "X_y_test.joblib"
+            result_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "results.pkl"
+            predictions_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "predictions.pkl"
+
+            # Define a dictionary mapping button labels to their required file paths
+            file_paths = {
+                "📊 Client Labels Distribution": partition_output_path,
+                "📉 Confusion Matrix": [xy_output_path,predictions_output_path],
+                "📈 Pre Epoch Losses": os.path.join(PLOT_PATH + get_today_date() + "/", 'epoch_loss_pre.png'),
+                "🛠️ Fine Tuning Epoch Losses": os.path.join(PLOT_PATH + get_today_date() + "/", 'epoch_loss_fine.png'),
+                "🔁 Personalized vs Global--Bar Chart":  result_output_path,
+                "🔄 Personalized vs Global--Dotted": result_output_path,
+                " Cross Validation Model": TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "X_y_test.joblib",
+                "📄 View Log" : LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date()) + "hdpftl_run.log"
+            }
+
+            for label, btn in result_buttons.items():
+                paths = file_paths.get(label, [])
+                # Normalize to list if single path string
+                if isinstance(paths, str):
+                    paths = [paths]
+                # Check if all files exist (change to any() if OR needed)
+                if all(os.path.exists(p) for p in paths):
+                    btn.config(state="normal")
+                else:
+                    btn.config(state="disabled")
             stop_clock()
             complete_progress_bar()
         else:
@@ -880,7 +907,8 @@ if __name__ == "__main__":
         e.widget.config(bg="#005f73", fg="purple", cursor="hand2")
 
     def on_leave(e):
-        e.widget.config(bg="SystemButtonFace", fg="black", cursor="arrow")
+        default_bg = e.widget.master.cget("bg")
+        e.widget.config(bg=default_bg, fg="black", cursor="arrow")
 
 
     # --- Add buttons in a 3-column grid ---
