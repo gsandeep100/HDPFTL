@@ -123,12 +123,14 @@ INPUT_DATASET_PATH_2024 = 'https://www.unb.ca/cic/datasets/iotdataset-2024.html'
 OUTPUT_DATASET_PATH_2023 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2023/"
 OUTPUT_DATASET_PATH_2024 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/"
 OUTPUT_DATASET_ALL_DATA = "./hdpftl_training/hdpftl_dataset/"
+OUTPUT_DATASET_SELECTED_TEST_DATA = "./hdpftl_training/hdpftl_dataset/selected_test/"
 
+USE_UPLOADED_TEST_FILES = True
 BATCH_SIZE = 5
 BATCH_SIZE_TRAINING = 16
 NUM_CLIENTS = 10
 NUM_DEVICES_PER_CLIENT = 10
-TEST_CSV_PATHS = ('/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/BenignTraffic.pcap_Flow.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/BenignTraffic2.pcap_Flow.csv')
+TEST_CSV_PATHS = ('/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation9.pcap_Flow.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation10.pcap_Flow.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation8.pcap_Flow.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/BenignTraffic.pcap_Flow.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/BenignTraffic2.pcap_Flow.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/BenignTraffic1.pcap_Flow.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/BenignTraffic3.pcap_Flow.csv')
 # CLIENTS_PER_AGGREGATOR = 5
 # NUM_ROUNDS = 10
 NUM_EPOCHS_PRE_TRAIN = 5

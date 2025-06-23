@@ -41,6 +41,7 @@ from collections import Counter
 import pandas as pd
 import warnings
 
+
 def calculate_imbalance_ratio(counts):
     """
     Calculate the imbalance ratio of class counts.
@@ -58,6 +59,7 @@ def calculate_imbalance_ratio(counts):
         # Handle empty dict or zero counts safely
         print("Warning: counts dictionary is empty or contains zero counts.")
         return None
+
 
 # 🔍 Step 0: Profile
 def profile_dataset(X, y):
@@ -179,63 +181,67 @@ def safe_smote(X, y):
 
 
 def assign_labels(
-        df,
-        filename,
-        benign_keywords=None,
-        attack_keywords=None,
-        multiclass_keywords=None,
-        manual_label_map=None
+    df,
+    filename,
+    benign_keywords=None,
+    attack_keywords=None,
+    multiclass_keywords=None,
+    manual_label_map=None,
+    content_label_column_candidates=None
 ):
-    """
-    Assigns 'Label' column to df based on:
-    - Existing column (re-encodes it)
-    - Multi-class keyword mapping (if provided)
-    - Binary classification (fallback)
-    - Manual mapping (by filename)
-    """
     filename_lower = os.path.basename(filename).lower()
 
-    # If label already present → encode
+    # --- Case 1: Use existing 'Label' column ---
     if 'Label' in df.columns:
         df['Label'] = df['Label'].astype(str).str.strip()
         label_encoder = LabelEncoder()
         df['Label'] = label_encoder.fit_transform(df['Label'])
-        safe_log(
-            f"Label mapping for {filename}: {dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))}")
+        safe_log(f"Label mapping from existing column for {filename}")
         return df
 
-    # --- Multi-class Mapping ---
+    # --- Case 2: Multiclass keywords from filename ---
     if multiclass_keywords:
         for label_value, keywords in multiclass_keywords.items():
-            if any(kw in filename_lower for kw in keywords):
+            if any(kw.lower() in filename_lower for kw in keywords):
                 df['Label'] = label_value
-                break
+                safe_log(f"Multiclass label {label_value} assigned via filename for {filename}")
+                return df
 
-    # --- Binary Fallback ---
-    if 'Label' not in df.columns:
-        if benign_keywords and any(kw in filename_lower for kw in benign_keywords):
-            df['Label'] = 0
-        elif attack_keywords and any(kw in filename_lower for kw in attack_keywords):
-            df['Label'] = 1
+    # --- Case 3: Binary keywords from filename ---
+    if benign_keywords and any(kw.lower() in filename_lower for kw in benign_keywords):
+        df['Label'] = 0
+        safe_log(f"Binary label 0 assigned (benign) via filename for {filename}")
+        return df
+    elif attack_keywords and any(kw.lower() in filename_lower for kw in attack_keywords):
+        df['Label'] = 1
+        safe_log(f"Binary label 1 assigned (attack) via filename for {filename}")
+        return df
 
-    # --- Manual Mapping by Filename ---
-    if 'Label' not in df.columns and manual_label_map:
+    # --- Case 4: Manual mapping from filename ---
+    if manual_label_map:
         label = manual_label_map.get(filename_lower)
         if label is not None:
             df['Label'] = label
+            safe_log(f"Manual label {label} assigned via filename for {filename}")
+            return df
 
-    # --- If still not labeled: mark as unknown (NaN) ---
-    if 'Label' not in df.columns:
-        df['Label'] = np.nan
-        safe_log(f"⚠️ Could not infer label for: {filename_lower}")
+    # --- ✅ NEW: Case 5 - Content-based keyword search ---
+    if content_label_column_candidates:
+        for col in content_label_column_candidates:
+            if col in df.columns:
+                col_values = df[col].astype(str).str.lower()
+                if benign_keywords and col_values.str.contains('|'.join(benign_keywords), na=False).any():
+                    df['Label'] = 0
+                    safe_log(f"Content-based label 0 (benign) assigned using column '{col}' in {filename}")
+                    return df
+                if attack_keywords and col_values.str.contains('|'.join(attack_keywords), na=False).any():
+                    df['Label'] = 1
+                    safe_log(f"Content-based label 1 (attack) assigned using column '{col}' in {filename}")
+                    return df
 
-    # Optional encoding for consistency
-    if df['Label'].dtype == object:
-        label_encoder = LabelEncoder()
-        df['Label'] = label_encoder.fit_transform(df['Label'].astype(str))
-        safe_log(
-            f"Encoded label mapping for {filename}: {dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))}")
-
+    # --- Final fallback ---
+    df['Label'] = np.nan
+    safe_log(f"⚠️ Could not infer label for: {filename}")
     return df
 
 
@@ -348,28 +354,29 @@ def preprocess_data(selected_folder, writer=None, scaler_type='minmax'):
         gc.collect()
 
     with named_timer("train_test_split", writer, tag="train_test_split"):
-        X_temp, X_test, y_temp, y_test = train_test_split(
-            X_final, y_final, test_size=0.1, stratify=y_final, random_state=42)
-        X_pretrain, X_finetune, y_pretrain, y_finetune = train_test_split(
-            X_temp, y_temp, test_size=0.1, stratify=y_temp, random_state=42)
-        del X_temp, y_temp
-        gc.collect()
+        if len(X_final) > 0 and len(y_final) > 0:
+            X_temp, X_test, y_temp, y_test = train_test_split(
+                X_final, y_final, test_size=0.1, stratify=y_final, random_state=42)
+            X_pretrain, X_finetune, y_pretrain, y_finetune = train_test_split(
+                X_temp, y_temp, test_size=0.1, stratify=y_temp, random_state=42)
+            del X_temp, y_temp
+            gc.collect()
 
-        if scaler_type == 'minmax':
-            scaler = MinMaxScaler()
-            # Fit+transform on all data before splitting is more typical for minmax,
-            # but here we do it on pretrain/fine tune/test split to be consistent.
-            X_pretrain = scaler.fit_transform(X_pretrain)
-            X_finetune = scaler.transform(X_finetune)
-            X_test = scaler.transform(X_test)
+            if scaler_type == 'minmax':
+                scaler = MinMaxScaler()
+                # Fit+transform on all data before splitting is more typical for minmax,
+                # but here we do it on pretrain/fine tune/test split to be consistent.
+                X_pretrain = scaler.fit_transform(X_pretrain)
+                X_finetune = scaler.transform(X_finetune)
+                X_test = scaler.transform(X_test)
 
-        elif scaler_type == 'standard':
-            scaler = StandardScaler()
-            X_pretrain = scaler.fit_transform(X_pretrain)
-            X_finetune = scaler.transform(X_finetune)
-            X_test = scaler.transform(X_test)
+            elif scaler_type == 'standard':
+                scaler = StandardScaler()
+                X_pretrain = scaler.fit_transform(X_pretrain)
+                X_finetune = scaler.transform(X_finetune)
+                X_test = scaler.transform(X_test)
 
-        else:
-            raise ValueError(f"Unsupported scaler_type: {scaler_type}")
+            else:
+                raise ValueError(f"Unsupported scaler_type: {scaler_type}")
 
     return X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test
