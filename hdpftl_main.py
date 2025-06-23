@@ -17,11 +17,12 @@ import shutil
 import threading
 import time
 import tkinter as tk
+from tkinter import ttk
+
 import traceback
 import warnings
 from multiprocessing import Process
 from tkinter import scrolledtext, messagebox
-from tkinter import ttk
 
 import numpy as np
 import torch
@@ -39,7 +40,7 @@ from hdpftl_training.hdpftl_pre_training.finetune_model import finetune_model
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_utility.config import EPOCH_FILE_FINE, EPOCH_FILE_PRE, NUM_CLIENTS, \
     NUM_DEVICES_PER_CLIENT, GLOBAL_MODEL_PATH_TEMPLATE, OUTPUT_DATASET_ALL_DATA, LOGS_DIR_TEMPLATE, \
-    TRAINED_MODEL_FOLDER_PATH, EPOCH_DIR
+    TRAINED_MODEL_FOLDER_PATH, EPOCH_DIR, PLOT_PATH
 from hdpftl_utility.log import setup_logging, safe_log
 from hdpftl_utility.utils import named_timer, setup_device, get_output_folders, get_today_date, is_folder_exist
 
@@ -74,6 +75,7 @@ start_time = float(time.time())
 is_training = None
 training_process: Process | None = None
 done_flag = None
+result_buttons = {}
 
 
 def evaluation(X_test_param, client_data_dict_test_param, global_model_param, personalized_models_param, writer_param,
@@ -272,18 +274,19 @@ def start_process(selected_folder_param, done_event):
         safe_log("Exception in thread:", e, level="error")
         traceback.print_exc()
 
+def disable_result_buttons():
+    for label, btn in result_buttons.items():
+        btn.config(state="disabled")
 
 if __name__ == "__main__":
     def update_progress(value):
         root.after(0, lambda: _update_progress_ui(value))
 
-
     def _update_progress_ui(value):
         progress['value'] = value
         progress_label.config(text=f"Training Progress: {int(value)}%")
         if value == 100:
-            progress_label.config(text="✅ Training complete!")
-
+            progress_label.config(text="Progress: 100% - Training Complete!")
 
     def monitor_process(p, q, done_event):
         global num_classes, global_acc, client_accs, personalised_acc, predictions, writer, is_training
@@ -328,7 +331,6 @@ if __name__ == "__main__":
         # else:
         #    print("❌ Queue is empty. Process may have crashed before q.put()")
 
-
     def start_thread():
         ctx = mp.get_context("spawn")  # Use spawn instead of fork
 
@@ -339,10 +341,15 @@ if __name__ == "__main__":
         p.start()
         return p, q, done_event
 
-
     def start_training():
         global is_training, start_time
         global training_process, done_flag
+        dirs_to_remove = [
+            LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date()),
+            EPOCH_DIR,
+            TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()),
+        ]
+
         # Start infinite progress animation
         if is_training:
             if training_process and training_process.is_alive():
@@ -357,10 +364,22 @@ if __name__ == "__main__":
             start_button.config(text="Start Training")
             stop_clock()
             complete_progress_bar()
-            writer.close()
-            shutil.rmtree(LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date()))
-            shutil.rmtree(EPOCH_DIR)
-            shutil.rmtree(TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()))
+            # Disable buttons immediately
+            disable_result_buttons()
+            # Close writer if open
+            if writer and not writer.close:
+                writer.close()
+            # Remove directories
+            for dir_path in dirs_to_remove:
+                if os.path.exists(dir_path):
+                    try:
+                        shutil.rmtree(dir_path)
+                        print(f"Removed directory: {dir_path}")
+                    except Exception as e:
+                        print(f"Failed to remove {dir_path}: {e}")
+                else:
+                    print(f"Directory does not exist: {dir_path}")
+
             return
 
         is_training = True
@@ -373,7 +392,6 @@ if __name__ == "__main__":
         training_process, q, done_event = start_thread()
         # ✅ Run non-blocking monitor in background
         threading.Thread(target=monitor_process, args=(training_process, q, done_event), daemon=True).start()
-
 
     def complete_progress_bar():
         def finish():
@@ -399,20 +417,17 @@ if __name__ == "__main__":
 
         root.after(0, finish)
 
-
     def update_clock():
         global after_id
         current_time = time.strftime('%H:%M:%S')
         clock_label_start.config(text=f"🕒 {current_time}")
         after_id = root.after(1000, update_clock)  # schedule next update
 
-
     def stop_clock():
         global after_id
         if after_id is not None:
             root.after_cancel(after_id)  # cancel the scheduled call
             after_id = None
-
 
     """
         safe_log("[12] Cross Validate Model...")
@@ -424,7 +439,6 @@ if __name__ == "__main__":
             fold_results = cross_validate_model_advanced(X_test, y_test, k=5, num_epochs=20, early_stopping=True)
     """
 
-
     def convert_to_hms(mins, secs):
         total_seconds = int(mins * 60 + secs)
         hh = total_seconds // 3600
@@ -434,23 +448,48 @@ if __name__ == "__main__":
 
         # GUI
 
-
     def on_selection(event):
-        global selected_folder
+        global selected_folder,result_buttons
         selection = listbox.curselection()
         if selection:
             index = selection[0]
             selected_folder = listbox.get(index)
             label_selected.config(text=f"📂 Selected Folder: {selected_folder}")
             start_button.state(["!disabled"])
-            client_label_dist_btn.config(state="normal")
-            confusion_matrix_btn.config(state="normal")
-            pre_epoch_loses_btn.config(state="normal")
-            fine_tune_epoch_loses_btn.config(state="normal")
-            per_global_dotted_btn.config(state="normal")
-            per_global_bar_btn.config(state="normal")
-            cross_validation_btn.config(state="normal")
-            view_log_btn.config(state="normal")
+
+            partition_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "partitioned_data.pkl"
+            partition_output_test_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "partitioned_data_test.pkl"
+            xy_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "X_y_test.joblib"
+            result_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "results.pkl"
+            predictions_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "predictions.pkl"
+
+            # Define a dictionary mapping button labels to their required file paths
+            file_paths = {
+                "📊 Client Labels Distribution": partition_output_path,
+                "📉 Confusion Matrix": [xy_output_path,predictions_output_path],
+                "📈 Pre Epoch Losses": os.path.join(PLOT_PATH + get_today_date() + "/", 'epoch_loss_pre.png'),
+                "🛠️ Fine Tuning Epoch Losses": os.path.join(PLOT_PATH + get_today_date() + "/", 'epoch_loss_fine.png'),
+                "🔁 Personalized vs Global--Bar Chart":  result_output_path,
+                "🔄 Personalized vs Global--Dotted": result_output_path,
+                " Cross Validation Model": TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "X_y_test.joblib",
+                "📄 View Log" : LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date()) + "hdpftl_run.log"
+            }
+
+            for label, btn in result_buttons.items():
+                paths = file_paths.get(label, [])
+                # Normalize to list if single path string
+                if isinstance(paths, str):
+                    paths = [paths]
+                # Check if all files exist (change to any() if OR needed)
+                if all(os.path.exists(p) for p in paths):
+                    btn.config(state="normal")
+                else:
+                    btn.config(state="disabled")
+        else:
+            label_selected.config(text="📂 Selected Folder: None")
+            start_button.state(["disabled"])  # Disable start button
+            for label, btn in result_buttons.items():
+                btn.config(state="disabled")
 
 
     def open_log_window():
@@ -471,11 +510,10 @@ if __name__ == "__main__":
         text_area.insert(tk.END, log_contents)
         text_area.config(state='disabled')  # Make read-only
 
-
+    # ---------- Set Window Size ----------
     mp.set_start_method("spawn")
     root = tk.Tk()
     root.title("HDPFTL Architecture")
-
     # Responsive size
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
@@ -493,25 +531,60 @@ if __name__ == "__main__":
 
     root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
-    top_frame = tk.Frame(root)
-    top_frame.pack(side='top', pady=20)
+    # Header
+    header_label = tk.Label(root, text="HDPFTL Architecture", font=("Arial", 18, "bold"))
+    header_label.pack(pady=(15, 5))
 
-    # Label
-    tk.Label(top_frame, text="HDPFTL Architecture", font=("Arial", 18, "bold")).grid(row=0, column=1, padx=10)
-    view_log_btn = tk.Button(top_frame, text="View Log", command=open_log_window, width=10, state="disabled")
-    view_log_btn.grid(row=0, column=2, padx=10)
+    # ---------- Frame 1: Selection Area ----------
+    style = ttk.Style(root)
+    style.theme_use('default')
+    # Style for selection_frame LabelFrame
+    style.configure(
+        "Selection.TLabelframe",
+        background="#fff7e6",  # very light warm/yellow background
+        bordercolor="#f5a623",  # warm orange border
+        relief="solid",
+        borderwidth=3,
+        padding=10
+    )
 
-    # Frame for listbox and scrollbar
-    frame = tk.Frame(root)
-    frame.pack(fill="both", expand=True, padx=20, pady=10)
+    style.configure(
+        "Selection.TLabelframe.Label",
+        font=("Arial", 16, "bold"),
+        foreground="#b35e00"  # deep orange for title text
+    )
+    # Define reusable "Distinct" style if not already defined
+    style.configure("Distinct.TLabelframe",
+                    background="#f0f8ff",  # very light blue
+                    bordercolor="#0288d1",  # bright blue border
+                    relief="solid",
+                    borderwidth=3)
+
+    style.configure("Distinct.TLabelframe.Label",
+                    font=("Arial", 14, "bold"),
+                    foreground="#01579b")  # deep blue title text
+
+    # Create selection_frame using same style class
+    selection_frame = ttk.LabelFrame(root, text="📁 Select Dataset", style="Distinct.TLabelframe", padding=10)
+    selection_frame.pack(fill="x", padx=10, pady=(10, 5))
+
+    # Selection label
+    label_selected = tk.Label(
+        selection_frame,
+        text="📂 Selected Folder: None",
+        font=("Helvetica", 24, "bold"),
+        anchor='center',
+        justify='center',
+    )
+    label_selected.pack(pady=10, fill='x')
 
     # Scrollbar
-    scrollbar = tk.Scrollbar(frame)
+    scrollbar = tk.Scrollbar(selection_frame)
     scrollbar.pack(side="right", fill="y")
 
     # Listbox
     listbox = tk.Listbox(
-        frame,
+        selection_frame,
         height=5,
         width=60,
         font=("Segoe UI", 13),
@@ -531,17 +604,193 @@ if __name__ == "__main__":
     for folder in get_output_folders(OUTPUT_DATASET_ALL_DATA):
         listbox.insert(tk.END, folder)
 
-    # Selection label
-    label_selected = tk.Label(root, text="📂 Selected Folder: None", font=("Helvetica", 12))
-    label_selected.pack(pady=10)
-
     # Bind selection event
     listbox.bind('<<ListboxSelect>>', on_selection)
 
-    # Buttons for actions
-    button_params = {"width": 30, "font": ("Arial", 11), "pady": 5}
+    # ---------- Frame 2: Control Area ----------
+    # ------------------ Tooltip Class ------------------ #
+    class ToolTip:
+        def __init__(self, widget, text):
+            self.widget = widget
+            self.text = text
+            self.tip_window = None
+            widget.bind("<Enter>", self.show_tip)
+            widget.bind("<Leave>", self.hide_tip)
+
+        def show_tip(self, event=None):
+            if self.tip_window or not self.text:
+                return
+            x = self.widget.winfo_rootx() + 20
+            y = self.widget.winfo_rooty() + 20
+            self.tip_window = tw = tk.Toplevel(self.widget)
+            tw.wm_overrideredirect(True)
+            tw.wm_geometry(f"+{x}+{y}")
+            label = tk.Label(tw, text=self.text, justify='left',
+                             background="#ffffe0", relief='solid', borderwidth=1,
+                             font=("Segoe UI", 9))
+            label.pack(ipadx=5, ipady=3)
+
+        def hide_tip(self, event=None):
+            if self.tip_window:
+                self.tip_window.destroy()
+                self.tip_window = None
 
 
+    # ------------------ Control Area ------------------ #
+    # Create style for LabelFrame
+    style = ttk.Style(root)
+    style.theme_use('default')
+
+    style.configure(
+        "Distinct.TLabelframe",
+        background="#e6f0ff",  # very light blue background
+        bordercolor="#1a73e8",  # bright blue border
+        relief="solid",
+        borderwidth=3,
+        padding=10
+    )
+
+    style.configure(
+        "Distinct.TLabelframe.Label",
+        font=("Arial", 16, "bold"),
+        foreground="#0b5394"  # deep blue for title text
+    )
+
+    # Create the custom label frame with style
+    control_frame = ttk.LabelFrame(root, text="🛠️ Process", style="Distinct.TLabelframe", padding=10)
+    control_frame.pack(fill="x", padx=10, pady=(10, 5))
+
+    for i in range(4):
+        control_frame.columnconfigure(i, weight=1)
+
+    # Style setup
+    style = ttk.Style(root)
+    style.theme_use('default')
+    style.configure(
+        "Custom.Horizontal.TProgressbar",
+        thickness=30,  # taller bar
+        troughcolor="#cccccc",  # light gray background
+        background="#0b84a5",  # vibrant blue (or try "#4caf50", "#ff9800", etc.)
+        bordercolor="#000000",  # optional
+        lightcolor="#0b84a5",
+        darkcolor="#0b84a5"
+    )
+    style.configure("Custom.TButton",
+                    foreground="white",
+                    background="#d32f2f",
+                    font=("Arial", 14, "bold"),
+                    padding=10)
+    style.map("Custom.TButton",
+              background=[('active', '#b71c1c')],
+              foreground=[('disabled', 'gray')])
+
+    # Start time label
+    clock_label_start = tk.Label(control_frame, font=('Arial', 12), fg='green', text="🕒 Start Time: --:--:--")
+    clock_label_start.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+    ToolTip(clock_label_start, "When the training process starts")
+    start_time_label = clock_label_start
+    # Start button
+    start_button = ttk.Button(control_frame, text="🚀 Start Training", command=start_training, style="Custom.TButton")
+    start_button.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
+    start_button.state(["disabled"])
+    ToolTip(start_button, "Start the federated training process")
+
+    # End time label
+    clock_label_end = tk.Label(control_frame, font=('Arial', 12), fg='red', text="🛑 End Time: --:--:--")
+    clock_label_end.grid(row=0, column=2, sticky="ew", padx=5, pady=5)
+    ToolTip(clock_label_end, "When training finishes")
+    end_time_label = clock_label_end
+    # Total time label
+    time_taken_label = tk.Label(control_frame, font=('Arial', 12), fg='blue', text="⏱️ Total Time: --:--:--")
+    time_taken_label.grid(row=0, column=3, sticky="ew", padx=5, pady=5)
+    ToolTip(time_taken_label, "Total duration of training")
+
+    # Separator
+    ttk.Separator(control_frame, orient="horizontal").grid(row=1, column=0, columnspan=4, sticky="ew", pady=(10, 5))
+
+    # Progress bar
+    progress = ttk.Progressbar(
+        control_frame,
+        orient="horizontal",
+        mode="determinate",
+        style="Custom.Horizontal.TProgressbar"
+    )
+    progress.grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(15, 5))
+
+    # Progress label (clearly visible)
+    progress_label = tk.Label(control_frame, text="Progress: 0%", font=("Segoe UI", 11, "bold"), fg="#0b84a5")
+    progress_label.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+    ToolTip(progress_label, "Shows real-time training progress")
+
+    # ------------------ Dark/Light Theme Toggle ------------------ #
+    is_dark_mode = False
+
+
+    def toggle_theme():
+        global is_dark_mode
+        if is_dark_mode:
+            root.tk_setPalette(background='white', foreground='black')
+            style.configure(".", background='white', foreground='black')
+            style.configure("Custom.Horizontal.TProgressbar", troughcolor='#f0f0f0', background='#4caf50')
+        else:
+            root.tk_setPalette(background='#2e2e2e', foreground='white')
+            style.configure(".", background='#2e2e2e', foreground='white')
+            style.configure("Custom.Horizontal.TProgressbar", troughcolor='#3c3c3c', background='#81c784')
+        is_dark_mode = not is_dark_mode
+
+
+    theme_button = ttk.Button(control_frame, text="🌓 Toggle Theme", command=toggle_theme)
+    theme_button.grid(row=4, column=3, sticky="e", padx=5, pady=5)
+    ToolTip(theme_button, "Switch between dark and light mode")
+
+    # ------------------ Optional: Animated Progress ------------------ #
+    is_training = False  # Controlled externally
+
+
+    def animate_progress_label():
+        current = progress_label.cget("text")
+        if current.endswith("..."):
+            progress_label.config(text="Progress: Training")
+        else:
+            progress_label.config(text=current + ".")
+        if is_training:
+            root.after(500, animate_progress_label)
+
+
+    # ---------- Frame 3: Result Area ----------
+
+    # --- Button styling ---
+    button_params = {
+        "font": ("Arial", 11),
+        "height": 2,
+        "width": 25
+    }
+
+    # Style for result_frame LabelFrame
+    style.configure(
+        "Results.TLabelframe",
+        background="#e6fff0",  # very light mint/green background
+        bordercolor="#34a853",  # fresh green border
+        relief="solid",
+        borderwidth=3,
+        padding=10
+    )
+    style.configure(
+        "Results.TLabelframe.Label",
+        font=("Arial", 16, "bold"),
+        foreground="#20733e"  # deep green for title text
+    )
+
+    # Result Frame
+    result_frame = ttk.LabelFrame(root, text="📊 Results", style="Results.TLabelframe", padding=10)
+    result_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+
+    # Inner frame for grid layout
+    button_grid_frame = ttk.Frame(result_frame, padding=5)
+    button_grid_frame.pack(fill="both", expand=True)
+
+
+    # --- Button action handlers ---
     def handle_client_label_distribution():
         p, q, done_event = start_thread()
         p.join()
@@ -551,32 +800,12 @@ if __name__ == "__main__":
             print("❌ Subprocess failed or did not complete properly.")
 
 
-    client_label_dist_btn = tk.Button(
-        root,
-        text="Client Labels Distribution",
-        state="disabled",
-        command=handle_client_label_distribution,
-        **button_params
-    )
-    client_label_dist_btn.pack()
-
-
     def handle_confusion_matrix():
         global num_classes, global_acc, client_accs, personalised_acc, predictions
         p, q, done_event = start_thread()
-        p.join()  # Wait for the process to complete
-
+        p.join()
         if p.exitcode == 0 and done_event.is_set():
             try:
-                # Try to get predictions and num_classes from queue if available
-                # if not q.empty():
-                # results = q.get()
-                # If tensors somehow still leak through, convert to CPU
-                # results = tuple(r.cpu() if isinstance(r, torch.Tensor) and r.is_cuda else r for r in results)
-
-                # global_acc, client_accs, personalised_acc, predictions, num_classes = results
-
-                # Validate num_classes
                 if isinstance(num_classes, int) and num_classes > 0:
                     class_labels = [str(i) for i in range(num_classes)]
                     plot_confusion_matrix(y_test, predictions, class_labels, normalize=True)
@@ -588,183 +817,88 @@ if __name__ == "__main__":
             print("❌ Subprocess failed or did not complete properly.")
 
 
-    confusion_matrix_btn = tk.Button(
-        root,
-        text="Confusion Matrix",
-        state="disabled",
-        command=handle_confusion_matrix,
-        **button_params
-    )
-
-    confusion_matrix_btn.pack()
-
-
     def handle_pre_epoch_losses():
         p, q, done_event = start_thread()
-        p.join()  # Wait for process to finish
-
+        p.join()
         if p.exitcode == 0 and done_event.is_set():
             plot_training_loss(np.load(EPOCH_FILE_PRE), 'epoch_loss_pre.png', 'Pre Epoch Losses')
         else:
             print("❌ Failed to complete pre-epoch process.")
 
 
-    pre_epoch_loses_btn = tk.Button(
-        root,
-        text="Pre Epoch Losses",
-        state="disabled",
-        command=handle_pre_epoch_losses,
-        **button_params
-    )
-
-    pre_epoch_loses_btn.pack()
-
-
     def handle_fine_tune_losses():
         p, q, done_event = start_thread()
-        p.join()  # Wait for process to finish
-
+        p.join()
         if p.exitcode == 0 and done_event.is_set():
             plot_training_loss(np.load(EPOCH_FILE_FINE), 'epoch_loss_fine.png', 'Fine Tuning Epoch Losses')
         else:
             print("❌ Fine-tuning process failed or did not signal completion.")
 
 
-    fine_tune_epoch_loses_btn = tk.Button(
-        root,
-        text="Fine Tuning Epoch Losses",
-        state="disabled",
-        command=handle_fine_tune_losses,
-        **button_params
-    )
-
-    fine_tune_epoch_loses_btn.pack()
-
-
     def handle_plot_personalised_vs_global():
         p, q, done_event = start_thread()
-        p.join()  # Wait for process to finish
-
+        p.join()
         if p.exitcode == 0 and done_event.is_set():
             plot_client_accuracies(client_accs, global_acc, "Personalized vs Global--Dotted")
         else:
             print("❌ Failed to generate plot. Process exited with error or did not complete.")
 
 
-    per_global_dotted_btn = tk.Button(
-        root,
-        text="Personalized vs Global--Dotted",
-        state="disabled",
-        command=handle_plot_personalised_vs_global,
-        **button_params
-    )
-
-    per_global_dotted_btn.pack()
-
-
     def handle_personalized_vs_global_bar():
         p, q, done_event = start_thread()
-        p.join()  # Wait for process to finish
-
+        p.join()
         if p.exitcode == 0 and done_event.is_set():
             plot_personalized_vs_global(personalised_acc, global_acc)
         else:
             print("❌ Process failed or did not finish properly.")
 
 
-    per_global_bar_btn = tk.Button(
-        root,
-        text="Personalized vs Global--Bar Chart",
-        state="disabled",
-        command=handle_personalized_vs_global_bar,
-        **button_params
-    )
-
-    per_global_bar_btn.pack()
-
-
     def handle_cross_validation():
         p, q, done_event = start_thread()
-        p.join()  # Wait for the subprocess to finish
-
+        p.join()
         if p.exitcode == 0 and done_event.is_set():
             cross_validate_model_with_plots(X_test, y_test)
         else:
             print("❌ Cross-validation process failed or didn’t signal completion.")
 
 
-    cross_validation_btn = tk.Button(
-        root,
-        text="Cross Validation Model",
-        state="disabled",
-        command=handle_cross_validation,
-        **button_params
-    )
+    # --- Button list ---
+    buttons = [
+        ("📊 Client Labels Distribution", handle_client_label_distribution),
+        ("📉 Confusion Matrix", handle_confusion_matrix),
+        ("📈 Pre Epoch Losses", handle_pre_epoch_losses),
+        ("🛠️ Fine Tuning Epoch Losses", handle_fine_tune_losses),
+        ("🔁 Personalized vs Global--Bar Chart", handle_personalized_vs_global_bar),
+        ("🔄 Personalized vs Global--Dotted", handle_plot_personalised_vs_global),
+        ("🔬 Cross Validation Model", handle_cross_validation),
+        ("📄 View Log", open_log_window)
+    ]
 
-    cross_validation_btn.pack()
 
-    # Create a custom style
-    style = ttk.Style(root)
-    style.theme_use('default')  # Use default theme to enable custom styling
+    # --- Hover effect ---
+    def on_enter(e):
+        e.widget.config(bg="#005f73", fg="purple", cursor="hand2")
 
-    style.configure(
-        "Custom.Horizontal.TProgressbar",
-        thickness=25,  # Controls the height
-        troughcolor='#e0e0e0',  # Background area color
-        background='#4caf50',  # Progress fill color
-        bordercolor='#ccc',
-        lightcolor='#4caf50',
-        darkcolor='#4caf50'
-    )
+    def on_leave(e):
+        e.widget.config(bg="SystemButtonFace", fg="black", cursor="arrow")
 
-    # Create the progress bar
-    progress = ttk.Progressbar(
-        root,
-        orient="horizontal",
-        mode="determinate",
-        length=500,
-        style="Custom.Horizontal.TProgressbar"
-    )
-    progress.pack(fill='x', padx=20, pady=(20, 5))
 
-    # Progress label
-    progress_label = tk.Label(root, text="Progress: 0%", font=("Segoe UI", 10))
-    progress_label.pack(pady=(0, 10))
-
-    # Start training button
-    style = ttk.Style()
-    style.theme_use('default')
-    style.configure("Custom.TButton",
-                    foreground="white",
-                    background="#d32f2f",
-
-                    font=("Arial", 16, "bold"),
-                    padding=10)
-    style.map("Custom.TButton",
-              background=[('active', '#b71c1c')],
-              foreground=[('disabled', 'gray')])
-
-    bottom_frame = tk.Frame(root)
-    bottom_frame.pack(side='bottom', pady=20)
-
-    # Start time label
-    clock_label_start = tk.Label(bottom_frame, font=('Arial', 12), fg='green', text="Start Time: --:--:--")
-    clock_label_start.grid(row=0, column=0, padx=10)
-
-    # Start Training Button
-    start_button = ttk.Button(bottom_frame, text="Start Training", command=start_training, style="Custom.TButton",
-                              width=25)
-    start_button.grid(row=0, column=1, padx=10)
-    start_button.state(["disabled"])
-
-    # End time label
-    clock_label_end = tk.Label(bottom_frame, font=('Arial', 12), fg='red', text="End Time: --:--:--")
-    clock_label_end.grid(row=0, column=2, padx=10)
-
-    time_taken_label = tk.Label(top_frame, font=('Arial', 12), fg='red', text="Total Time: --:--:--")
-    time_taken_label.grid(row=0, column=4, padx=10)
-
-    start_time_label = clock_label_start
-    end_time_label = clock_label_end
+    # --- Add buttons in a 3-column grid ---
+    for idx, (label, command) in enumerate(buttons):
+        row = idx // 3
+        col = idx % 3
+        state = "normal" if label == "View Log" else "disabled"
+        btn = tk.Button(
+            button_grid_frame,
+            text=f"🔹 {label}",
+            command=command,
+            state="disabled",
+            **button_params
+        )
+        btn.grid(row=row, column=col, padx=10, pady=10, sticky="ew")
+        btn.bind("<Enter>", on_enter)
+        btn.bind("<Leave>", on_leave)
+        button_grid_frame.grid_columnconfigure(col, weight=1)
+        result_buttons[label] = btn
 
     root.mainloop()
