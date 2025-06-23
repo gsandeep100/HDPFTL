@@ -139,11 +139,11 @@ def open_settings_window():
 
             for path in file_paths:
                 try:
-                    df = pd.read_csv(path)
-                    config.test_dfs.append(df)
-                    filename = path
-                    loaded_files.append(filename)
-                    csv_listbox.insert(tk.END, filename)  # Show in list
+                    #df = pd.read_csv(path)
+                    #config.test_dfs.append(df)
+                    #filename = path
+                    loaded_files.append(path)
+                    csv_listbox.insert(tk.END, os.path.basename(path))  # Show in list
                 except Exception as e:
                     print(f"Error loading {path}:", e)
 
@@ -176,9 +176,9 @@ def open_settings_window():
         for path in config.TEST_CSV_PATHS:
             if os.path.exists(path):
                 try:
-                    df = pd.read_csv(path)
-                    config.test_dfs.append(df)
-                    csv_listbox.insert(tk.END, path)  # ✅ Show the file path in listbox
+                    #df = pd.read_csv(path)
+                    #config.test_dfs.append(df)
+                    csv_listbox.insert(tk.END, os.path.basename(path))  # ✅ Show the file path in listbox
                     loaded_files.append(path)
                     print(f"Auto-loaded CSV: {os.path.basename(path)}")
                 except Exception as e:
@@ -242,7 +242,7 @@ def open_settings_window():
                 lines = file.readlines()
 
             new_test_paths = config.TEST_CSV_PATHS  # ✅ This is your updated list
-
+            loaded_files.clear()
             with open(config_path, "w") as file:
                 test_path_written = False
                 for line in lines:
@@ -266,6 +266,8 @@ def open_settings_window():
     settings_win.columnconfigure(1, weight=1)
 
     entries = {}
+    # Load previously saved CSV paths and show
+
     # ----------- Configuration Entries -----------
     for idx, (key, val) in enumerate(config_params.items()):
         ttk.Label(settings_win, text=f"{key}:", anchor="w").grid(row=idx, column=0, padx=15, pady=8, sticky="w")
@@ -302,10 +304,6 @@ def open_settings_window():
 
         csv_listbox.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-
-        # Load previously saved CSV paths and show
-        load_previous_test_csvs()
-
         # ----------- Save / Cancel Buttons -----------
         btn_row = csv_row + 3
         btn_frame = ttk.Frame(settings_win)
@@ -334,6 +332,7 @@ def open_settings_window():
             on_close()
 
         settings_win.bind("<Escape>", on_esc)
+    load_previous_test_csvs()
 
 
 def evaluation(X_test_param, client_data_dict_test_param, global_model_param, personalized_models_param, writer_param,
@@ -488,11 +487,13 @@ def start_process(selected_folder_param, done_event):
                 global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
                                                                     y_test)
 
-            personalised_acc, client_accs, global_acc = evaluation(X_test, client_data_dict_test, global_model,
-                                                                   personalized_models, writer, y_test)
         #######################  LOAD FROM FILES ##################################
         else:
             load_from_files(writer)
+
+        ##TODO
+        personalised_acc, client_accs, global_acc = evaluation(X_test, client_data_dict_test, global_model,
+                                                               personalized_models, writer, y_test)
 
         # Ensure client_accs and personalised_acc are CPU-safe (if they are tensors)
         # client_accs = [acc.cpu() if hasattr(acc, 'cpu') else acc for acc in client_accs]
