@@ -39,6 +39,8 @@ from hdpftl_training.hdpftl_data.preprocess import preprocess_data
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition_with_devices
 from hdpftl_training.hdpftl_pre_training.finetune_model import finetune_model
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
+from hdpftl_utility import config
+import re
 from hdpftl_utility.config import EPOCH_FILE_FINE, EPOCH_FILE_PRE, NUM_CLIENTS, \
     NUM_DEVICES_PER_CLIENT, GLOBAL_MODEL_PATH_TEMPLATE, OUTPUT_DATASET_ALL_DATA, LOGS_DIR_TEMPLATE, \
     TRAINED_MODEL_FOLDER_PATH, EPOCH_DIR, PLOT_PATH
@@ -77,7 +79,93 @@ is_training = None
 training_process: Process | None = None
 done_flag = None
 result_buttons = {}
+# Global config dictionary to hold parameters
+config_params = {
+    "BATCH_SIZE": 5,
+    "BATCH_SIZE_TRAINING": 16,
+    "NUM_CLIENTS": 10,
+    "NUM_DEVICES_PER_CLIENT": 5,
+    "NUM_EPOCHS_PRE_TRAIN": 5,
+    "NUM_FEDERATED_ROUND": 5
+}
 
+
+def open_settings_window():
+    settings_win = tk.Toplevel(root)
+    settings_win.title("Training Settings")
+    settings_win.geometry("350x350")
+    settings_win.resizable(False, False)
+
+    entries = {}
+
+    # Create label + entry for each config param
+    for idx, (key, val) in enumerate(config_params.items()):
+        ttk.Label(settings_win, text=f"{key}:").grid(row=idx, column=0, padx=10, pady=8, sticky="w")
+        entry = ttk.Entry(settings_win, width=15)
+        entry.grid(row=idx, column=1, padx=10, pady=8)
+        entry.insert(0, str(val))
+        entries[key] = entry
+
+    def save_settings():
+        # Update config module in memory first
+        for key, entry in entries.items():
+            val = entry.get()
+            if val.isdigit():
+                setattr(config, key, int(val))
+            else:
+                try:
+                    setattr(config, key, float(val))
+                except ValueError:
+                    setattr(config, key, val)
+
+        config_path = os.path.join(os.path.dirname(__file__), "hdpftl_utility/config.py")
+        if not os.path.exists(config_path):
+            print("config.py not found! Cannot update.")
+            return
+
+        # Read all lines of config.py
+        with open(config_path, "r") as f:
+            lines = f.readlines()
+
+        # Prepare regex patterns to match each key assignment
+        patterns = {key: re.compile(rf"^{key}\s*=\s*.*$") for key in entries.keys()}
+
+        # Prepare replacement lines for updated keys
+        replacements = {}
+        for key in entries.keys():
+            val = getattr(config, key)
+            if isinstance(val, str):
+                replacements[key] = f'{key} = "{val}"\n'
+            else:
+                replacements[key] = f"{key} = {val}\n"
+
+        # Update lines if key found, else append new assignments at end
+        updated_keys = set()
+        for i, line in enumerate(lines):
+            for key, pattern in patterns.items():
+                if pattern.match(line):
+                    lines[i] = replacements[key]
+                    updated_keys.add(key)
+                    break
+
+        # Append keys not found in file (new keys)
+        for key in entries.keys():
+            if key not in updated_keys:
+                lines.append(replacements[key])
+
+        # Write back updated lines
+        with open(config_path, "w") as f:
+            f.writelines(lines)
+
+        print("Config updated with changed values.")
+        settings_win.destroy()
+
+    # Save and Cancel buttons
+    btn_frame = ttk.Frame(settings_win)
+    btn_frame.grid(row=len(config_params), column=0, columnspan=2, pady=20)
+
+    ttk.Button(btn_frame, text="Save", command=save_settings).pack(side="left", padx=10)
+    ttk.Button(btn_frame, text="Cancel", command=settings_win.destroy).pack(side="left", padx=10)
 
 def evaluation(X_test_param, client_data_dict_test_param, global_model_param, personalized_models_param, writer_param,
                y_test_param):
@@ -771,6 +859,11 @@ if __name__ == "__main__":
             style.configure("Custom.Horizontal.TProgressbar", troughcolor='#3c3c3c', background='#81c784')
         is_dark_mode = not is_dark_mode
 
+
+    # Button to open settings window
+    settings_button = ttk.Button(control_frame, text="⚙️ Settings", command=open_settings_window)
+    settings_button.grid(row=4, column=1, sticky="e", padx=5, pady=5)
+    ToolTip(settings_button, "Modify Settings")
 
     theme_button = ttk.Button(control_frame, text="🌓 Toggle Theme", command=toggle_theme)
     theme_button.grid(row=4, column=2, sticky="e", padx=5, pady=5)
