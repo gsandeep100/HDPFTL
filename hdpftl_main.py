@@ -13,17 +13,17 @@
 import multiprocessing as mp
 import os
 import pickle
+import platform
+import re
 import shutil
 import threading
 import time
 import tkinter as tk
-import platform
-from tkinter import ttk
-
 import traceback
 import warnings
 from multiprocessing import Process
 from tkinter import scrolledtext, messagebox
+from tkinter import ttk
 
 import numpy as np
 import torch
@@ -40,7 +40,6 @@ from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition
 from hdpftl_training.hdpftl_pre_training.finetune_model import finetune_model
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
 from hdpftl_utility import config
-import re
 from hdpftl_utility.config import EPOCH_FILE_FINE, EPOCH_FILE_PRE, NUM_CLIENTS, \
     NUM_DEVICES_PER_CLIENT, GLOBAL_MODEL_PATH_TEMPLATE, OUTPUT_DATASET_ALL_DATA, LOGS_DIR_TEMPLATE, \
     TRAINED_MODEL_FOLDER_PATH, EPOCH_DIR, PLOT_PATH
@@ -93,16 +92,20 @@ config_params = {
 def open_settings_window():
     settings_win = tk.Toplevel(root)
     settings_win.title("Training Settings")
-    settings_win.geometry("350x350")
-    settings_win.resizable(False, False)
+    # Remove fixed geometry for auto-sizing
+    # settings_win.geometry("350x350")
+    # settings_win.resizable(False, False)
+    settings_win.minsize(300, 200)
+    settings_win.resizable(True, False)
+
+    settings_win.columnconfigure(1, weight=1)  # Make entry column expand
 
     entries = {}
 
-    # Create label + entry for each config param
     for idx, (key, val) in enumerate(config_params.items()):
         ttk.Label(settings_win, text=f"{key}:").grid(row=idx, column=0, padx=10, pady=8, sticky="w")
-        entry = ttk.Entry(settings_win, width=15)
-        entry.grid(row=idx, column=1, padx=10, pady=8)
+        entry = ttk.Entry(settings_win)
+        entry.grid(row=idx, column=1, padx=10, pady=8, sticky="ew")
         entry.insert(0, str(val))
         entries[key] = entry
 
@@ -166,6 +169,7 @@ def open_settings_window():
 
     ttk.Button(btn_frame, text="Save", command=save_settings).pack(side="left", padx=10)
     ttk.Button(btn_frame, text="Cancel", command=settings_win.destroy).pack(side="left", padx=10)
+
 
 def evaluation(X_test_param, client_data_dict_test_param, global_model_param, personalized_models_param, writer_param,
                y_test_param):
@@ -363,19 +367,23 @@ def start_process(selected_folder_param, done_event):
         safe_log("Exception in thread:", e, level="error")
         traceback.print_exc()
 
+
 def disable_result_buttons():
     for label, btn in result_buttons.items():
         btn.config(state="disabled")
 
+
 if __name__ == "__main__":
     def update_progress(value):
         root.after(0, lambda: _update_progress_ui(value))
+
 
     def _update_progress_ui(value):
         progress['value'] = value
         progress_label.config(text=f"Training Progress: {int(value)}%")
         if value == 100:
             progress_label.config(text="Progress: 100% - Training Complete!")
+
 
     def monitor_process(p, q, done_event):
         global num_classes, global_acc, client_accs, personalised_acc, predictions, writer, is_training
@@ -421,13 +429,14 @@ if __name__ == "__main__":
             # Define a dictionary mapping button labels to their required file paths
             file_paths = {
                 "📊 Client Labels Distribution": partition_output_path,
-                "📉 Confusion Matrix": [xy_output_path,predictions_output_path],
+                "📉 Confusion Matrix": [xy_output_path, predictions_output_path],
                 "📈 Pre Epoch Losses": os.path.join(PLOT_PATH + get_today_date() + "/", 'epoch_loss_pre.png'),
                 "🛠️ Fine Tuning Epoch Losses": os.path.join(PLOT_PATH + get_today_date() + "/", 'epoch_loss_fine.png'),
-                "🔁 Personalized vs Global--Bar Chart":  result_output_path,
+                "🔁 Personalized vs Global--Bar Chart": result_output_path,
                 "🔄 Personalized vs Global--Dotted": result_output_path,
                 " Cross Validation Model": TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "X_y_test.joblib",
-                "📄 View Log" : LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date()) + "hdpftl_run.log"
+                "📄 View Log": LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder,
+                                                           date=get_today_date()) + "hdpftl_run.log"
             }
 
             for label, btn in result_buttons.items():
@@ -446,6 +455,7 @@ if __name__ == "__main__":
             print("⚠️ Queue received data but done flag not set.")
         # else:
         #    print("❌ Queue is empty. Process may have crashed before q.put()")
+
 
     def start_thread():
         ctx = mp.get_context("spawn")  # Use spawn instead of fork
@@ -476,6 +486,7 @@ if __name__ == "__main__":
             else:
                 print(f"Directory does not exist: {dir_path}")
         disable_result_buttons()
+
 
     def start_training():
         global is_training, start_time
@@ -514,6 +525,7 @@ if __name__ == "__main__":
         # ✅ Run non-blocking monitor in background
         threading.Thread(target=monitor_process, args=(training_process, q, done_event), daemon=True).start()
 
+
     def complete_progress_bar():
         def finish():
             progress.stop()
@@ -538,17 +550,20 @@ if __name__ == "__main__":
 
         root.after(0, finish)
 
+
     def update_clock():
         global after_id
         current_time = time.strftime('%H:%M:%S')
         clock_label_start.config(text=f"🕒 {current_time}")
         after_id = root.after(1000, update_clock)  # schedule next update
 
+
     def stop_clock():
         global after_id
         if after_id is not None:
             root.after_cancel(after_id)  # cancel the scheduled call
             after_id = None
+
 
     """
         safe_log("[12] Cross Validate Model...")
@@ -560,6 +575,7 @@ if __name__ == "__main__":
             fold_results = cross_validate_model_advanced(X_test, y_test, k=5, num_epochs=20, early_stopping=True)
     """
 
+
     def convert_to_hms(mins, secs):
         total_seconds = int(mins * 60 + secs)
         hh = total_seconds // 3600
@@ -569,8 +585,9 @@ if __name__ == "__main__":
 
         # GUI
 
+
     def on_selection(event):
-        global selected_folder,result_buttons
+        global selected_folder, result_buttons
         selection = listbox.curselection()
         if selection:
             index = selection[0]
@@ -579,7 +596,8 @@ if __name__ == "__main__":
             start_button.state(["!disabled"])
 
             partition_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "partitioned_data.pkl"
-            partition_output_test_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "partitioned_data_test.pkl"
+            partition_output_test_path = TRAINED_MODEL_FOLDER_PATH.substitute(
+                n=get_today_date()) + "partitioned_data_test.pkl"
             xy_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "X_y_test.joblib"
             result_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "results.pkl"
             predictions_output_path = TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "predictions.pkl"
@@ -587,13 +605,14 @@ if __name__ == "__main__":
             # Define a dictionary mapping button labels to their required file paths
             file_paths = {
                 "📊 Client Labels Distribution": partition_output_path,
-                "📉 Confusion Matrix": [xy_output_path,predictions_output_path],
+                "📉 Confusion Matrix": [xy_output_path, predictions_output_path],
                 "📈 Pre Epoch Losses": os.path.join(PLOT_PATH + get_today_date() + "/", 'epoch_loss_pre.png'),
                 "🛠️ Fine Tuning Epoch Losses": os.path.join(PLOT_PATH + get_today_date() + "/", 'epoch_loss_fine.png'),
-                "🔁 Personalized vs Global--Bar Chart":  result_output_path,
+                "🔁 Personalized vs Global--Bar Chart": result_output_path,
                 "🔄 Personalized vs Global--Dotted": result_output_path,
                 " Cross Validation Model": TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()) + "X_y_test.joblib",
-                "📄 View Log" : LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date()) + "hdpftl_run.log"
+                "📄 View Log": LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder,
+                                                           date=get_today_date()) + "hdpftl_run.log"
             }
 
             for label, btn in result_buttons.items():
@@ -630,6 +649,7 @@ if __name__ == "__main__":
         text_area.pack(expand=True, fill='both')
         text_area.insert(tk.END, log_contents)
         text_area.config(state='disabled')  # Make read-only
+
 
     # ---------- Set Window Size ----------
     mp.set_start_method("spawn")
@@ -727,6 +747,7 @@ if __name__ == "__main__":
 
     # Bind selection event
     listbox.bind('<<ListboxSelect>>', on_selection)
+
 
     # ---------- Frame 2: Control Area ----------
     # ------------------ Tooltip Class ------------------ #
