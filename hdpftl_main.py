@@ -369,15 +369,29 @@ if __name__ == "__main__":
         p.start()
         return p, q, done_event
 
-    def start_training():
-        global is_training, start_time
-        global training_process, done_flag
+
+    def clear_trainings():
+        # Remove directories
         dirs_to_remove = [
             LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date()),
             EPOCH_DIR,
             TRAINED_MODEL_FOLDER_PATH.substitute(n=get_today_date()),
+            LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=get_today_date()) + "hdpftl_run.log"
         ]
+        for dir_path in dirs_to_remove:
+            if os.path.exists(dir_path):
+                try:
+                    shutil.rmtree(dir_path)
+                    print(f"Removed directory: {dir_path}")
+                except Exception as e:
+                    print(f"Failed to remove {dir_path}: {e}")
+            else:
+                print(f"Directory does not exist: {dir_path}")
+        disable_result_buttons()
 
+    def start_training():
+        global is_training, start_time
+        global training_process, done_flag
         # Start infinite progress animation
         if is_training:
             if training_process and training_process.is_alive():
@@ -397,16 +411,7 @@ if __name__ == "__main__":
             # Close writer if open
             if writer and not writer.close:
                 writer.close()
-            # Remove directories
-            for dir_path in dirs_to_remove:
-                if os.path.exists(dir_path):
-                    try:
-                        shutil.rmtree(dir_path)
-                        print(f"Removed directory: {dir_path}")
-                    except Exception as e:
-                        print(f"Failed to remove {dir_path}: {e}")
-                else:
-                    print(f"Directory does not exist: {dir_path}")
+            clear_trainings()
 
             return
 
@@ -768,8 +773,17 @@ if __name__ == "__main__":
 
 
     theme_button = ttk.Button(control_frame, text="🌓 Toggle Theme", command=toggle_theme)
-    theme_button.grid(row=4, column=3, sticky="e", padx=5, pady=5)
+    theme_button.grid(row=4, column=2, sticky="e", padx=5, pady=5)
     ToolTip(theme_button, "Switch between dark and light mode")
+
+    # Add Clear Training button in column 4
+    clear_training_button = ttk.Button(
+        control_frame,
+        text="🧹 Clear Training",
+        command=clear_trainings
+    )
+    clear_training_button.grid(row=4, column=3, sticky="ew", padx=5, pady=5)
+    ToolTip(clear_training_button, "Clear all training logs and outputs")
 
     # ------------------ Optional: Animated Progress ------------------ #
     is_training = False  # Controlled externally
