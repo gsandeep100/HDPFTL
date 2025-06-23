@@ -41,6 +41,23 @@ from collections import Counter
 import pandas as pd
 import warnings
 
+def calculate_imbalance_ratio(counts):
+    """
+    Calculate the imbalance ratio of class counts.
+
+    Args:
+        counts (dict): Dictionary with class labels as keys and their counts as values.
+
+    Returns:
+        float or None: imbalance ratio (max/min) or None if counts is empty.
+    """
+    if counts and all(v > 0 for v in counts.values()):
+        imbalance_ratio = max(counts.values()) / min(counts.values())
+        return imbalance_ratio
+    else:
+        # Handle empty dict or zero counts safely
+        print("Warning: counts dictionary is empty or contains zero counts.")
+        return None
 
 # 🔍 Step 0: Profile
 def profile_dataset(X, y):
@@ -52,8 +69,11 @@ def profile_dataset(X, y):
     for label, count in counts.items():
         safe_log(f"  ➤ Class {label}: {count} samples")
 
-    imbalance_ratio = max(counts.values()) / min(counts.values())
-    safe_log(f"\n⚖️  Imbalance Ratio: {imbalance_ratio:.2f}")
+    imbalance_ratio = calculate_imbalance_ratio(counts)
+    if imbalance_ratio is not None:
+        safe_log(f"Imbalance ratio: {imbalance_ratio:.2f}")
+    else:
+        safe_log("Imbalance ratio could not be calculated due to missing or invalid data.")
 
     safe_log("\n🔍 Data type inspection:")
     safe_log(pd.DataFrame(X).dtypes.value_counts())

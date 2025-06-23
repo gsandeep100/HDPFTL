@@ -22,7 +22,7 @@ import tkinter as tk
 import traceback
 import warnings
 from multiprocessing import Process
-from tkinter import scrolledtext, messagebox
+from tkinter import scrolledtext, messagebox, font
 from tkinter import ttk
 
 import numpy as np
@@ -655,6 +655,11 @@ if __name__ == "__main__":
     mp.set_start_method("spawn")
     root = tk.Tk()
     root.title("HDPFTL Architecture")
+    # 1. Set default font for all widgets in this root window
+    default_font = font.nametofont("TkDefaultFont")
+    default_font.configure(family="Helvetica", size=9)  # Smaller font
+    root.option_add("*Font", default_font)
+
     # Responsive size
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
@@ -675,6 +680,10 @@ if __name__ == "__main__":
     # Header
     header_label = tk.Label(root, text="HDPFTL Architecture", font=("Arial", 18, "bold"))
     header_label.pack(pady=(15, 5))
+
+    # Main frame (use grid or pack consistently)
+    main_frame = tk.Frame(root)
+    main_frame.pack(fill='both', expand=True)
 
     # ---------- Frame 1: Selection Area ----------
     style = ttk.Style(root)
@@ -706,7 +715,7 @@ if __name__ == "__main__":
                     foreground="#01579b")  # deep blue title text
 
     # Create selection_frame using same style class
-    selection_frame = ttk.LabelFrame(root, text="📁 Select Dataset", style="Distinct.TLabelframe", padding=10)
+    selection_frame = ttk.LabelFrame(main_frame, text="🗂 Select Dataset", style="Distinct.TLabelframe", padding=10)
     selection_frame.pack(fill="x", padx=10, pady=(10, 5))
 
     # Selection label
@@ -799,8 +808,8 @@ if __name__ == "__main__":
     )
 
     # Create the custom label frame with style
-    control_frame = ttk.LabelFrame(root, text="🛠️ Process", style="Distinct.TLabelframe", padding=10)
-    control_frame.pack(fill="x", padx=10, pady=(10, 5))
+    control_frame = ttk.LabelFrame(main_frame, text="🛠️ Process", style="Distinct.TLabelframe", padding=10)
+    control_frame.pack(fill="both", padx=10, pady=(10, 5))
 
     for i in range(4):
         control_frame.columnconfigure(i, weight=1)
@@ -917,7 +926,7 @@ if __name__ == "__main__":
 
     # --- Button styling ---
     button_params = {
-        "font": ("Arial", 11),
+        "font": ("Arial", 7),
         "height": 2,
         "width": 25
     }
@@ -938,7 +947,7 @@ if __name__ == "__main__":
     )
 
     # Result Frame
-    result_frame = ttk.LabelFrame(root, text="📊 Results", style="Results.TLabelframe", padding=10)
+    result_frame = ttk.LabelFrame(main_frame, text="📊 Results", style="Results.TLabelframe", padding=10)
     result_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
 
     # Inner frame for grid layout
