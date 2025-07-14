@@ -321,6 +321,8 @@ def open_settings_window():
 
     # ----------- Configuration Entries -----------
     for idx, (key, val) in enumerate(config_params.items()):
+        if key == "USE_UPLOADED_TEST_FILES":
+            continue
         ttk.Label(settings_win, text=f"{key}:", anchor="w").grid(row=idx, column=0, padx=15, pady=8, sticky="w")
         entry = ttk.Entry(settings_win)
         entry.grid(row=idx, column=1, padx=15, pady=8, sticky="ew")
@@ -526,7 +528,7 @@ def start_process(selected_folder_param, done_event):
             with named_timer("pretrain_class", writer, tag="pretrain_class"):
                 pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=X_pretrain.shape[1],
                                early_stop_patience=10)
-                # Step 3: Instantiate target model and train on device
+                # Step 3: Instantiate Finetune model and train on device
             with named_timer("target_class", writer, tag="target_class"):
                 def base_model_fn():
                     return finetune_model(
@@ -535,19 +537,24 @@ def start_process(selected_folder_param, done_event):
                         input_dim=X_finetune.shape[1],
                         target_classes=len(np.unique(y_finetune)))
 
+            with open(partition_output_path + "general_data_test.pkl", "wb") as f:
+                pickle.dump((X_pretrain.shape[1], X_finetune.shape[1], y_finetune, len(np.unique(y_finetune))), f)
+
             with named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
                 global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
                                                                     y_test)
 
         #######################  LOAD FROM FILES ##################################
         else:
+            with named_timer("Preprocessing", writer, tag="Preprocessing"):
+                X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(
+                    "selected_test", scaler_type='minmax')
+
             load_from_files(writer)
 
-        if getattr(config, "USE_UPLOADED_TEST_FILES", False) and hasattr(config, "test_dfs") and config.test_dfs:
-            if use_all_files_var:
-                with named_timer("Preprocessing", writer, tag="Preprocessing"):
-                    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(
-                        "selected_test", scaler_type='minmax')
+        #if getattr(config, "USE_UPLOADED_TEST_FILES", False) and hasattr(config, "test_dfs") and config.test_dfs:
+            #if use_all_files_var:
+
 
         personalised_acc, client_accs, global_acc = evaluation(X_test, client_data_dict_test, global_model,
                                                                personalized_models, writer, y_test)
@@ -847,8 +854,8 @@ if __name__ == "__main__":
     root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
     # Header
-    header_label = tk.Label(root, text="HDPFTL Architecture", font=("Arial", 18, "bold"))
-    header_label.pack(pady=(15, 5))
+    #header_label = tk.Label(root, text="HDPFTL Architecture", font=("Arial", 18, "bold"))
+    #header_label.pack(pady=(15, 5))
 
     # Main frame (use grid or pack consistently)
     main_frame = tk.Frame(root)

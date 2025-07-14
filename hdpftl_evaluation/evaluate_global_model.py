@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import pandas as pd
 import torch
@@ -9,7 +11,7 @@ from hdpftl_utility.log import safe_log
 from hdpftl_utility.utils import setup_device, get_today_date
 
 
-def evaluate_global_model_fromfile():
+def evaluate_global_model_fromfile(base_model_fn):
     """
     Loads the global model from file and returns it. Does not evaluate on any test data.
 

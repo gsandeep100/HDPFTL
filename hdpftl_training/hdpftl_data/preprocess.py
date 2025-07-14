@@ -196,6 +196,9 @@ def assign_labels(
         df['Label'] = df['Label'].astype(str).str.strip()
         label_encoder = LabelEncoder()
         df['Label'] = label_encoder.fit_transform(df['Label'])
+        # Optional: attach mapping for traceability
+        df.attrs['label_mapping'] = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
+
         safe_log(f"Label mapping from existing column for {filename}")
         return df
 
