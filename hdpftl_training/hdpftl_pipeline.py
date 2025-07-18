@@ -5,12 +5,12 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 
+import hdpftl_evaluation.evaluate_global_model as evaluate_global_model
+import hdpftl_training.hdpftl_aggregation.hdpftl_fedavg as hdpftl_fedavg
+import hdpftl_training.save_model as save
 import hdpftl_utility.config as config
 import hdpftl_utility.log as log_util
 import hdpftl_utility.utils as util
-from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
-from hdpftl_training.hdpftl_aggregation.hdpftl_fedavg import aggregate_models
-from hdpftl_training.save_model import save
 
 
 def split_among_devices(X_client, y_client, seed=42):
@@ -259,7 +259,7 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
             continue
 
         # Aggregate devices per client
-        client_agg_state_dict = aggregate_models(device_state_dicts, base_model_fn)
+        client_agg_state_dict = hdpftl_fedavg.aggregate_models(device_state_dicts, base_model_fn)
         client_state_dicts.append(client_agg_state_dict)
 
     if not client_state_dicts:
@@ -267,7 +267,7 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
         return global_model
 
     # Aggregate all clients into new global model
-    new_global_state_dict = aggregate_models(client_state_dicts, base_model_fn)
+    new_global_state_dict = hdpftl_fedavg.aggregate_models(client_state_dicts, base_model_fn)
     global_model.load_state_dict(new_global_state_dict)
     return global_model
 

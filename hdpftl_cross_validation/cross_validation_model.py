@@ -5,7 +5,9 @@ from sklearn.model_selection import KFold
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import TensorDataset, DataLoader
 
-from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
+import hdpftl_training.hdpftl_models.TabularNet as tabularnet
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
 
 
 def cross_validate_model(X, y, k=5, batch_size=64, num_epochs=10, lr=0.001):
@@ -23,7 +25,7 @@ def cross_validate_model(X, y, k=5, batch_size=64, num_epochs=10, lr=0.001):
     Returns:
         List[float]: Accuracy for each fold.
     """
-    device = setup_device()
+    device = util.setup_device()
     X_np = X.values if hasattr(X, "values") else X
     y_np = y.values.flatten() if hasattr(y, "values") else y
 
@@ -31,7 +33,7 @@ def cross_validate_model(X, y, k=5, batch_size=64, num_epochs=10, lr=0.001):
     accuracies = []
 
     for fold, (train_idx, val_idx) in enumerate(kf.split(X_np)):
-        safe_log(f"🔁 Fold {fold + 1}/{k}")
+        log_util.safe_log(f"🔁 Fold {fold + 1}/{k}")
 
         # Split data
         X_train, y_train = X_np[train_idx], y_np[train_idx]
@@ -46,7 +48,7 @@ def cross_validate_model(X, y, k=5, batch_size=64, num_epochs=10, lr=0.001):
         val_loader = DataLoader(val_ds, batch_size=batch_size, pin_memory=False)
 
         # Model setup
-        model = create_model_fn().to(device)
+        model = tabularnet.create_model_fn().to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         loss_fn = torch.nn.CrossEntropyLoss()
 
@@ -74,10 +76,10 @@ def cross_validate_model(X, y, k=5, batch_size=64, num_epochs=10, lr=0.001):
 
         acc = accuracy_score(all_labels, all_preds)
         accuracies.append(acc)
-        safe_log(f"✅ Fold {fold + 1} Accuracy: {acc:.4f}")
+        log_util.safe_log(f"✅ Fold {fold + 1} Accuracy: {acc:.4f}")
 
-    safe_log(f"📊 Cross-Validation Results: {accuracies}")
-    safe_log(f"📈 Mean Accuracy: {np.mean(accuracies):.4f}")
+    log_util.safe_log(f"📊 Cross-Validation Results: {accuracies}")
+    log_util.safe_log(f"📈 Mean Accuracy: {np.mean(accuracies):.4f}")
     return accuracies
 
 
@@ -100,7 +102,7 @@ def cross_validate_model_advanced(
     Returns:
         List[dict]: List of metrics per fold.
     """
-    device = setup_device()
+    device = util.setup_device()
     X_np = X.values if hasattr(X, "values") else np.array(X)
     y_np = y.values.flatten() if hasattr(y, "values") else np.array(y).flatten()
 
@@ -108,7 +110,7 @@ def cross_validate_model_advanced(
     fold_results = []
 
     for fold, (train_idx, val_idx) in enumerate(skf.split(X_np, y_np)):
-        safe_log(f"\n🔁 Fold {fold + 1}/{k}")
+        log_util.safe_log(f"\n🔁 Fold {fold + 1}/{k}")
 
         X_train, y_train = X_np[train_idx], y_np[train_idx]
         X_val, y_val = X_np[val_idx], y_np[val_idx]
@@ -120,7 +122,7 @@ def cross_validate_model_advanced(
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=False)
         val_loader = DataLoader(val_ds, batch_size=batch_size, pin_memory=False)
 
-        model = create_model_fn().to(device)
+        model = tabularnet.create_model_fn().to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         loss_fn = torch.nn.CrossEntropyLoss()
 
@@ -149,7 +151,7 @@ def cross_validate_model_advanced(
 
             acc = accuracy_score(all_labels, all_preds)
             f1 = f1_score(all_labels, all_preds, average="macro")
-            safe_log(f"📈 Epoch {epoch + 1}: Accuracy = {acc:.4f}, F1 = {f1:.4f}")
+            log_util.safe_log(f"📈 Epoch {epoch + 1}: Accuracy = {acc:.4f}, F1 = {f1:.4f}")
 
             # Early stopping logic
             if acc > best_acc:
@@ -159,17 +161,17 @@ def cross_validate_model_advanced(
             else:
                 epochs_no_improve += 1
                 if early_stopping and epochs_no_improve >= patience:
-                    safe_log("⏹️ Early stopping triggered.")
+                    log_util.safe_log("⏹️ Early stopping triggered.")
                     break
 
         fold_results.append({"fold": fold + 1, "accuracy": best_acc, "f1_score": best_f1})
-        safe_log(f"✅ Fold {fold + 1} Final: Accuracy = {best_acc:.4f}, F1 = {best_f1:.4f}")
+        log_util.safe_log(f"✅ Fold {fold + 1} Final: Accuracy = {best_acc:.4f}, F1 = {best_f1:.4f}")
 
     # Summary
     mean_acc = np.mean([f["accuracy"] for f in fold_results])
     mean_f1 = np.mean([f["f1_score"] for f in fold_results])
-    safe_log(f"\n📊 Cross-Validation Summary:")
-    safe_log(f"🔹 Mean Accuracy: {mean_acc:.4f}")
-    safe_log(f"🔹 Mean F1 Score: {mean_f1:.4f}")
+    log_util.safe_log(f"\n📊 Cross-Validation Summary:")
+    log_util.safe_log(f"🔹 Mean Accuracy: {mean_acc:.4f}")
+    log_util.safe_log(f"🔹 Mean F1 Score: {mean_f1:.4f}")
 
     return fold_results

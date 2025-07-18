@@ -30,18 +30,16 @@ import torch
 from joblib import dump, load
 from torch.utils.tensorboard import SummaryWriter
 
+import hdpftl_evaluation.evaluate_global_model as evaluate_global_model
+import hdpftl_evaluation.evaluate_per_client as evaluate_per_client
+import hdpftl_plotting.plot as plot
+import hdpftl_training.hdpftl_data.preprocess as preprocess
+import hdpftl_training.hdpftl_pipeline as pipeline
+import hdpftl_training.hdpftl_pre_training.finetune_model as finetune_model
+import hdpftl_training.hdpftl_pre_training.pretrainclass as pretrainclass
 import hdpftl_utility.config as config
 import hdpftl_utility.log as log_util
 import hdpftl_utility.utils as util
-from hdpftl_evaluation.evaluate_global_model import evaluate_global_model, evaluate_global_model_fromfile
-from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client, \
-    load_personalized_models_fromfile
-from hdpftl_plotting.plot import plot_client_accuracies, plot_personalized_vs_global, plot_confusion_matrix, \
-    plot_training_loss, plot_class_distribution_per_client, cross_validate_model_with_plots
-from hdpftl_training.hdpftl_data.preprocess import preprocess_data
-from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition_with_devices
-from hdpftl_training.hdpftl_pre_training.finetune_model import finetune_model
-from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
 warnings.filterwarnings("ignore", message=".*Redirects are currently not supported.*")
@@ -413,12 +411,12 @@ def evaluation(X_test_param, client_data_dict_test_param, global_model_param, pe
     """During evaluation: Use  global model for generalization tests 
             Use personalized models to report per - client performance"""
     with util.named_timer("Evaluate Personalized Models", writer_param, tag="PersonalizedEval"):
-        personalised_acc = evaluate_personalized_models_per_client(personalized_models_param,
-                                                                   client_data_dict_test_param)
+        personalised_acc = evaluate_per_client.evaluate_personalized_models_per_client(personalized_models_param,
+                                                                                       client_data_dict_test_param)
     with util.named_timer("Evaluate Personalized Models Per Client", writer, tag="PersonalizedEvalperClient"):
-        client_accs = evaluate_per_client(global_model_param, client_data_dict_test_param)
+        client_accs = evaluate_per_client.evaluate_per_client(global_model_param, client_data_dict_test_param)
     with util.named_timer("Evaluate Global Model", writer, tag="GlobalEval"):
-        global_acc = evaluate_global_model(global_model_param, X_test_param, y_test_param)
+        global_acc = evaluate_global_model.evaluate_global_model(global_model_param, X_test_param, y_test_param)
 
         with open(result_output_path + "results.pkl", "wb") as f:
             pickle.dump((personalised_acc, client_accs, global_acc), f)
@@ -458,9 +456,9 @@ def load_from_files(writer_param):
         client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
         predictions, num_classes
     with util.named_timer("Evaluate Global Model From File", writer_param, tag="EvalFromFile"):
-        global_model = evaluate_global_model_fromfile()
+        global_model = evaluate_global_model.evaluate_global_model_fromfile()
     with util.named_timer("Evaluate Personalized Models From File", writer_param, tag="PersonalizedEval"):
-        personalized_models = load_personalized_models_fromfile()
+        personalized_models = evaluate_per_client.load_personalized_models_fromfile()
     X_test, y_test = load(xy_output_path)
     with open(partition_output_path, "rb") as f:
         client_data_dict, hierarchical_data = pickle.load(f)
@@ -495,7 +493,7 @@ def start_process(selected_folder_param, done_event):
             with util.named_timer("Preprocessing", writer, tag="Preprocessing"):
                 global X_test, y_test
                 # For deep learning:
-                X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(
+                X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess.preprocess_data(
                     log_path_str,
                     selected_folder_param, scaler_type='minmax')
                 # For classical ML:----Dont Delete the below comment...its for the different parameter different situations models
@@ -518,7 +516,7 @@ def start_process(selected_folder_param, done_event):
             dump((X_test, y_test), save_path)
 
             with util.named_timer("dirichlet_partition", writer, tag="dirichlet_partition"):
-                client_data_dict, hierarchical_data = dirichlet_partition_with_devices(
+                client_data_dict, hierarchical_data = pipeline.dirichlet_partition_with_devices(
                     X_pretrain, y_pretrain, alpha=0.5, num_clients=config.NUM_CLIENTS,
                     num_devices_per_client=config.NUM_DEVICES_PER_CLIENT
                 )
@@ -536,16 +534,13 @@ def start_process(selected_folder_param, done_event):
 
             # Step 2: Pretrain global model
             with util.named_timer("pretrain_class", writer, tag="pretrain_class"):
-                pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=X_pretrain.shape[1],
-                               early_stop_patience=10)
+                pretrainclass.pretrain_class(X_pretrain, X_test, y_pretrain, y_test, input_dim=X_pretrain.shape[1],
+                                             early_stop_patience=10)
                 # Step 3: Instantiate Finetune model and train on device
             with util.named_timer("target_class", writer, tag="target_class"):
                 def base_model_fn():
-                    return finetune_model(
-                        X_finetune,
-                        y_finetune,
-                        input_dim=X_finetune.shape[1],
-                        target_classes=len(np.unique(y_finetune)))
+                    return finetune_model(X_finetune, y_finetune, input_dim=X_finetune.shape[1],
+                                          target_classes=len(np.unique(y_finetune)))
 
             with open(partition_output_path + "general_data_test.pkl", "wb") as f:
                 pickle.dump((X_pretrain.shape[1], X_finetune.shape[1], y_finetune, len(np.unique(y_finetune))), f)
@@ -557,7 +552,7 @@ def start_process(selected_folder_param, done_event):
         #######################  LOAD FROM FILES ##################################
         else:
             with util.named_timer("Preprocessing", writer, tag="Preprocessing"):
-                X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(
+                X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess.preprocess_data(
                     "selected_test", scaler_type='minmax')
 
             load_from_files(writer)
@@ -803,7 +798,7 @@ if __name__ == "__main__":
         p, q, done_event = start_thread()
         p.join()
         if p.exitcode == 0 and done_event.is_set():
-            plot_class_distribution_per_client(client_data_dict)
+            plot.plot_class_distribution_per_client(client_data_dict)
         else:
             print("❌ Subprocess failed or did not complete properly.")
 
@@ -816,7 +811,7 @@ if __name__ == "__main__":
             try:
                 if isinstance(num_classes, int) and num_classes > 0:
                     class_labels = [str(i) for i in range(num_classes)]
-                    plot_confusion_matrix(y_test, predictions, class_labels, normalize=True)
+                    plot.plot_confusion_matrix(y_test, predictions, class_labels, normalize=True)
                 else:
                     print("❌ num_classes is invalid or not properly set.")
             except Exception as e:
@@ -829,7 +824,7 @@ if __name__ == "__main__":
         p, q, done_event = start_thread()
         p.join()
         if p.exitcode == 0 and done_event.is_set():
-            plot_training_loss(np.load(config.EPOCH_FILE_PRE), 'epoch_loss_pre.png', 'Pre Epoch Losses')
+            plot.plot_training_loss(np.load(config.EPOCH_FILE_PRE), 'epoch_loss_pre.png', 'Pre Epoch Losses')
         else:
             print("❌ Failed to complete pre-epoch process.")
 
@@ -838,7 +833,7 @@ if __name__ == "__main__":
         p, q, done_event = start_thread()
         p.join()
         if p.exitcode == 0 and done_event.is_set():
-            plot_training_loss(np.load(config.EPOCH_FILE_FINE), 'epoch_loss_fine.png', 'Fine Tuning Epoch Losses')
+            plot.plot_training_loss(np.load(config.EPOCH_FILE_FINE), 'epoch_loss_fine.png', 'Fine Tuning Epoch Losses')
         else:
             print("❌ Fine-tuning process failed or did not signal completion.")
 
@@ -847,7 +842,7 @@ if __name__ == "__main__":
         p, q, done_event = start_thread()
         p.join()
         if p.exitcode == 0 and done_event.is_set():
-            plot_client_accuracies(client_accs, global_acc, "Personalized vs Global--Dotted")
+            plot.plot_client_accuracies(client_accs, global_acc, "Personalized vs Global--Dotted")
         else:
             print("❌ Failed to generate plot. Process exited with error or did not complete.")
 
@@ -856,7 +851,7 @@ if __name__ == "__main__":
         p, q, done_event = start_thread()
         p.join()
         if p.exitcode == 0 and done_event.is_set():
-            plot_personalized_vs_global(personalised_acc, global_acc)
+            plot.plot_personalized_vs_global(personalised_acc, global_acc)
         else:
             print("❌ Process failed or did not finish properly.")
 
@@ -865,7 +860,7 @@ if __name__ == "__main__":
         p, q, done_event = start_thread()
         p.join()
         if p.exitcode == 0 and done_event.is_set():
-            cross_validate_model_with_plots(X_test, y_test)
+            plot.cross_validate_model_with_plots(X_test, y_test)
         else:
             print("❌ Cross-validation process failed or didn’t signal completion.")
 
@@ -1191,9 +1186,12 @@ if __name__ == "__main__":
             font=("Arial", 16, "bold"),
             foreground="#20733e"  # deep green for title text
         )
+        """
         # Result Frame
         result_frame = ttk.LabelFrame(main_frame, text="📝 Logs", style="Results.TLabelframe", padding=10)
         result_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+
+        
         log_text = scrolledtext.ScrolledText(result_frame, wrap="word", height=10, font=("Courier", 10))
         log_text.pack(fill="both", expand=True)
         log_text.config(state="disabled")
@@ -1204,6 +1202,7 @@ if __name__ == "__main__":
 
         # === Optional Controls ===
         log_text.auto_scroll = True
+"""
 
 
     def on_close():

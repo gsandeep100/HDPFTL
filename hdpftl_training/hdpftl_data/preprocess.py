@@ -23,10 +23,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
+import hdpftl_training.hdpftl_data.sampling as sampling
 import hdpftl_utility.config as config
 import hdpftl_utility.log as log_util
 import hdpftl_utility.utils as util
-from hdpftl_training.hdpftl_data.sampling import stratified_downsample
 
 """
 🎯 What is PCA (Principal Component Analysis)?
@@ -144,7 +144,7 @@ def prepare_data(X, y, strategy='pca_smote', n_components=30, pre_sample=False, 
 
     # Optional downsampling
     if pre_sample:
-        X, y = stratified_downsample(X, y, fraction=sample_fraction)
+        X, y = sampling.stratified_downsample(X, y, fraction=sample_fraction)
 
     profile_dataset(X, y)
     # Force float32 to save memory

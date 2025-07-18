@@ -164,5 +164,6 @@ PLOT_PATH = "./hdpftl_plot_outputs/"
 # Remove directories
 dirs_to_remove = [
     "./hdpftl_logs/",
-    "./hdpftl_trained_models",
+    "./hdpftl_trained_models/",
+    "./runs/",
 ]

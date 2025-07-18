@@ -9,7 +9,7 @@ import hdpftl_utility.utils as util
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn, TabularNet
 
 
-def evaluate_global_model_fromfile(base_model_fn):
+def evaluate_global_model_fromfile():
     """
     Loads the global model from file and returns it. Does not evaluate on any test data.
 
