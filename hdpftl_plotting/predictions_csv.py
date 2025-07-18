@@ -1,7 +1,6 @@
 import pandas as pd
 from result import predictions
 
-import hdpftl_utility.log as log_util
 
 def prediction_csv(new_data):
     # Convert predictions to NumPy

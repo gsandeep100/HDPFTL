@@ -14,6 +14,7 @@ import torch.nn as nn
 
 import hdpftl_utility.config as config
 
+
 def create_model_fn(input_dim=config.INPUT_DIM, num_classes=config.NUM_CLASSES):
     return TabularNet(input_dim, num_classes)
 

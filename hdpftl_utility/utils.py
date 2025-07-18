@@ -23,6 +23,7 @@ from imblearn.over_sampling import SMOTE, SVMSMOTE, KMeansSMOTE
 
 import hdpftl_utility.log as log_util
 
+
 def setup_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

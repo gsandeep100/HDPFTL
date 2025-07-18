@@ -1,70 +1,11 @@
 # === Setup Logging ===
 import logging
 import os
-import queue
 import sys
-import threading
 import time
 
 import numpy as np
 import psutil
-
-# Global variables
-_log_queue = queue.Queue()
-_thread = None
-_stop_event = threading.Event()
-_main_callback = None
-
-
-def set_main_callback(callback):
-    """Register the callback method from main.py to receive log records asynchronously."""
-    global _main_callback
-    _main_callback = callback
-
-
-def _thread_worker():
-    global _log_queue, _main_callback, _stop_event
-    print(f"[_thread_worker] Queue ID: {id(_log_queue)}")  # Debug
-    while not _stop_event.is_set():
-        try:
-            log_record = _log_queue.get()
-            print("Got log_record from queue", log_record)  # <- Should appear
-            if _main_callback:
-                print("Calling main callback")
-                _main_callback(log_record)
-            else:
-                print("Callback is None")
-            _log_queue.task_done()
-        except queue.Empty:
-            continue
-    print("Log thread stopped.")
-
-
-def enqueue_log(log_record):
-    global _log_queue
-    print(f"[enqueue_log] Queue ID: {id(_log_queue)}")  # Debug
-    _log_queue.put(log_record)
-
-
-def start_worker_thread():
-    """Start the background thread if not already running."""
-    global _stop_event, _thread
-    if _thread and _thread.is_alive():
-        print("Thread already running.")
-        return
-    _stop_event.clear()
-    _thread = threading.Thread(target=_thread_worker, daemon=True)
-    _thread.start()
-    print("Thread started.")
-
-
-def stop_worker_thread():
-    global _stop_event, _thread
-    """Stop the background thread gracefully."""
-    _stop_event.set()
-    if _thread:
-        _thread.join()
-    print("Thread stopped.")
 
 
 def setup_logging(log_path, log_to_file=True):
@@ -131,8 +72,6 @@ def safe_log(message, extra="", level="info"):
         "custom": "",  # handle this later if needed
         "timestamp": make_json_safe(time.time()),
     }
-
-    enqueue_log(log_record)
 
 
 def log_memory(tag=""):

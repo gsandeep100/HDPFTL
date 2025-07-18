@@ -5,12 +5,13 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 
-from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
-from hdpftl_training.hdpftl_aggregation.hdpftl_fedavg import aggregate_models
-from hdpftl_training.save_model import save
 import hdpftl_utility.config as config
 import hdpftl_utility.log as log_util
 import hdpftl_utility.utils as util
+from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
+from hdpftl_training.hdpftl_aggregation.hdpftl_fedavg import aggregate_models
+from hdpftl_training.save_model import save
+
 
 def split_among_devices(X_client, y_client, seed=42):
     """
@@ -253,7 +254,8 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
             device_state_dicts.append(local_state_dict)
 
         if not device_state_dicts:
-            log_util.safe_log(f"No devices trained for client {client_id}, skipping client aggregation.", level="warning")
+            log_util.safe_log(f"No devices trained for client {client_id}, skipping client aggregation.",
+                              level="warning")
             continue
 
         # Aggregate devices per client

@@ -1,8 +1,8 @@
 import torch
 
-from hdpftl_training.hdpftl_personalised_client.personalize_clients import personalize_clients
 import hdpftl_utility.log as log_util
 import hdpftl_utility.utils as util
+from hdpftl_training.hdpftl_personalised_client.personalize_clients import personalize_clients
 
 
 def aggregate_bayesian(local_models, base_model_fn, X_train, y_train, client_partitions):

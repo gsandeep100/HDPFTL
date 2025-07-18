@@ -7,9 +7,7 @@ from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
-import hdpftl_utility.config as config
-import hdpftl_utility.log as log_util
-import hdpftl_utility.utils as util
+
 
 # ✅ 1. Global vs Personalized Accuracy per Client
 

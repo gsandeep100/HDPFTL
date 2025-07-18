@@ -23,10 +23,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-from hdpftl_training.hdpftl_data.sampling import stratified_downsample
 import hdpftl_utility.config as config
 import hdpftl_utility.log as log_util
 import hdpftl_utility.utils as util
+from hdpftl_training.hdpftl_data.sampling import stratified_downsample
 
 """
 🎯 What is PCA (Principal Component Analysis)?

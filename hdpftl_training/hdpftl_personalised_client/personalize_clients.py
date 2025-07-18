@@ -1,8 +1,7 @@
 from copy import deepcopy
 
 from hdpftl_training.train_device_model import train_device_model
-import hdpftl_utility.config as config
-import hdpftl_utility.utils as util
+
 
 def personalize_clients(global_model, X, y, client_partitions, epochs=2):
     models = {}

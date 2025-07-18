@@ -30,6 +30,9 @@ import torch
 from joblib import dump, load
 from torch.utils.tensorboard import SummaryWriter
 
+import hdpftl_utility.config as config
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model, evaluate_global_model_fromfile
 from hdpftl_evaluation.evaluate_per_client import evaluate_personalized_models_per_client, evaluate_per_client, \
     load_personalized_models_fromfile
@@ -39,9 +42,6 @@ from hdpftl_training.hdpftl_data.preprocess import preprocess_data
 from hdpftl_training.hdpftl_pipeline import hdpftl_pipeline, dirichlet_partition_with_devices
 from hdpftl_training.hdpftl_pre_training.finetune_model import finetune_model
 from hdpftl_training.hdpftl_pre_training.pretrainclass import pretrain_class
-import hdpftl_utility.config as config
-import hdpftl_utility.log as log_util
-import hdpftl_utility.utils as util
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
 warnings.filterwarnings("ignore", message=".*Redirects are currently not supported.*")
@@ -90,350 +90,15 @@ config_params = {
 
 
 class MainApp:
+
     def __init__(self, root):
-        # Register callback and start background thread in logic.py
         self.root = root
-        self.log_text = None
-        self.create_ui()
-        log_util.set_main_callback(self.enqueue_gui_safe_log)
-        log_util.start_worker_thread()
-        """
-        time.sleep(0.5)  # Let thread spin up
-        hdpftl_utility.log.enqueue_log({
-            "message": "Testing log",
-            "level": "info",
-            "custom": "startup",
-            "timestamp": time.time()
-        })
-"""
-
-    def enqueue_gui_safe_log(self, message):
-        self.root.after(0, self.handle_log, message)
-
-    def on_close(self):
-        log_util.stop_worker_thread()
-        self.root.destroy()
-
-    def get_log_level(self, msg):
-        if "[ERROR]" in msg:
-            return "ERROR"
-        elif "[WARNING]" in msg:
-            return "WARNING"
-        else:
-            return "INFO"
-
-    def handle_log(self, log_record):
-        level = self.get_log_level(log_record)
-        msg = log_record.get("message")
-        custom = log_record.get("custom")
-        timestamp = log_record.get("timestamp")
-        tag = level if level in ("INFO", "WARNING", "ERROR") else "INFO"
-        self.log_text.insert(tk.END, log_record + "\n", tag)
-        if self.log_text.auto_scroll:
-            self.log_text.see(tk.END)
-
-        """
-        formatted = f"[{level.upper()}] {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))} | {msg} | Custom: {custom}\n"
-        # ✅ Use .after() to safely update Tkinter widget
-        if self.log_text is not None:
-            self.log_text.after(0, lambda: self.append_log(formatted))
-        """
-
-    def append_log(self, message):
-        try:
-            if self.log_text is not None:
-                self.log_text.config(state='normal')
-                self.log_text.insert('end', message + '\n')
-                self.log_text.see('end')
-                self.log_text.config(state='disabled')
-        except Exception as e:
-            print(f"Exception in append_log: {e}")
-
-    def create_ui(self):
-        global use_all_files_var, is_dark_mode, x, style, label_selected, listbox, clock_label_start, start_time_label, start_button, end_time_label, time_taken_label, progress, progress_label, animate_progress_label
-        # ---------- Set Window Size ----------
-        mp.set_start_method("spawn")
-        use_all_files_var = tk.BooleanVar(value=config.USE_UPLOADED_TEST_FILES)  # Now safe to create
-        root.title("HDPFTL Architecture")
-        # Main menu bar
-        menu_bar = tk.Menu(root)
-        # Submenu: Reports
-        reports_files_menu = tk.Menu(menu_bar, tearoff=0)
-        reports_files_menu.add_command(label="📊 Client Labels Distribution", command=handle_client_label_distribution)
-        reports_files_menu.add_command(label="📉 Confusion Matrix", command=handle_confusion_matrix)
-        reports_files_menu.add_command(label="📈 Pre Epoch Losses", command=handle_pre_epoch_losses)
-        reports_files_menu.add_command(label="🛠️ Fine Tuning Epoch Losses", command=handle_fine_tune_losses)
-        reports_files_menu.add_command(label="🔁 Personalized vs Global--Bar Chart",
-                                       command=handle_personalized_vs_global_bar)
-        reports_files_menu.add_command(label="🔄 Personalized vs Global--Dotted",
-                                       command=handle_plot_personalised_vs_global)
-        reports_files_menu.add_command(label="🔬 Cross Validation Model", command=handle_cross_validation)
-        menu_bar.add_cascade(label="📊 Reports", menu=reports_files_menu)
-        # Submenu: Settings
-        is_dark_mode = False
-        view_menu = tk.Menu(menu_bar, tearoff=0)
-        view_menu.add_command(label="Clear All", command=clear_trainings)
-        view_menu.add_command(label="Logs", command=open_log_window)
-        view_menu.add_checkbutton(label="Dark Mode", command=toggle_theme)
-        menu_bar.add_cascade(label="🧰 Utility", menu=view_menu)
-        # Submenu: Settings
-        settings_files_menu = tk.Menu(menu_bar, tearoff=0)
-        settings_files_menu.add_command(label="🛠️ Settings", command=open_settings_window)
-        menu_bar.add_cascade(label="⚙️ Settings", menu=settings_files_menu)
-        # Submenu: Settings
-        exit_menu = tk.Menu(menu_bar, tearoff=0)
-        exit_menu.add_command(label="Exit", command=exit_app)
-        menu_bar.add_cascade(label="Exit", menu=exit_menu)
-        # Display the menu bar
-        root.config(menu=menu_bar)
-        # 1. Set default font for all widgets in this root window
-        default_font = font.nametofont("TkDefaultFont")
-        default_font.configure(family="Helvetica", size=12)  # Smaller font
-        root.option_add("*Font", default_font)
-        # Responsive size
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
-        window_width = int(screen_width * 0.8)
-        window_height = int(screen_height * 0.8)
-        # Calculate position to center the window
-        # Calculate position to center the window
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        # Apply minimum size if you want
-        root.minsize(500, 700)  # optional, keep or remove
-        root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        # Header
-        # header_label = tk.Label(root, text="HDPFTL Architecture", font=("Arial", 18, "bold"))
-        # header_label.pack(pady=(15, 5))
-        # Main frame (use grid or pack consistently)
-        main_frame = tk.Frame(root)
-        main_frame.pack(fill='both', expand=True)
-        # ---------- Frame 1: Selection Area ----------
-        style = ttk.Style(root)
-        style.theme_use('default')
-        # Style for selection_frame LabelFrame
-        style.configure(
-            "Selection.TLabelframe",
-            background="#fff7e6",  # very light warm/yellow background
-            bordercolor="#f5a623",  # warm orange border
-            relief="solid",
-            borderwidth=3,
-            padding=10
-        )
-        style.configure(
-            "Selection.TLabelframe.Label",
-            font=("Arial", 16, "bold"),
-            foreground="#b35e00"  # deep orange for title text
-        )
-        # Define reusable "Distinct" style if not already defined
-        style.configure("Distinct.TLabelframe",
-                        background="#f0f8ff",  # very light blue
-                        bordercolor="#0288d1",  # bright blue border
-                        relief="solid",
-                        borderwidth=3)
-        style.configure("Distinct.TLabelframe.Label",
-                        font=("Arial", 14, "bold"),
-                        foreground="#01579b")  # deep blue title text
-        # Create selection_frame using same style class
-        selection_frame = ttk.LabelFrame(main_frame, text="🗂 Select Dataset", style="Distinct.TLabelframe", padding=10)
-        selection_frame.pack(fill="x", padx=10, pady=(10, 5))
-        # Selection label
-        label_selected = tk.Label(
-            selection_frame,
-            text="📂 Selected Folder: None",
-            font=("Helvetica", 24, "bold"),
-            anchor='center',
-            justify='center',
-        )
-        label_selected.pack(pady=10, fill='x')
-        # Scrollbar
-        scrollbar = tk.Scrollbar(selection_frame)
-        scrollbar.pack(side="right", fill="y")
-        # Listbox
-        listbox = tk.Listbox(
-            selection_frame,
-            height=5,
-            width=60,
-            font=("Segoe UI", 13),
-            selectmode=tk.SINGLE,
-            bg="#f9f9f9",
-            fg="#333",
-            selectbackground="#a0c4ff",
-            selectforeground="#000",
-            activestyle="dotbox",
-            relief="ridge",
-            yscrollcommand=scrollbar.set
-        )
-        listbox.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        scrollbar.config(command=listbox.yview)
-        # Insert folders
-        for folder in util.get_output_folders(config.OUTPUT_DATASET_ALL_DATA):
-            if folder == "selected_test":
-                continue
-            listbox.insert(tk.END, folder)
-        # Bind selection event
-        listbox.bind('<<ListboxSelect>>', on_selection)
-
-        # ---------- Frame 2: Control Area ----------
-        # ------------------ Tooltip Class ------------------ #
-        class ToolTip:
-            def __init__(self, widget, text):
-                self.widget = widget
-                self.text = text
-                self.tip_window = None
-                widget.bind("<Enter>", self.show_tip)
-                widget.bind("<Leave>", self.hide_tip)
-
-            def show_tip(self, event=None):
-                if self.tip_window or not self.text:
-                    return
-                x = self.widget.winfo_rootx() + 20
-                y = self.widget.winfo_rooty() + 20
-                self.tip_window = tw = tk.Toplevel(self.widget)
-                tw.wm_overrideredirect(True)
-                tw.wm_geometry(f"+{x}+{y}")
-                label = tk.Label(tw, text=self.text, justify='left',
-                                 background="#ffffe0", relief='solid', borderwidth=1,
-                                 font=("Segoe UI", 9))
-                label.pack(ipadx=5, ipady=3)
-
-            def hide_tip(self, event=None):
-                if self.tip_window:
-                    self.tip_window.destroy()
-                    self.tip_window = None
-
-        # ------------------ Control Area ------------------ #
-        # Create style for LabelFrame
-        style = ttk.Style(root)
-        style.theme_use('default')
-        style.configure(
-            "Distinct.TLabelframe",
-            background="#e6f0ff",  # very light blue background
-            bordercolor="#1a73e8",  # bright blue border
-            relief="solid",
-            borderwidth=3,
-            padding=10
-        )
-        style.configure(
-            "Distinct.TLabelframe.Label",
-            font=("Arial", 16, "bold"),
-            foreground="#0b5394"  # deep blue for title text
-        )
-        # Create the custom label frame with style
-        control_frame = ttk.LabelFrame(main_frame, text="🛠️ Process", style="Distinct.TLabelframe", padding=10)
-        control_frame.pack(fill="both", padx=10, pady=(10, 5))
-        for i in range(4):
-            control_frame.columnconfigure(i, weight=1)
-        # Style setup
-        style = ttk.Style(root)
-        style.theme_use('default')
-        style.configure(
-            "Custom.Horizontal.TProgressbar",
-            thickness=30,  # taller bar
-            troughcolor="#cccccc",  # light gray background
-            background="#0b84a5",  # vibrant blue (or try "#4caf50", "#ff9800", etc.)
-            bordercolor="#000000",  # optional
-            lightcolor="#0b84a5",
-            darkcolor="#0b84a5"
-        )
-        style.configure("Custom.TButton",
-                        foreground="white",
-                        background="#d32f2f",
-                        font=("Arial", 14, "bold"),
-                        padding=10)
-        style.map("Custom.TButton",
-                  background=[('active', '#b71c1c')],
-                  foreground=[('disabled', 'gray')])
-        # Start time label
-        clock_label_start = tk.Label(control_frame, font=('Arial', 12), fg='green', text="🕒 Start Time: --:--:--")
-        clock_label_start.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
-        ToolTip(clock_label_start, "When the training process starts")
-        start_time_label = clock_label_start
-        # Start button
-        start_button = ttk.Button(control_frame, text="🚀 Start Training", command=start_training,
-                                  style="Custom.TButton")
-        start_button.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
-        start_button.state(["disabled"])
-        ToolTip(start_button, "Start the federated training process")
-        # End time label
-        clock_label_end = tk.Label(control_frame, font=('Arial', 12), fg='red', text="🛑 End Time: --:--:--")
-        clock_label_end.grid(row=0, column=2, sticky="ew", padx=5, pady=5)
-        ToolTip(clock_label_end, "When training finishes")
-        end_time_label = clock_label_end
-        # Total time label
-        time_taken_label = tk.Label(control_frame, font=('Arial', 12), fg='blue', text="⏱️ Total Time: --:--:--")
-        time_taken_label.grid(row=0, column=3, sticky="ew", padx=5, pady=5)
-        ToolTip(time_taken_label, "Total duration of training")
-        # Separator
-        ttk.Separator(control_frame, orient="horizontal").grid(row=1, column=0, columnspan=4, sticky="ew", pady=(10, 5))
-        # Progress bar
-        progress = ttk.Progressbar(
-            control_frame,
-            orient="horizontal",
-            mode="determinate",
-            style="Custom.Horizontal.TProgressbar"
-        )
-        progress.grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(15, 5))
-        # Progress label (clearly visible)
-        progress_label = tk.Label(control_frame, text="Progress: 0%", font=("Segoe UI", 11, "bold"), fg="#0b84a5")
-        progress_label.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(0, 10))
-        ToolTip(progress_label, "Shows real-time training progress")
-
-        # ------------------ Optional: Animated Progress ------------------ #
-        def animate_progress_label():
-            current = progress_label.cget("text")
-            if current.endswith("..."):
-                progress_label.config(text="Progress: Training")
-            else:
-                progress_label.config(text=current + ".")
-            if is_training:
-                root.after(500, animate_progress_label)
-
-        # ---------- Frame 3: Result Area ----------
-        # --- Button styling ---
-        if get_os() == "macOS":
-            button_params = {
-                "font": ("Arial", 13),
-                "height": 2,
-                "width": 25
-            }
-        else:
-            button_params = {
-                "font": ("Arial", 7),
-                "height": 2,
-                "width": 25
-            }
-        # Style for result_frame LabelFrame
-        style.configure(
-            "Results.TLabelframe",
-            background="#e6fff0",  # very light mint/green background
-            bordercolor="#34a853",  # fresh green border
-            relief="solid",
-            borderwidth=3,
-            padding=10
-        )
-        style.configure(
-            "Results.TLabelframe.Label",
-            font=("Arial", 16, "bold"),
-            foreground="#20733e"  # deep green for title text
-        )
-        # Result Frame
-        result_frame = ttk.LabelFrame(main_frame, text="📝 Logs", style="Results.TLabelframe", padding=10)
-        result_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
-        self.log_text = scrolledtext.ScrolledText(result_frame, wrap="word", height=10, font=("Courier", 10))
-        self.log_text.pack(fill="both", expand=True)
-        self.log_text.config(state="disabled")
-        # === Color tags ===
-        self.log_text.tag_config("INFO", foreground="lightgreen")
-        self.log_text.tag_config("WARNING", foreground="orange")
-        self.log_text.tag_config("ERROR", foreground="red")
-
-        # === Optional Controls ===
-        self.log_text.auto_scroll = True
+        # Register callback and start background thread in log.py
 
 
 def enable_disable_button():
-    partition_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "partitioned_data.pkl"
+    partition_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(
+        n=util.get_today_date()) + "partitioned_data.pkl"
     xy_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "X_y_test.joblib"
     result_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "results.pkl"
     predictions_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "predictions.pkl"
@@ -443,10 +108,12 @@ def enable_disable_button():
         "📊 Client Labels Distribution": partition_output_path,
         "📉 Confusion Matrix": [xy_output_path, predictions_output_path],
         "📈 Pre Epoch Losses": os.path.join(config.PLOT_PATH + util.get_today_date() + "/", 'epoch_loss_pre.png'),
-        "🛠️ Fine Tuning Epoch Losses": os.path.join(config.PLOT_PATH + util.get_today_date() + "/", 'epoch_loss_fine.png'),
+        "🛠️ Fine Tuning Epoch Losses": os.path.join(config.PLOT_PATH + util.get_today_date() + "/",
+                                                    'epoch_loss_fine.png'),
         "🔁 Personalized vs Global--Bar Chart": result_output_path,
         "🔄 Personalized vs Global--Dotted": result_output_path,
-        "🔬 Cross Validation Model": config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "X_y_test.joblib",
+        "🔬 Cross Validation Model": config.TRAINED_MODEL_FOLDER_PATH.substitute(
+            n=util.get_today_date()) + "X_y_test.joblib",
         "📄 View Log": config.LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder,
                                                           date=util.get_today_date()) + "hdpftl_run.log"
     }
@@ -779,7 +446,8 @@ def plot(global_model_param):
 
 
 def load_from_files(writer_param):
-    partition_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "partitioned_data.pkl"
+    partition_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(
+        n=util.get_today_date()) + "partitioned_data.pkl"
     partition_output_test_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(
         n=util.get_today_date()) + "partitioned_data_test.pkl"
     xy_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "X_y_test.joblib"
@@ -817,6 +485,7 @@ def start_process(selected_folder_param, done_event):
         log_path_str = config.LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder_param, date=util.get_today_date())
         util.is_folder_exist(log_path_str)
         log_util.setup_logging(log_path_str)
+
         log_util.safe_log("============================================================================")
         log_util.safe_log("======================Process Started=======================================")
         log_util.safe_log("============================================================================")
@@ -1253,7 +922,297 @@ if __name__ == "__main__":
         with named_timer("Cross Validate Model with F1 Score", writer, tag="ValidateModelF1"):
             fold_results = cross_validate_model_advanced(X_test, y_test, k=5, num_epochs=20, early_stopping=True)
     """
+
+
+    def create_ui():
+        global use_all_files_var, is_dark_mode, x, style, label_selected, listbox, clock_label_start, start_time_label, start_button, end_time_label, time_taken_label, progress, progress_label, animate_progress_label
+        # ---------- Set Window Size ----------
+        use_all_files_var = tk.BooleanVar(value=config.USE_UPLOADED_TEST_FILES)  # Now safe to create
+        root.title("HDPFTL Architecture")
+        # Main menu bar
+        menu_bar = tk.Menu(root)
+        # Submenu: Reports
+        reports_files_menu = tk.Menu(menu_bar, tearoff=0)
+        reports_files_menu.add_command(label="📊 Client Labels Distribution", command=handle_client_label_distribution)
+        reports_files_menu.add_command(label="📉 Confusion Matrix", command=handle_confusion_matrix)
+        reports_files_menu.add_command(label="📈 Pre Epoch Losses", command=handle_pre_epoch_losses)
+        reports_files_menu.add_command(label="🛠️ Fine Tuning Epoch Losses", command=handle_fine_tune_losses)
+        reports_files_menu.add_command(label="🔁 Personalized vs Global--Bar Chart",
+                                       command=handle_personalized_vs_global_bar)
+        reports_files_menu.add_command(label="🔄 Personalized vs Global--Dotted",
+                                       command=handle_plot_personalised_vs_global)
+        reports_files_menu.add_command(label="🔬 Cross Validation Model", command=handle_cross_validation)
+        menu_bar.add_cascade(label="📊 Reports", menu=reports_files_menu)
+        # Submenu: Settings
+        is_dark_mode = False
+        view_menu = tk.Menu(menu_bar, tearoff=0)
+        view_menu.add_command(label="Clear All", command=clear_trainings)
+        view_menu.add_command(label="Logs", command=open_log_window)
+        view_menu.add_checkbutton(label="Dark Mode", command=toggle_theme)
+        menu_bar.add_cascade(label="🧰 Utility", menu=view_menu)
+        # Submenu: Settings
+        settings_files_menu = tk.Menu(menu_bar, tearoff=0)
+        settings_files_menu.add_command(label="🛠️ Settings", command=open_settings_window)
+        menu_bar.add_cascade(label="⚙️ Settings", menu=settings_files_menu)
+        # Submenu: Settings
+        exit_menu = tk.Menu(menu_bar, tearoff=0)
+        exit_menu.add_command(label="Exit", command=exit_app)
+        menu_bar.add_cascade(label="Exit", menu=exit_menu)
+        # Display the menu bar
+        root.config(menu=menu_bar)
+        # 1. Set default font for all widgets in this root window
+        default_font = font.nametofont("TkDefaultFont")
+        default_font.configure(family="Helvetica", size=12)  # Smaller font
+        root.option_add("*Font", default_font)
+        # Responsive size
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        window_width = int(screen_width * 0.8)
+        window_height = int(screen_height * 0.8)
+        # Calculate position to center the window
+        # Calculate position to center the window
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        # Apply minimum size if you want
+        root.minsize(500, 700)  # optional, keep or remove
+        root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        # Header
+        # header_label = tk.Label(root, text="HDPFTL Architecture", font=("Arial", 18, "bold"))
+        # header_label.pack(pady=(15, 5))
+        # Main frame (use grid or pack consistently)
+        main_frame = tk.Frame(root)
+        main_frame.pack(fill='both', expand=True)
+        # ---------- Frame 1: Selection Area ----------
+        style = ttk.Style(root)
+        style.theme_use('default')
+        # Style for selection_frame LabelFrame
+        style.configure(
+            "Selection.TLabelframe",
+            background="#fff7e6",  # very light warm/yellow background
+            bordercolor="#f5a623",  # warm orange border
+            relief="solid",
+            borderwidth=3,
+            padding=10
+        )
+        style.configure(
+            "Selection.TLabelframe.Label",
+            font=("Arial", 16, "bold"),
+            foreground="#b35e00"  # deep orange for title text
+        )
+        # Define reusable "Distinct" style if not already defined
+        style.configure("Distinct.TLabelframe",
+                        background="#f0f8ff",  # very light blue
+                        bordercolor="#0288d1",  # bright blue border
+                        relief="solid",
+                        borderwidth=3)
+        style.configure("Distinct.TLabelframe.Label",
+                        font=("Arial", 14, "bold"),
+                        foreground="#01579b")  # deep blue title text
+        # Create selection_frame using same style class
+        selection_frame = ttk.LabelFrame(main_frame, text="🗂 Select Dataset", style="Distinct.TLabelframe", padding=10)
+        selection_frame.pack(fill="x", padx=10, pady=(10, 5))
+        # Selection label
+        label_selected = tk.Label(
+            selection_frame,
+            text="📂 Selected Folder: None",
+            font=("Helvetica", 24, "bold"),
+            anchor='center',
+            justify='center',
+        )
+        label_selected.pack(pady=10, fill='x')
+        # Scrollbar
+        scrollbar = tk.Scrollbar(selection_frame)
+        scrollbar.pack(side="right", fill="y")
+        # Listbox
+        listbox = tk.Listbox(
+            selection_frame,
+            height=5,
+            width=60,
+            font=("Segoe UI", 13),
+            selectmode=tk.SINGLE,
+            bg="#f9f9f9",
+            fg="#333",
+            selectbackground="#a0c4ff",
+            selectforeground="#000",
+            activestyle="dotbox",
+            relief="ridge",
+            yscrollcommand=scrollbar.set
+        )
+        listbox.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        scrollbar.config(command=listbox.yview)
+        # Insert folders
+        for folder in util.get_output_folders(config.OUTPUT_DATASET_ALL_DATA):
+            if folder == "selected_test":
+                continue
+            listbox.insert(tk.END, folder)
+        # Bind selection event
+        listbox.bind('<<ListboxSelect>>', on_selection)
+
+        # ---------- Frame 2: Control Area ----------
+        # ------------------ Tooltip Class ------------------ #
+        class ToolTip:
+            def __init__(self, widget, text):
+                self.widget = widget
+                self.text = text
+                self.tip_window = None
+                widget.bind("<Enter>", self.show_tip)
+                widget.bind("<Leave>", self.hide_tip)
+
+            def show_tip(self, event=None):
+                if self.tip_window or not self.text:
+                    return
+                x = self.widget.winfo_rootx() + 20
+                y = self.widget.winfo_rooty() + 20
+                self.tip_window = tw = tk.Toplevel(self.widget)
+                tw.wm_overrideredirect(True)
+                tw.wm_geometry(f"+{x}+{y}")
+                label = tk.Label(tw, text=self.text, justify='left',
+                                 background="#ffffe0", relief='solid', borderwidth=1,
+                                 font=("Segoe UI", 9))
+                label.pack(ipadx=5, ipady=3)
+
+            def hide_tip(self, event=None):
+                if self.tip_window:
+                    self.tip_window.destroy()
+                    self.tip_window = None
+
+        # ------------------ Control Area ------------------ #
+        # Create style for LabelFrame
+        style = ttk.Style(root)
+        style.theme_use('default')
+        style.configure(
+            "Distinct.TLabelframe",
+            background="#e6f0ff",  # very light blue background
+            bordercolor="#1a73e8",  # bright blue border
+            relief="solid",
+            borderwidth=3,
+            padding=10
+        )
+        style.configure(
+            "Distinct.TLabelframe.Label",
+            font=("Arial", 16, "bold"),
+            foreground="#0b5394"  # deep blue for title text
+        )
+        # Create the custom label frame with style
+        control_frame = ttk.LabelFrame(main_frame, text="🛠️ Process", style="Distinct.TLabelframe", padding=10)
+        control_frame.pack(fill="both", padx=10, pady=(10, 5))
+        for i in range(4):
+            control_frame.columnconfigure(i, weight=1)
+        # Style setup
+        style = ttk.Style(root)
+        style.theme_use('default')
+        style.configure(
+            "Custom.Horizontal.TProgressbar",
+            thickness=30,  # taller bar
+            troughcolor="#cccccc",  # light gray background
+            background="#0b84a5",  # vibrant blue (or try "#4caf50", "#ff9800", etc.)
+            bordercolor="#000000",  # optional
+            lightcolor="#0b84a5",
+            darkcolor="#0b84a5"
+        )
+        style.configure("Custom.TButton",
+                        foreground="white",
+                        background="#d32f2f",
+                        font=("Arial", 14, "bold"),
+                        padding=10)
+        style.map("Custom.TButton",
+                  background=[('active', '#b71c1c')],
+                  foreground=[('disabled', 'gray')])
+        # Start time label
+        clock_label_start = tk.Label(control_frame, font=('Arial', 12), fg='green', text="🕒 Start Time: --:--:--")
+        clock_label_start.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        ToolTip(clock_label_start, "When the training process starts")
+        start_time_label = clock_label_start
+        # Start button
+        start_button = ttk.Button(control_frame, text="🚀 Start Training", command=start_training,
+                                  style="Custom.TButton")
+        start_button.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
+        start_button.state(["disabled"])
+        ToolTip(start_button, "Start the federated training process")
+        # End time label
+        clock_label_end = tk.Label(control_frame, font=('Arial', 12), fg='red', text="🛑 End Time: --:--:--")
+        clock_label_end.grid(row=0, column=2, sticky="ew", padx=5, pady=5)
+        ToolTip(clock_label_end, "When training finishes")
+        end_time_label = clock_label_end
+        # Total time label
+        time_taken_label = tk.Label(control_frame, font=('Arial', 12), fg='blue', text="⏱️ Total Time: --:--:--")
+        time_taken_label.grid(row=0, column=3, sticky="ew", padx=5, pady=5)
+        ToolTip(time_taken_label, "Total duration of training")
+        # Separator
+        ttk.Separator(control_frame, orient="horizontal").grid(row=1, column=0, columnspan=4, sticky="ew", pady=(10, 5))
+        # Progress bar
+        progress = ttk.Progressbar(
+            control_frame,
+            orient="horizontal",
+            mode="determinate",
+            style="Custom.Horizontal.TProgressbar"
+        )
+        progress.grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(15, 5))
+        # Progress label (clearly visible)
+        progress_label = tk.Label(control_frame, text="Progress: 0%", font=("Segoe UI", 11, "bold"), fg="#0b84a5")
+        progress_label.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+        ToolTip(progress_label, "Shows real-time training progress")
+
+        # ------------------ Optional: Animated Progress ------------------ #
+        def animate_progress_label():
+            current = progress_label.cget("text")
+            if current.endswith("..."):
+                progress_label.config(text="Progress: Training")
+            else:
+                progress_label.config(text=current + ".")
+            if is_training:
+                root.after(500, animate_progress_label)
+
+        # ---------- Frame 3: Result Area ----------
+        # --- Button styling ---
+        if get_os() == "macOS":
+            button_params = {
+                "font": ("Arial", 13),
+                "height": 2,
+                "width": 25
+            }
+        else:
+            button_params = {
+                "font": ("Arial", 7),
+                "height": 2,
+                "width": 25
+            }
+        # Style for result_frame LabelFrame
+        style.configure(
+            "Results.TLabelframe",
+            background="#e6fff0",  # very light mint/green background
+            bordercolor="#34a853",  # fresh green border
+            relief="solid",
+            borderwidth=3,
+            padding=10
+        )
+        style.configure(
+            "Results.TLabelframe.Label",
+            font=("Arial", 16, "bold"),
+            foreground="#20733e"  # deep green for title text
+        )
+        # Result Frame
+        result_frame = ttk.LabelFrame(main_frame, text="📝 Logs", style="Results.TLabelframe", padding=10)
+        result_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+        log_text = scrolledtext.ScrolledText(result_frame, wrap="word", height=10, font=("Courier", 10))
+        log_text.pack(fill="both", expand=True)
+        log_text.config(state="disabled")
+        # === Color tags ===
+        log_text.tag_config("INFO", foreground="lightgreen")
+        log_text.tag_config("WARNING", foreground="orange")
+        log_text.tag_config("ERROR", foreground="red")
+
+        # === Optional Controls ===
+        log_text.auto_scroll = True
+
+
+    def on_close():
+        root.destroy()
+
+
+    mp.set_start_method("spawn")
     root = tk.Tk()
     app = MainApp(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_close)
+    create_ui()
+    root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()

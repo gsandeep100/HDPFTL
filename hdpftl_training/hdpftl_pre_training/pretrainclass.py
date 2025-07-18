@@ -19,10 +19,11 @@ import torch.nn as nn
 from sklearn.metrics import accuracy_score
 from torch.utils.data import TensorDataset, DataLoader
 
-from hdpftl_training.hdpftl_models.TabularNet import TabularNet
 import hdpftl_utility.config as config
 import hdpftl_utility.log as log_util
 import hdpftl_utility.utils as util
+from hdpftl_training.hdpftl_models.TabularNet import TabularNet
+
 """
 1. Pretraining phase
 Use X_pretrain, y_pretrain — large, general dataset (can be synthetic or real).

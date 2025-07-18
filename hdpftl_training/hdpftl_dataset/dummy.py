@@ -2,7 +2,6 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-import hdpftl_utility.config as config
 
 # ========== 6. Simulated IIoT Data ==========
 def create_fleet_data(num_fleets=20, devices_per_fleet=30, samples_per_device=200):
