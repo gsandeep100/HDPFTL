@@ -1,8 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from hdpftl_utility.utils import setup_device
-
+import hdpftl_utility.utils as util
 
 def predict(new_data, global_model, label_map=None, return_proba=False, device=None):
     """

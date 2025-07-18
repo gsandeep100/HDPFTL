@@ -8,10 +8,9 @@ from torch.utils.data import TensorDataset, DataLoader
 from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
 from hdpftl_training.hdpftl_aggregation.hdpftl_fedavg import aggregate_models
 from hdpftl_training.save_model import save
-from hdpftl_utility.config import NUM_DEVICES_PER_CLIENT, NUM_FEDERATED_ROUND, BATCH_SIZE_TRAINING
-from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import named_timer, setup_device, clear_memory
-
+import hdpftl_utility.config as config
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
 
 def split_among_devices(X_client, y_client, seed=42):
     """
@@ -23,12 +22,12 @@ def split_among_devices(X_client, y_client, seed=42):
     np.random.shuffle(indices)
 
     device_data = []
-    size = len(y_client) // NUM_DEVICES_PER_CLIENT
+    size = len(y_client) // config.NUM_DEVICES_PER_CLIENT
 
-    for i in range(NUM_DEVICES_PER_CLIENT):
+    for i in range(config.NUM_DEVICES_PER_CLIENT):
         start = i * size
         # Last device takes remainder
-        end = (i + 1) * size if i < NUM_DEVICES_PER_CLIENT - 1 else len(y_client)
+        end = (i + 1) * size if i < config.NUM_DEVICES_PER_CLIENT - 1 else len(y_client)
         device_indices = indices[start:end]
 
         X_device = X_client[device_indices]
@@ -180,7 +179,7 @@ def train_on_device(model, device_data, epochs=1, lr=0.01):
     Returns:
         dict: Trained model's state_dict.
     """
-    device = setup_device()
+    device = util.setup_device()
     model = model.to(device)
     model.train()
 
@@ -198,7 +197,7 @@ def train_on_device(model, device_data, epochs=1, lr=0.01):
         y_tensor = y_data.long().to(device)
 
     dataset = TensorDataset(X_tensor, y_tensor)
-    loader = DataLoader(dataset, batch_size=BATCH_SIZE_TRAINING, shuffle=True, pin_memory=False)
+    loader = DataLoader(dataset, batch_size=config.BATCH_SIZE_TRAINING, shuffle=True, pin_memory=False)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=lr)
     criterion = torch.nn.CrossEntropyLoss()
@@ -237,16 +236,16 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
         :param total_steps:
         :param current_step:
     """
-    device = setup_device()
+    device = util.setup_device()
     client_state_dicts = []
 
     for client_id, devices_data in hierarchical_data.items():
         device_state_dicts = []
-        safe_log(f"Training client {client_id} on {len(devices_data)} devices...")
+        log_util.safe_log(f"Training client {client_id} on {len(devices_data)} devices...")
 
         for device_data in devices_data:
             if device_data[0].size(0) == 0:  # no samples on this device
-                safe_log(f"Skipping empty device for client {client_id}")
+                log_util.safe_log(f"Skipping empty device for client {client_id}")
                 continue
 
             local_model = copy.deepcopy(global_model).to(device)
@@ -254,7 +253,7 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
             device_state_dicts.append(local_state_dict)
 
         if not device_state_dicts:
-            safe_log(f"No devices trained for client {client_id}, skipping client aggregation.", level="warning")
+            log_util.safe_log(f"No devices trained for client {client_id}, skipping client aggregation.", level="warning")
             continue
 
         # Aggregate devices per client
@@ -262,7 +261,7 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
         client_state_dicts.append(client_agg_state_dict)
 
     if not client_state_dicts:
-        safe_log("No clients trained in this round, returning previous global model.", level="warning")
+        log_util.safe_log("No clients trained in this round, returning previous global model.", level="warning")
         return global_model
 
     # Aggregate all clients into new global model
@@ -288,25 +287,25 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
 
 # --- Main HDPFTL pipeline ---
 def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test, writer=None):
-    device = setup_device()
-    safe_log("\n🚀 Starting HDPFTL pipeline...\n")
+    device = util.setup_device()
+    log_util.safe_log("\n🚀 Starting HDPFTL pipeline...\n")
 
     # Instantiate global model properly
     # global_model = base_model_fn().to(device)
     global_model = copy.deepcopy(base_model_fn()).to(device)
 
     # Federated training rounds
-    for round_num in range(NUM_FEDERATED_ROUND):
+    for round_num in range(config.NUM_FEDERATED_ROUND):
         # safe_log(f"\n🔁 Federated Round {round_num + 1}/{NUM_FEDERATED_ROUND}")
-        with named_timer(f"federated_round_{round_num + 1}", writer, tag="federated_round"):
+        with util.named_timer(f"federated_round_{round_num + 1}", writer, tag="federated_round"):
             global_model = federated_round(base_model_fn, global_model, hierarchical_data)
             acc = evaluate_global_model(global_model, X_test, y_test)
-            safe_log(f"🌍 Global Accuracy after round {round_num + 1}: {acc:.4f}")
+            log_util.safe_log(f"🌍 Global Accuracy after round {round_num + 1}: {acc:.4f}")
 
     # Personalized fine-tuning per client
     personalized_models = {}
     for client_id, devices_data in hierarchical_data.items():
-        safe_log(f"🔧 Personalizing model for client {client_id}")
+        log_util.safe_log(f"🔧 Personalizing model for client {client_id}")
 
         # Combine device data for the client
         X_client = np.concatenate([d[0] for d in devices_data])
@@ -324,6 +323,6 @@ def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test, writer=Non
         personalized_models[client_id] = trained_model
 
     save(global_model, personalized_models)
-    safe_log("\n✅ HDPFTL complete. Returning global and personalized models.\n")
-    clear_memory()
+    log_util.safe_log("\n✅ HDPFTL complete. Returning global and personalized models.\n")
+    util.clear_memory()
     return global_model, personalized_models

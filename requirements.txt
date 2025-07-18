@@ -18,3 +18,5 @@ psutil~=7.0.0
 imblearn~=0.0
 requests~=2.32.3
 pyro-ppl~=1.9.1
+pyarrow>=14.0
+fastparquet>=2024.2.0

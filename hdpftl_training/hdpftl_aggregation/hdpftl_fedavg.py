@@ -1,6 +1,5 @@
 from hdpftl_training.hdpftl_personalised_client.personalize_clients import personalize_clients
-from hdpftl_utility.log import safe_log
-
+import hdpftl_utility.log as log_util
 
 def aggregate_models(model_state_dicts, base_model_fn):
     """

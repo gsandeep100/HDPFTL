@@ -6,8 +6,8 @@ from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import TensorDataset, DataLoader
 
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
-from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
 
 
 def cross_validate_model(X, y, k=5, batch_size=64, num_epochs=10, lr=0.001):

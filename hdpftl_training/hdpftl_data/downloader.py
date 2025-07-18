@@ -14,8 +14,7 @@ import os
 
 import requests
 
-from hdpftl_utility.log import safe_log
-
+import hdpftl_utility.log as log_util
 
 def download_dataset(input_dir, output_dir):
     # Create output directory if it doesn't exist

@@ -11,9 +11,9 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
-from hdpftl_utility.config import BATCH_SIZE, NUM_CLIENTS, TRAINED_MODEL_DIR
-from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device, get_today_date
+import hdpftl_utility.config as config
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
 
 
 def load_personalized_models_fromfile():

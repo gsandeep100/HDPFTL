@@ -1,7 +1,6 @@
 import torch
 
-from hdpftl_utility.utils import setup_device
-
+import hdpftl_utility.utils as util
 
 def load_global_model(base_model_fn, path):
     """

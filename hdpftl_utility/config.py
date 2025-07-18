@@ -19,8 +19,7 @@
 import os
 from string import Template
 
-from hdpftl_utility.utils import get_today_date
-
+import hdpftl_utility.utils as util
 # Main Code Flow Based on the Diagrams
 # 🔁 Level 1: Device-Level Training (Personalized Learning)
 # Collect device-specific hdpftl_data
@@ -130,7 +129,12 @@ BATCH_SIZE = 5
 BATCH_SIZE_TRAINING = 16
 NUM_CLIENTS = 10
 NUM_DEVICES_PER_CLIENT = 10
-TEST_CSV_PATHS = ('/home/sghosh/Documents/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation.pcap_Flow.csv', '/home/sghosh/Documents/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation1.pcap_Flow.csv', '/home/sghosh/Documents/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation2.pcap_Flow.csv', '/home/sghosh/Documents/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation3.pcap_Flow.csv', '/home/sghosh/Documents/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation4.pcap_Flow.csv')
+TEST_CSV_PATHS = (
+    '/home/sghosh/Documents/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation.pcap_Flow.csv',
+    '/home/sghosh/Documents/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation1.pcap_Flow.csv',
+    '/home/sghosh/Documents/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation2.pcap_Flow.csv',
+    '/home/sghosh/Documents/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation3.pcap_Flow.csv',
+    '/home/sghosh/Documents/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CIC_IoT_DIAD_2024/DDoS-ACK_Fragmentation4.pcap_Flow.csv')
 # CLIENTS_PER_AGGREGATOR = 5
 # NUM_ROUNDS = 10
 NUM_EPOCHS_PRE_TRAIN = 10
@@ -148,10 +152,16 @@ EPOCH_DIR_TEMPLATE = Template("./hdpftl_trained_models/${n}/epochs")
 TRAINED_MODEL_DIR = "./hdpftl_trained_models/"
 LOGS_DIR_TEMPLATE = Template("./hdpftl_logs/${dataset}/${date}/")
 # Substitute to get the string path
-EPOCH_DIR = EPOCH_DIR_TEMPLATE.substitute(n=get_today_date())
+EPOCH_DIR = EPOCH_DIR_TEMPLATE.substitute(n=util.get_today_date())
 
 EPOCH_FILE_FINE = os.path.join(EPOCH_DIR, "fine_tune_epoch_losses.npy")
 EPOCH_FILE_PRE = os.path.join(EPOCH_DIR, "pre_epoch_losses.npy")
 
 PLOT_PATH = "./hdpftl_plot_outputs/"
 # PERSONALISED_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/personalized_model_client_${n}.pth")
+
+# Remove directories
+dirs_to_remove = [
+    "./hdpftl_logs/",
+    "./hdpftl_trained_models",
+]

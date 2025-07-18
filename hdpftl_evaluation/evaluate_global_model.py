@@ -1,14 +1,13 @@
-import copy
-
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+import hdpftl_utility.config as config
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
+
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn, TabularNet
-from hdpftl_utility.config import GLOBAL_MODEL_PATH_TEMPLATE
-from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device, get_today_date
 
 
 def evaluate_global_model_fromfile(base_model_fn):
@@ -18,7 +17,7 @@ def evaluate_global_model_fromfile(base_model_fn):
     Returns:
         nn.Module or None: Loaded model in eval mode, or None if loading fails.
     """
-    device = setup_device()
+    device = util.setup_device()
 
     try:
         # Instantiate the model
@@ -29,15 +28,15 @@ def evaluate_global_model_fromfile(base_model_fn):
 
         # Load weights
         global_model.load_state_dict(
-            torch.load(GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=get_today_date()), map_location=device))
+            torch.load(config.GLOBAL_MODEL_PATH_TEMPLATE.substitute(n=util.get_today_date()), map_location=device))
         global_model.eval()
 
-        safe_log("✅ Global model loaded and ready for evaluation.")
+        log_util.safe_log("✅ Global model loaded and ready for evaluation.")
         return global_model
 
     except Exception as e:
-        safe_log("❌ Failed to load global model.")
-        safe_log(f"Error: {e}", level="error")
+        log_util.safe_log("❌ Failed to load global model.")
+        log_util.safe_log(f"Error: {e}", level="error")
         return None
 
 
@@ -53,8 +52,8 @@ def evaluate_global_model(model, X_test, y_test):
     Returns:
         float: The accuracy of the global model on the test set.
     """
-    safe_log("[4] Evaluating global model...")
-    device = setup_device()
+    log_util.safe_log("[4] Evaluating global model...")
+    device = util.setup_device()
 
     # Ensure model is on correct device and in eval mode
     model = model.to(device)
@@ -113,7 +112,7 @@ def evaluate_global_model(model, X_test, y_test):
             total += y_batch.size(0)  # Accumulate total samples
 
     acc = correct / total if total > 0 else 0.0
-    safe_log(f"Global Accuracy: {acc:.4f}")  # Corrected log message to include "Accuracy"
+    log_util.safe_log(f"Global Accuracy: {acc:.4f}")  # Corrected log message to include "Accuracy"
 
     # The original return statement was 'return ACC' which was not defined.
     # Assuming you want to return the calculated accuracy 'acc'.

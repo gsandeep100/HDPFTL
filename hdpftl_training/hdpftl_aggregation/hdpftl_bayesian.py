@@ -1,16 +1,16 @@
 import torch
 
 from hdpftl_training.hdpftl_personalised_client.personalize_clients import personalize_clients
-from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
 
 
 def aggregate_bayesian(local_models, base_model_fn, X_train, y_train, client_partitions):
     global_model = hdpftl_bayesian(local_models, base_model_fn)
-    safe_log("[6] Aggregated Bayesian fleet hdpftl_models...")
+    log_util.safe_log("[6] Aggregated Bayesian fleet hdpftl_models...")
 
     personalized_models = personalize_clients(global_model, X_train, y_train, client_partitions)
-    safe_log("[7] Personalizing each client...")
+    log_util.safe_log("[7] Personalizing each client...")
 
     return global_model, personalized_models
 
@@ -27,7 +27,7 @@ def hdpftl_bayesian(models, base_model_fn, epsilon=1e-8):
     Returns:
         torch.nn.Module: Aggregated model with Bayesian-weighted parameters.
     """
-    device = setup_device()
+    device = util.setup_device()
     n_models = len(models)
     if n_models == 0:
         raise ValueError("Model list is empty.")

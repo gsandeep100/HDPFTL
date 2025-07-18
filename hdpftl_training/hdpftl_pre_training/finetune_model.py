@@ -20,10 +20,9 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import EPOCH_DIR, EPOCH_FILE_FINE, \
-    NUM_EPOCHS_PRE_TRAIN, FINETUNE_MODEL_PATH_TEMPLATE, PRE_MODEL_PATH_TEMPLATE, BATCH_SIZE_TRAINING
-from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device, get_today_date
+import hdpftl_utility.config as config
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
 
 """
 2. Fine-tuning phase
