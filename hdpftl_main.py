@@ -85,14 +85,92 @@ config_params = {
     "NUM_FEDERATED_ROUND": 5,
     "USE_UPLOADED_TEST_FILES": False
 }
+log_stop_event = None
+log_thread = None
 
 
-class MainApp:
+def tail_log_file(filepath, on_line_callback, stop_event):
+    print(f"Monitoring log file: {filepath}")
 
-    def __init__(self, root):
-        self.root = root
-        # Register callback and start background thread in log.py
+    file = None
+    file_inode = None
 
+    while not stop_event.is_set():
+        if os.path.isfile(filepath):
+            try:
+                current_inode = os.stat(filepath).st_ino
+                if file is None or file_inode != current_inode:
+                    if file:
+                        file.close()
+                    file = open(filepath, 'r')
+                    file_inode = current_inode
+                    file.seek(0, os.SEEK_END)  # Go to the end for new lines only
+
+                while not stop_event.is_set():
+                    line = file.readline()
+                    if line:
+                        on_line_callback(line)
+                    else:
+                        # Check if file was truncated or replaced
+                        try:
+                            new_inode = os.stat(filepath).st_ino
+                            if new_inode != file_inode:
+                                break  # file replaced, reopen next loop
+                        except FileNotFoundError:
+                            break  # file deleted
+                        time.sleep(0.1)
+
+            except Exception as e:
+                print(f"Error reading log file: {e}")
+                time.sleep(1)
+        else:
+            if file:
+                file.close()
+                file = None
+                file_inode = None
+            time.sleep(0.5)
+
+
+def start_log_watcher(log_path, log_text):
+    def on_new_line(line):
+        def append():
+            log_text.config(state="normal")
+            # Optional: add color tag detection
+            if "ERROR" in line:
+                log_text.insert(tk.END, line, "ERROR")
+            elif "WARNING" in line:
+                log_text.insert(tk.END, line, "WARNING")
+            elif "INFO" in line:
+                log_text.insert(tk.END, line, "INFO")
+            else:
+                log_text.insert(tk.END, line)
+
+            if getattr(log_text, "auto_scroll", True):
+                log_text.see(tk.END)
+
+            log_text.config(state="disabled")
+
+        log_text.after(0, append)
+
+    # Optional: pass a stop_event to allow future clean shutdown
+    stop_event = threading.Event()
+    watcher_thread = threading.Thread(
+        target=tail_log_file,
+        args=(log_path, on_new_line, stop_event),
+        daemon=True
+    )
+    watcher_thread.start()
+    return stop_event, watcher_thread  # Return stop_event if you want to stop watching later
+
+def stop_log_watcher():
+    if log_stop_event:
+        log_stop_event.set()  # ✅ This will stop the thread loop
+        print("Log watcher stopping...")
+
+    # Optional: wait for thread to exit gracefully
+    if log_thread:
+        log_thread.join(timeout=2)
+        print("Log thread stopped.")
 
 def enable_disable_button():
     partition_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(
@@ -524,7 +602,7 @@ def start_process(selected_folder_param, done_event):
                 pickle.dump((client_data_dict, hierarchical_data), f)
 
             with util.named_timer("dirichlet_partition_test", writer, tag="dirichlet_partition_test"):
-                client_data_dict_test, hierarchical_data_test = dirichlet_partition_with_devices(
+                client_data_dict_test, hierarchical_data_test = pipeline.dirichlet_partition_with_devices(
                     X_test, y_test, alpha=0.5, num_clients=config.NUM_CLIENTS,
                     num_devices_per_client=config.NUM_DEVICES_PER_CLIENT
                 )
@@ -546,8 +624,8 @@ def start_process(selected_folder_param, done_event):
                 pickle.dump((X_pretrain.shape[1], X_finetune.shape[1], y_finetune, len(np.unique(y_finetune))), f)
 
             with util.named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
-                global_model, personalized_models = hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
-                                                                    y_test)
+                global_model, personalized_models = pipeline.hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
+                                                                             y_test)
 
         #######################  LOAD FROM FILES ##################################
         else:
@@ -608,6 +686,10 @@ def disable_result_buttons():
 
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn")
+    root = tk.Tk()
+
+
     def update_progress(value):
         root.after(0, lambda: _update_progress_ui(value))
 
@@ -632,6 +714,7 @@ if __name__ == "__main__":
             start_button.config(text="Start Training")
             stop_clock()
             complete_progress_bar()
+            stop_log_watcher()
             return
 
         # if not q.empty():
@@ -659,6 +742,7 @@ if __name__ == "__main__":
             enable_disable_button()
             stop_clock()
             complete_progress_bar()
+            stop_log_watcher()
         else:
             print("⚠️ Queue received data but done flag not set.")
         # else:
@@ -706,6 +790,7 @@ if __name__ == "__main__":
             start_button.config(text="Start Training")
             stop_clock()
             complete_progress_bar()
+            stop_log_watcher()
             # Disable buttons immediately
             disable_result_buttons()
             # Close writer if open
@@ -777,11 +862,13 @@ if __name__ == "__main__":
 
 
     def on_selection(event):
-        global selected_folder, result_buttons
+        global selected_folder, result_buttons,log_stop_event, log_thread
         selection = listbox.curselection()
         if selection:
             index = selection[0]
             selected_folder = listbox.get(index)
+            log_path_str = config.LOGS_DIR_TEMPLATE.substitute(dataset=selected_folder, date=util.get_today_date())
+            log_stop_event, log_thread = start_log_watcher(log_path_str + "hdpftl_run.log", log_text)
             label_selected.config(text=f"📂 Selected Folder: {selected_folder}")
             start_button.state(["!disabled"])
             enable_disable_button()
@@ -863,10 +950,6 @@ if __name__ == "__main__":
             plot.cross_validate_model_with_plots(X_test, y_test)
         else:
             print("❌ Cross-validation process failed or didn’t signal completion.")
-
-
-    def exit_app():
-        root.quit()
 
 
     def toggle_theme():
@@ -951,7 +1034,7 @@ if __name__ == "__main__":
         menu_bar.add_cascade(label="⚙️ Settings", menu=settings_files_menu)
         # Submenu: Settings
         exit_menu = tk.Menu(menu_bar, tearoff=0)
-        exit_menu.add_command(label="Exit", command=exit_app)
+        exit_menu.add_command(label="Exit", command=on_close)
         menu_bar.add_cascade(label="Exit", menu=exit_menu)
         # Display the menu bar
         root.config(menu=menu_bar)
@@ -1186,32 +1269,38 @@ if __name__ == "__main__":
             font=("Arial", 16, "bold"),
             foreground="#20733e"  # deep green for title text
         )
-        """
         # Result Frame
         result_frame = ttk.LabelFrame(main_frame, text="📝 Logs", style="Results.TLabelframe", padding=10)
         result_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
 
-        
-        log_text = scrolledtext.ScrolledText(result_frame, wrap="word", height=10, font=("Courier", 10))
+        log_text = scrolledtext.ScrolledText(
+            result_frame,
+            wrap="word",
+            height=10,
+            font=("Courier", 16, "bold"),
+            background="black",  # Black background
+            foreground="white",  # Default text color
+            insertbackground="white"  # White cursor
+        )
         log_text.pack(fill="both", expand=True)
         log_text.config(state="disabled")
         # === Color tags ===
         log_text.tag_config("INFO", foreground="lightgreen")
         log_text.tag_config("WARNING", foreground="orange")
         log_text.tag_config("ERROR", foreground="red")
+        log_text.tag_config("CRITICAL", foreground="darkred")
+        log_text.tag_config("DEBUG", foreground="gray")
+
 
         # === Optional Controls ===
         log_text.auto_scroll = True
-"""
+        return log_text
 
 
     def on_close():
         root.destroy()
 
 
-    mp.set_start_method("spawn")
-    root = tk.Tk()
-    app = MainApp(root)
-    create_ui()
+    log_text = create_ui()
     root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()

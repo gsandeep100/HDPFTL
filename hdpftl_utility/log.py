@@ -36,15 +36,15 @@ def safe_log(message, extra="", level="info"):
     full_msg = message + extra
 
     # Log and print based on specified level
-    if level.lower() == "debug":
+    if level.upper() == "debug":
         logging.debug(full_msg)
-    elif level.lower() == "info":
+    elif level.upper() == "info":
         logging.info(full_msg)
-    elif level.lower() == "warning":
+    elif level.upper() == "warning":
         logging.warning(full_msg)
-    elif level.lower() == "error":
+    elif level.upper() == "error":
         logging.error(full_msg)
-    elif level.lower() == "critical":
+    elif level.upper() == "critical":
         logging.critical(full_msg)
     else:
         logging.info(full_msg)  # default
