@@ -203,6 +203,11 @@ config_params = util.sync_config_params(config.saved_config_params) #initializat
 
 
 def open_settings_window():
+    import os
+    import shutil
+    import tkinter as tk
+    from tkinter import ttk, filedialog
+    import re
 
     try:
         from tkdnd2 import TkDND  # pip install TkinterDnD2
@@ -211,7 +216,7 @@ def open_settings_window():
         DND_AVAILABLE = False
 
     global use_all_files_var, loaded_files
-    util.sync_config_params(config_params)
+    util.sync_config_params(config_params)  # Ensure config_params synced
     loaded_files = list(getattr(config, "TEST_CSV_PATHS", []))
 
     settings_win = tk.Toplevel(root)
@@ -247,7 +252,6 @@ def open_settings_window():
     csv_label = ttk.Label(settings_win, text="No CSVs selected", foreground="gray", anchor="w")
     csv_label.grid(row=len(config_params) + 1, column=0, columnspan=2, sticky="w", padx=15, pady=(15, 5))
 
-    # ---------- Scrollable Listbox ----------
     listbox_frame = ttk.Frame(settings_win, borderwidth=1, relief="solid")
     listbox_frame.grid(row=len(config_params) + 3, column=0, columnspan=2, padx=15, pady=(0, 15), sticky="nsew")
     settings_win.rowconfigure(len(config_params) + 3, weight=1)
@@ -293,11 +297,9 @@ def open_settings_window():
                 except Exception as e:
                     print(f"Error copying {path}: {e}")
 
-        # Update listbox in order
         csv_listbox.delete(0, tk.END)
         for f in loaded_files:
             csv_listbox.insert(tk.END, os.path.basename(f))
-
         csv_label.config(text=f"Loaded {len(loaded_files)} file(s)", foreground="green")
 
     def select_test_csv():
@@ -334,22 +336,11 @@ def open_settings_window():
 
         use_all_files_var.set(bool(getattr(config, "USE_UPLOADED_TEST_FILES", False)))
 
-    # ---------- Reload Config in UI ----------
-    def reload_settings():
-        util.reload_config()
-        # Reload all entries
-        for key, entry in entries.items():
-            entry.delete(0, tk.END)
-            entry.insert(0, str(getattr(config, key, config_params[key])))
-        # Reload CSV paths & checkbox
-        load_previous_test_csvs()
-        print("🔄 Config reloaded in UI.")
-
     load_previous_test_csvs()
 
     # ---------- Save Settings ----------
     def save_settings():
-        # Save all entry values to config
+        # 1️⃣ Save all entry values in-memory
         for key, entry in entries.items():
             val = entry.get()
             if val.isdigit():
@@ -360,19 +351,42 @@ def open_settings_window():
                 except ValueError:
                     setattr(config, key, val)
 
-        # Save CSV paths and checkbox
+        # 2️⃣ Save CSV paths and checkbox in-memory
         setattr(config, "TEST_CSV_PATHS", tuple(loaded_files))
         use_uploaded = bool(use_all_files_var.get())
         setattr(config, "USE_UPLOADED_TEST_FILES", use_uploaded)
         config_params["USE_UPLOADED_TEST_FILES"] = use_uploaded
 
-        # Write all values to config.py
+        # 3️⃣ Update config.py safely without deleting unrelated lines
         config_path = os.path.join(os.path.dirname(__file__), "hdpftl_utility/config.py")
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                lines = f.readlines()
+        else:
+            lines = []
+
+        patterns = {key: re.compile(rf"^{key}\s*=\s*.*$") for key in entries.keys()}
+        patterns["TEST_CSV_PATHS"] = re.compile(r"^TEST_CSV_PATHS\s*=\s*.*$")
+        patterns["USE_UPLOADED_TEST_FILES"] = re.compile(r"^USE_UPLOADED_TEST_FILES\s*=\s*.*$")
+
+        replacements = {key: f"{key} = {repr(getattr(config, key))}\n" for key in entries.keys()}
+        replacements["TEST_CSV_PATHS"] = f"TEST_CSV_PATHS = {repr(tuple(loaded_files))}\n"
+        replacements["USE_UPLOADED_TEST_FILES"] = f"USE_UPLOADED_TEST_FILES = {use_uploaded}\n"
+
+        updated_keys = set()
+        for i, line in enumerate(lines):
+            for key, pattern in patterns.items():
+                if pattern.match(line):
+                    lines[i] = replacements[key]
+                    updated_keys.add(key)
+                    break
+
+        for key, new_line in replacements.items():
+            if key not in updated_keys:
+                lines.append(new_line)
+
         with open(config_path, "w") as f:
-            for key in entries.keys():
-                f.write(f"{key} = {repr(getattr(config, key))}\n")
-            f.write(f"TEST_CSV_PATHS = {repr(tuple(loaded_files))}\n")
-            f.write(f"USE_UPLOADED_TEST_FILES = {use_uploaded}\n")
+            f.writelines(lines)
 
         util.reload_config()
         print("✅ Config updated. Window will close now.")
@@ -384,9 +398,6 @@ def open_settings_window():
 
     save_btn = ttk.Button(btn_frame, text="Save", command=save_settings)
     save_btn.pack(side="right", padx=5)
-
-    reload_btn = ttk.Button(btn_frame, text="Reload Config", command=reload_settings)
-    reload_btn.pack(side="right", padx=5)
 
     cancel_btn = ttk.Button(btn_frame, text="Cancel", command=settings_win.destroy)
     cancel_btn.pack(side="right", padx=5)
