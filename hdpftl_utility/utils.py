@@ -12,6 +12,7 @@
 """
 import gc
 import os
+import platform
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -21,12 +22,50 @@ import numpy as np
 import torch
 from imblearn.over_sampling import SMOTE, SVMSMOTE, KMeansSMOTE
 
+import config
 import hdpftl_utility.log as log_util
+
+
+def get_os():
+    os_name = platform.system()
+    if os_name == "Darwin":
+        return "macOS"
+    elif os_name == "Linux":
+        # Further check if it's Pop!_OS
+        try:
+            with open("/etc/os-release") as f:
+                release_info = f.read()
+                if "Pop!_OS" in release_info:
+                    return "Pop!_OS"
+                elif "Ubuntu" in release_info:
+                    return "Ubuntu"
+                else:
+                    return "Other Linux"
+        except FileNotFoundError:
+            return "Linux (unknown distro)"
+    else:
+        return os_name
+
+
+def sync_config_params(config_params):
+    """
+    Update config_params dict values from config module attributes if they exist.
+    Keeps existing value if attribute not found.
+    """
+    for key in config_params.keys():
+        if hasattr(config, key):
+            config_params[key] = getattr(config, key)
+    return config_params
 
 
 def setup_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+def reload_config():
+    """Reload config.py and return the fresh module."""
+    import importlib
+    import hdpftl_utility.config as cfg
+    return importlib.reload(cfg)
 
 def make_dir(path):
     if not os.path.exists(path):

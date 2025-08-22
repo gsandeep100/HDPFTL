@@ -13,18 +13,18 @@
 import multiprocessing as mp
 import os
 import pickle
-import platform
-import re
 import shutil
+import tkinter as tk
+import config
 import threading
 import time
-import tkinter as tk
 import traceback
 import warnings
 from multiprocessing import Process
 from tkinter import scrolledtext, messagebox, font
 from tkinter import ttk, filedialog
 
+global use_all_files_var, loaded_files
 import numpy as np
 import torch
 from joblib import dump, load
@@ -76,15 +76,7 @@ result_buttons = {}
 loaded_files = []
 use_all_files_var = None  # default unchecked
 # Global config dictionary to hold parameters
-config_params = {
-    "BATCH_SIZE": 5,
-    "BATCH_SIZE_TRAINING": 16,
-    "NUM_CLIENTS": 10,
-    "NUM_DEVICES_PER_CLIENT": 5,
-    "NUM_EPOCHS_PRE_TRAIN": 5,
-    "NUM_FEDERATED_ROUND": 5,
-    "USE_UPLOADED_TEST_FILES": False
-}
+
 log_stop_event = None
 log_thread = None
 
@@ -205,46 +197,109 @@ def enable_disable_button():
             btn.config(state="disabled")
 
 
-def sync_config_params(config_params):
-    """
-    Update config_params dict values from config module attributes if they exist.
-    Keeps existing value if attribute not found.
-    """
-    for key in config_params.keys():
-        if hasattr(config, key):
-            config_params[key] = getattr(config, key)
-    return config_params
 
+config_params = util.sync_config_params(config.saved_config_params) #initialization
 
-config_params = sync_config_params(config_params)
-
-
-def get_os():
-    os_name = platform.system()
-    if os_name == "Darwin":
-        return "macOS"
-    elif os_name == "Linux":
-        # Further check if it's Pop!_OS
-        try:
-            with open("/etc/os-release") as f:
-                release_info = f.read()
-                if "Pop!_OS" in release_info:
-                    return "Pop!_OS"
-                elif "Ubuntu" in release_info:
-                    return "Ubuntu"
-                else:
-                    return "Other Linux"
-        except FileNotFoundError:
-            return "Linux (unknown distro)"
-    else:
-        return os_name
 
 
 def open_settings_window():
-    global use_all_files_var
-    sync_config_params(config_params)
 
-    # ----------- Select Function -----------
+    try:
+        from tkdnd2 import TkDND  # pip install TkinterDnD2
+        DND_AVAILABLE = True
+    except ImportError:
+        DND_AVAILABLE = False
+
+    global use_all_files_var, loaded_files
+    util.sync_config_params(config_params)
+    loaded_files = list(getattr(config, "TEST_CSV_PATHS", []))
+
+    settings_win = tk.Toplevel(root)
+    settings_win.title("Training Settings")
+    settings_win.minsize(450, 400)
+    settings_win.resizable(False, False)
+    settings_win.columnconfigure(1, weight=1)
+
+    entries = {}
+
+    # ---------- Checkbox ----------
+    use_all_files_var = tk.BooleanVar(value=getattr(config, "USE_UPLOADED_TEST_FILES", False))
+    checkbox = ttk.Checkbutton(
+        settings_win,
+        text="Use all uploaded CSV files for testing",
+        variable=use_all_files_var
+    )
+    checkbox.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=5)
+
+    # ---------- Config Entry Fields ----------
+    for idx, key in enumerate(config_params.keys()):
+        if key == "USE_UPLOADED_TEST_FILES":
+            continue
+        ttk.Label(settings_win, text=f"{key}:", anchor="w").grid(
+            row=idx + 1, column=0, padx=15, pady=5, sticky="w"
+        )
+        entry = ttk.Entry(settings_win)
+        entry.grid(row=idx + 1, column=1, padx=15, pady=5, sticky="ew")
+        entry.insert(0, str(getattr(config, key, config_params[key])))
+        entries[key] = entry
+
+    # ---------- CSV Selection ----------
+    csv_label = ttk.Label(settings_win, text="No CSVs selected", foreground="gray", anchor="w")
+    csv_label.grid(row=len(config_params) + 1, column=0, columnspan=2, sticky="w", padx=15, pady=(15, 5))
+
+    # ---------- Scrollable Listbox ----------
+    listbox_frame = ttk.Frame(settings_win, borderwidth=1, relief="solid")
+    listbox_frame.grid(row=len(config_params) + 3, column=0, columnspan=2, padx=15, pady=(0, 15), sticky="nsew")
+    settings_win.rowconfigure(len(config_params) + 3, weight=1)
+
+    scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical")
+    csv_listbox = tk.Listbox(
+        listbox_frame,
+        height=6,
+        yscrollcommand=scrollbar.set,
+        selectmode="browse",
+        exportselection=False,
+        borderwidth=0,
+        highlightthickness=0,
+    )
+    scrollbar.config(command=csv_listbox.yview)
+    csv_listbox.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    def on_select(event):
+        selection = event.widget.curselection()
+        if selection:
+            index = selection[0]
+            value = event.widget.get(index)
+            print(f"Selected: {value}")
+
+    csv_listbox.bind("<<ListboxSelect>>", on_select)
+
+    # ---------- Helper: Add CSV Files ----------
+    def add_csv_files(file_paths):
+        global loaded_files
+        new_files = []
+        for path in file_paths:
+            if os.path.isfile(path) and path.lower().endswith(".csv"):
+                filename = os.path.basename(path)
+                dest_path = os.path.join(config.OUTPUT_DATASET_SELECTED_TEST_DATA, filename)
+                if not os.path.exists(config.OUTPUT_DATASET_SELECTED_TEST_DATA):
+                    os.makedirs(config.OUTPUT_DATASET_SELECTED_TEST_DATA)
+                try:
+                    shutil.copy2(path, dest_path)
+                    if path not in loaded_files:
+                        loaded_files.append(path)
+                        new_files.append(path)
+                except Exception as e:
+                    print(f"Error copying {path}: {e}")
+
+        # Update listbox in order
+        csv_listbox.delete(0, tk.END)
+        for f in loaded_files:
+            csv_listbox.insert(tk.END, os.path.basename(f))
+
+        csv_label.config(text=f"Loaded {len(loaded_files)} file(s)", foreground="green")
+
     def select_test_csv():
         file_paths = filedialog.askopenfilenames(
             title="Select One or More Test CSV Files",
@@ -252,72 +307,49 @@ def open_settings_window():
             defaultextension=".csv"
         )
         if file_paths:
-            config.TEST_CSV_PATHS = file_paths
-            config.test_dfs = []
-            csv_listbox.delete(0, tk.END)  # Clear previous list
+            add_csv_files(file_paths)
 
-            if not os.path.exists(config.OUTPUT_DATASET_SELECTED_TEST_DATA):
-                os.makedirs(config.OUTPUT_DATASET_SELECTED_TEST_DATA)  # create folder if it doesn't exist
+    csv_button = ttk.Button(settings_win, text="Select Test CSV(s)", command=select_test_csv)
+    csv_button.grid(row=len(config_params) + 2, column=0, columnspan=2, pady=(0, 10), padx=15, sticky="ew")
 
-            for path in file_paths:
-                try:
-                    # df = pd.read_csv(path)
-                    # config.test_dfs.append(df)
-                    # filename = path
-                    loaded_files.append(path)
-                    csv_listbox.insert(tk.END, os.path.basename(path))  # Show in list
-                    dest_path = os.path.join(config.OUTPUT_DATASET_SELECTED_TEST_DATA, os.path.basename(path))
-                    shutil.copy2(path, dest_path)  # copy2 preserves metadata
-                except Exception as e:
-                    print(f"Error loading {path}:", e)
+    # ---------- Drag-and-Drop Support ----------
+    if DND_AVAILABLE:
+        dnd = TkDND(settings_win)
+        def drop_callback(event):
+            files = settings_win.tk.splitlist(event.data)
+            add_csv_files(files)
+        dnd.bindtarget(csv_listbox, drop_callback, 'text/uri-list')
 
-            if loaded_files:
-                csv_label.config(text=f"Loaded {len(loaded_files)} file(s)", foreground="green")
-                # print(f"{len(loaded_files)} CSV files loaded.")
-            else:
-                csv_label.config(text="No valid CSVs loaded", foreground="red")
-
-    # ----------- Load Function -----------
+    # ---------- Load previous CSVs ----------
     def load_previous_test_csvs():
-        global loaded_files
-
-        """
-        Autoload previously selected test CSV files stored in config.TEST_CSV_PATHS.
-        Loaded DataFrames are stored in config.test_dfs.
-        Also updates the listbox and label in the GUI.
-        """
-        config_path = os.path.join(os.path.dirname(__file__), "hdpftl_utility/config.py")
-
-        if not hasattr(config, "TEST_CSV_PATHS") or not config.TEST_CSV_PATHS:
-            print("No TEST_CSV_PATHS found in config.")
-            config.test_dfs = []
-            csv_listbox.delete(0, tk.END)
-            csv_label.config(text="No saved CSV paths", foreground="red")
-            return
-
-        config.test_dfs = []  # Clear any existing data
-        csv_listbox.delete(0, tk.END)  # Clear the listbox
-
-        for path in config.TEST_CSV_PATHS:
-            if os.path.exists(path):
-                try:
-                    # df = pd.read_csv(path)
-                    # config.test_dfs.append(df)
-                    csv_listbox.insert(tk.END, os.path.basename(path))  # ✅ Show the file path in listbox
-                    loaded_files.append(path)
-                    print(f"Auto-loaded CSV: {os.path.basename(path)}")
-                except Exception as e:
-                    print(f"Error loading {path}: {e}")
-            else:
-                print(f"File not found: {path}")
-
-        if loaded_files:
-            csv_label.config(text=f"Auto-loaded {len(loaded_files)} file(s)", foreground="green")
+        csv_listbox.delete(0, tk.END)
+        loaded_files.clear()
+        if hasattr(config, "TEST_CSV_PATHS") and config.TEST_CSV_PATHS:
+            for path in config.TEST_CSV_PATHS:
+                csv_listbox.insert(tk.END, os.path.basename(path))
+            loaded_files.extend(config.TEST_CSV_PATHS)
+            csv_label.config(text=f"Loaded {len(config.TEST_CSV_PATHS)} file(s)", foreground="green")
         else:
-            csv_label.config(text="No valid CSVs loaded", foreground="red")
+            csv_label.config(text="No CSVs selected", foreground="gray")
 
-    # ----------- Save Function -----------
+        use_all_files_var.set(bool(getattr(config, "USE_UPLOADED_TEST_FILES", False)))
+
+    # ---------- Reload Config in UI ----------
+    def reload_settings():
+        util.reload_config()
+        # Reload all entries
+        for key, entry in entries.items():
+            entry.delete(0, tk.END)
+            entry.insert(0, str(getattr(config, key, config_params[key])))
+        # Reload CSV paths & checkbox
+        load_previous_test_csvs()
+        print("🔄 Config reloaded in UI.")
+
+    load_previous_test_csvs()
+
+    # ---------- Save Settings ----------
     def save_settings():
+        # Save all entry values to config
         for key, entry in entries.items():
             val = entry.get()
             if val.isdigit():
@@ -328,148 +360,47 @@ def open_settings_window():
                 except ValueError:
                     setattr(config, key, val)
 
+        # Save CSV paths and checkbox
+        setattr(config, "TEST_CSV_PATHS", tuple(loaded_files))
+        use_uploaded = bool(use_all_files_var.get())
+        setattr(config, "USE_UPLOADED_TEST_FILES", use_uploaded)
+        config_params["USE_UPLOADED_TEST_FILES"] = use_uploaded
+
+        # Write all values to config.py
         config_path = os.path.join(os.path.dirname(__file__), "hdpftl_utility/config.py")
-        if not os.path.exists(config_path):
-            print("config.py not found! Cannot update.")
-            return
-
-        with open(config_path, "r") as f:
-            lines = f.readlines()
-
-        patterns = {key: re.compile(rf"^{key}\s*=\s*.*$") for key in entries.keys()}
-
-        replacements = {}
-        for key in entries.keys():
-            val = getattr(config, key)
-            if isinstance(val, str):
-                replacements[key] = f'{key} = "{val}"\n'
-            else:
-                replacements[key] = f"{key} = {val}\n"
-
-        updated_keys = set()
-        for i, line in enumerate(lines):
-            for key, pattern in patterns.items():
-                if pattern.match(line):
-                    lines[i] = replacements[key]
-                    updated_keys.add(key)
-                    break
-
-        for key in entries.keys():
-            if key not in updated_keys:
-                lines.append(replacements[key])
-
         with open(config_path, "w") as f:
-            f.writelines(lines)
+            for key in entries.keys():
+                f.write(f"{key} = {repr(getattr(config, key))}\n")
+            f.write(f"TEST_CSV_PATHS = {repr(tuple(loaded_files))}\n")
+            f.write(f"USE_UPLOADED_TEST_FILES = {use_uploaded}\n")
 
-        # Read the original config.py file
-        # Save TEST_CSV_PATHS to config.py
-        if hasattr(config, "TEST_CSV_PATHS"):
-            with open(config_path, "r") as file:
-                lines = file.readlines()
-
-            new_test_paths = config.TEST_CSV_PATHS  # ✅ This is your updated list
-            loaded_files.clear()
-            with open(config_path, "w") as file:
-                test_path_written = False
-                for line in lines:
-                    if line.strip().startswith("TEST_CSV_PATHS"):
-                        file.write(f'TEST_CSV_PATHS = {repr(new_test_paths)}\n')
-                        test_path_written = True
-                    else:
-                        file.write(line)
-
-                # If the TEST_CSV_PATHS line was not found, add it at the end
-                if not test_path_written:
-                    file.write(f'\nTEST_CSV_PATHS = {repr(new_test_paths)}\n')
-        # Save the checkbox state
-        setattr(config, "USE_UPLOADED_TEST_FILES", bool(use_all_files_var.get()))
-        config_params["USE_UPLOADED_TEST_FILES"] = bool(use_all_files_var.get())
-
-        print("Config updated with changed values.")
+        util.reload_config()
+        print("✅ Config updated. Window will close now.")
         settings_win.destroy()
 
-    settings_win = tk.Toplevel(root)
-    settings_win.title("Training Settings")
-    settings_win.minsize(400, 350)
-    settings_win.resizable(False, False)  # Fixed size for neatness
-    settings_win.columnconfigure(1, weight=1)
-    entries = {}
-    # Checkbox for test file usage
-    checkbox = ttk.Checkbutton(
-        settings_win,
-        text="Use all uploaded CSV files for testing",
-        variable=use_all_files_var
-    )
-    checkbox.grid(row=len(config_params), column=0, columnspan=2, sticky="w", padx=10, pady=5)
+    # ---------- Buttons ----------
+    btn_frame = ttk.Frame(settings_win)
+    btn_frame.grid(row=len(config_params) + 4, column=0, columnspan=2, pady=10, padx=15, sticky="ew")
 
-    # ----------- Configuration Entries -----------
-    for idx, (key, val) in enumerate(config_params.items()):
-        if key == "USE_UPLOADED_TEST_FILES":
-            continue
-        ttk.Label(settings_win, text=f"{key}:", anchor="w").grid(row=idx, column=0, padx=15, pady=8, sticky="w")
-        entry = ttk.Entry(settings_win)
-        entry.grid(row=idx, column=1, padx=15, pady=8, sticky="ew")
-        entry.insert(0, str(val))
-        entries[key] = entry
+    save_btn = ttk.Button(btn_frame, text="Save", command=save_settings)
+    save_btn.pack(side="right", padx=5)
 
-        # ----------- CSV Selection Area -----------
-        csv_row = len(config_params)
+    reload_btn = ttk.Button(btn_frame, text="Reload Config", command=reload_settings)
+    reload_btn.pack(side="right", padx=5)
 
-        csv_label = ttk.Label(settings_win, text="No CSVs selected", foreground="gray", anchor="w")
-        csv_label.grid(row=csv_row + 1, column=0, columnspan=2, sticky="w", padx=15, pady=(15, 5))
+    cancel_btn = ttk.Button(btn_frame, text="Cancel", command=settings_win.destroy)
+    cancel_btn.pack(side="right", padx=5)
 
-        csv_button = ttk.Button(settings_win, text="Select Test CSV(s)", command=select_test_csv)
-        csv_button.grid(row=csv_row + 2, column=0, columnspan=2, pady=(0, 10), padx=15, sticky="ew")
+    # ---------- Close Handlers ----------
+    def on_close():
+        settings_win.grab_release()
+        settings_win.destroy()
 
-        # ----------- Scrollable Listbox for file display -----------
-        listbox_frame = ttk.Frame(settings_win, borderwidth=1, relief="solid")
-        listbox_frame.grid(row=csv_row + 3, column=0, columnspan=2, padx=15, pady=(0, 15), sticky="nsew")
-        settings_win.rowconfigure(csv_row + 3, weight=1)
-
-        scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical")
-        csv_listbox = tk.Listbox(
-            listbox_frame,
-            height=6,
-            yscrollcommand=scrollbar.set,
-            selectmode="browse",
-            exportselection=False,
-            borderwidth=0,
-            highlightthickness=0,
-        )
-        scrollbar.config(command=csv_listbox.yview)
-
-        csv_listbox.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        # ----------- Save / Cancel Buttons -----------
-        btn_row = csv_row + 4
-        btn_frame = ttk.Frame(settings_win)
-        btn_frame.grid(row=btn_row, column=0, columnspan=2, pady=10, padx=15, sticky="ew")
-
-        save_btn = ttk.Button(btn_frame, text="Save", command=save_settings)
-        save_btn.pack(side="right", padx=5)
-        cancel_btn = ttk.Button(btn_frame, text="Cancel", command=settings_win.destroy)
-        cancel_btn.pack(side="right", padx=5)
-
-        settings_win.transient(root)  # Keep on top of root
-        settings_win.grab_set()
-        settings_win.focus_set()
-
-        # Custom close handler
-        def on_close():
-            # Optional: prompt user, save data, cleanup, etc.
-            # For example, just destroy the window:
-            settings_win.grab_release()  # Release grab before destroying
-            settings_win.destroy()
-
-        settings_win.protocol("WM_DELETE_WINDOW", on_close)
-
-        # Bind ESC key to close window
-        def on_esc(event):
-            on_close()
-
-        settings_win.bind("<Escape>", on_esc)
-    # Load previously saved CSV paths and show
-    load_previous_test_csvs()
+    settings_win.protocol("WM_DELETE_WINDOW", on_close)
+    settings_win.bind("<Escape>", lambda e: on_close())
+    settings_win.transient(root)
+    settings_win.grab_set()
+    settings_win.focus_set()
 
 
 def evaluation(X_test_param, client_data_dict_test_param, global_model_param, personalized_models_param, writer_param,
@@ -1243,7 +1174,7 @@ if __name__ == "__main__":
 
         # ---------- Frame 3: Result Area ----------
         # --- Button styling ---
-        if get_os() == "macOS":
+        if util.get_os() == "macOS":
             button_params = {
                 "font": ("Arial", 13),
                 "height": 2,
