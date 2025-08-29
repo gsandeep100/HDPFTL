@@ -79,90 +79,8 @@ use_all_files_var = None  # default unchecked
 
 log_stop_event = None
 log_thread = None
+config_params = util.sync_config_params(config.saved_config_params) #initialization
 
-
-def tail_log_file(filepath, on_line_callback, stop_event):
-    print(f"Monitoring log file: {filepath}")
-
-    file = None
-    file_inode = None
-
-    while not stop_event.is_set():
-        if os.path.isfile(filepath):
-            try:
-                current_inode = os.stat(filepath).st_ino
-                if file is None or file_inode != current_inode:
-                    if file:
-                        file.close()
-                    file = open(filepath, 'r')
-                    file_inode = current_inode
-                    file.seek(0, os.SEEK_END)  # Go to the end for new lines only
-
-                while not stop_event.is_set():
-                    line = file.readline()
-                    if line:
-                        on_line_callback(line)
-                    else:
-                        # Check if file was truncated or replaced
-                        try:
-                            new_inode = os.stat(filepath).st_ino
-                            if new_inode != file_inode:
-                                break  # file replaced, reopen next loop
-                        except FileNotFoundError:
-                            break  # file deleted
-                        time.sleep(0.1)
-
-            except Exception as e:
-                print(f"Error reading log file: {e}")
-                time.sleep(1)
-        else:
-            if file:
-                file.close()
-                file = None
-                file_inode = None
-            time.sleep(0.5)
-
-
-def start_log_watcher(log_path, log_text):
-    def on_new_line(line):
-        def append():
-            log_text.config(state="normal")
-            # Optional: add color tag detection
-            if "ERROR" in line:
-                log_text.insert(tk.END, line, "ERROR")
-            elif "WARNING" in line:
-                log_text.insert(tk.END, line, "WARNING")
-            elif "INFO" in line:
-                log_text.insert(tk.END, line, "INFO")
-            else:
-                log_text.insert(tk.END, line)
-
-            if getattr(log_text, "auto_scroll", True):
-                log_text.see(tk.END)
-
-            log_text.config(state="disabled")
-
-        log_text.after(0, append)
-
-    # Optional: pass a stop_event to allow future clean shutdown
-    stop_event = threading.Event()
-    watcher_thread = threading.Thread(
-        target=tail_log_file,
-        args=(log_path, on_new_line, stop_event),
-        daemon=True
-    )
-    watcher_thread.start()
-    return stop_event, watcher_thread  # Return stop_event if you want to stop watching later
-
-def stop_log_watcher():
-    if log_stop_event:
-        log_stop_event.set()  # ✅ This will stop the thread loop
-        print("Log watcher stopping...")
-
-    # Optional: wait for thread to exit gracefully
-    if log_thread:
-        log_thread.join(timeout=2)
-        print("Log thread stopped.")
 
 def enable_disable_button():
     partition_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(
@@ -196,11 +114,9 @@ def enable_disable_button():
         else:
             btn.config(state="disabled")
 
-
-
-config_params = util.sync_config_params(config.saved_config_params) #initialization
-
-
+def disable_result_buttons():
+    for label, btn in result_buttons.items():
+        btn.config(state="disabled")
 
 def open_settings_window():
     import os
@@ -413,6 +329,116 @@ def open_settings_window():
     settings_win.grab_set()
     settings_win.focus_set()
 
+def load_from_files(writer_param):
+    partition_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(
+        n=util.get_today_date()) + "partitioned_data.pkl"
+    partition_output_test_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(
+        n=util.get_today_date()) + "partitioned_data_test.pkl"
+    xy_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "X_y_test.joblib"
+    result_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "results.pkl"
+    predictions_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "predictions.pkl"
+
+    global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
+        client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
+        predictions, num_classes
+    with util.named_timer("Evaluate Global Model From File", writer_param, tag="EvalFromFile"):
+        global_model = evaluate_global_model.evaluate_global_model_fromfile()
+    with util.named_timer("Evaluate Personalized Models From File", writer_param, tag="PersonalizedEval"):
+        personalized_models = evaluate_per_client.load_personalized_models_fromfile()
+    X_test, y_test = load(xy_output_path)
+    with open(partition_output_path, "rb") as f:
+        client_data_dict, hierarchical_data = pickle.load(f)
+    with open(partition_output_test_path, "rb") as f:
+        client_data_dict_test, hierarchical_data_test = pickle.load(f)
+    with open(result_output_path, "rb") as f:
+        personalised_acc, client_accs, global_acc = pickle.load(f)
+    with open(predictions_output_path, "rb") as f:
+        predictions, num_classes = pickle.load(f)
+    return global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
+        client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
+        predictions, num_classes
+
+def start_log_watcher(log_path, log_text):
+    def on_new_line(line):
+        def append():
+            log_text.config(state="normal")
+            # Optional: add color tag detection
+            if "ERROR" in line:
+                log_text.insert(tk.END, line, "ERROR")
+            elif "WARNING" in line:
+                log_text.insert(tk.END, line, "WARNING")
+            elif "INFO" in line:
+                log_text.insert(tk.END, line, "INFO")
+            else:
+                log_text.insert(tk.END, line)
+
+            if getattr(log_text, "auto_scroll", True):
+                log_text.see(tk.END)
+
+            log_text.config(state="disabled")
+
+        log_text.after(0, append)
+
+    # Optional: pass a stop_event to allow future clean shutdown
+    stop_event = threading.Event()
+    watcher_thread = threading.Thread(
+        target=tail_log_file,
+        args=(log_path, on_new_line, stop_event),
+        daemon=True
+    )
+    watcher_thread.start()
+    return stop_event, watcher_thread  # Return stop_event if you want to stop watching later
+
+def stop_log_watcher():
+    if log_stop_event:
+        log_stop_event.set()  # ✅ This will stop the thread loop
+        print("Log watcher stopping...")
+
+    # Optional: wait for thread to exit gracefully
+    if log_thread:
+        log_thread.join(timeout=2)
+        print("Log thread stopped.")
+
+def tail_log_file(filepath, on_line_callback, stop_event):
+    print(f"Monitoring log file: {filepath}")
+
+    file = None
+    file_inode = None
+
+    while not stop_event.is_set():
+        if os.path.isfile(filepath):
+            try:
+                current_inode = os.stat(filepath).st_ino
+                if file is None or file_inode != current_inode:
+                    if file:
+                        file.close()
+                    file = open(filepath, 'r')
+                    file_inode = current_inode
+                    file.seek(0, os.SEEK_END)  # Go to the end for new lines only
+
+                while not stop_event.is_set():
+                    line = file.readline()
+                    if line:
+                        on_line_callback(line)
+                    else:
+                        # Check if file was truncated or replaced
+                        try:
+                            new_inode = os.stat(filepath).st_ino
+                            if new_inode != file_inode:
+                                break  # file replaced, reopen next loop
+                        except FileNotFoundError:
+                            break  # file deleted
+                        time.sleep(0.1)
+
+            except Exception as e:
+                print(f"Error reading log file: {e}")
+                time.sleep(1)
+        else:
+            if file:
+                file.close()
+                file = None
+                file_inode = None
+            time.sleep(0.5)
 
 def evaluation(X_test_param, client_data_dict_test_param, global_model_param, personalized_models_param, writer_param,
                y_test_param):
@@ -447,51 +473,6 @@ def evaluation(X_test_param, client_data_dict_test_param, global_model_param, pe
             pickle.dump((prediction.cpu().numpy(), num_of_classes), f)
 
     return personalised_acc, client_accs, global_acc
-
-
-def plot(global_model_param):
-    global predictions, num_classes
-    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-    #######################  PLOT  #############################
-    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-    with torch.no_grad():
-        X_test_tensor = torch.from_numpy(X_test).float().to(util.setup_device())
-        outputs = global_model_param(X_test_tensor)
-        _, predictions = torch.max(outputs, 1)
-    num_classes = int(max(y_test.max().item(), predictions.cpu().max().item()) + 1)
-    log_util.safe_log("Number of classes:::", num_classes)
-    return predictions, num_classes
-
-
-def load_from_files(writer_param):
-    partition_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(
-        n=util.get_today_date()) + "partitioned_data.pkl"
-    partition_output_test_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(
-        n=util.get_today_date()) + "partitioned_data_test.pkl"
-    xy_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "X_y_test.joblib"
-    result_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "results.pkl"
-    predictions_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(n=util.get_today_date()) + "predictions.pkl"
-
-    global global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
-        client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
-        predictions, num_classes
-    with util.named_timer("Evaluate Global Model From File", writer_param, tag="EvalFromFile"):
-        global_model = evaluate_global_model.evaluate_global_model_fromfile()
-    with util.named_timer("Evaluate Personalized Models From File", writer_param, tag="PersonalizedEval"):
-        personalized_models = evaluate_per_client.load_personalized_models_fromfile()
-    X_test, y_test = load(xy_output_path)
-    with open(partition_output_path, "rb") as f:
-        client_data_dict, hierarchical_data = pickle.load(f)
-    with open(partition_output_test_path, "rb") as f:
-        client_data_dict_test, hierarchical_data_test = pickle.load(f)
-    with open(result_output_path, "rb") as f:
-        personalised_acc, client_accs, global_acc = pickle.load(f)
-    with open(predictions_output_path, "rb") as f:
-        predictions, num_classes = pickle.load(f)
-    return global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
-        client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
-        predictions, num_classes
-
 
 def start_process(selected_folder_param, done_event):
     global hh, mm, ss
@@ -559,15 +540,24 @@ def start_process(selected_folder_param, done_event):
                 # Step 3: Instantiate Finetune model and train on device
             with util.named_timer("target_class", writer, tag="target_class"):
                 def base_model_fn():
-                    return finetune_model(X_finetune, y_finetune, input_dim=X_finetune.shape[1],
-                                          target_classes=len(np.unique(y_finetune)))
+                    return finetune_model.init_model(input_dim=X_finetune.shape[1],
+                                                     target_classes=len(np.unique(y_finetune)))
 
             with open(partition_output_path + "general_data_test.pkl", "wb") as f:
                 pickle.dump((X_pretrain.shape[1], X_finetune.shape[1], y_finetune, len(np.unique(y_finetune))), f)
 
-            with util.named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
-                global_model, personalized_models = pipeline.hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
-                                                                             y_test)
+                with util.named_timer("pfl_pipeline", writer, tag="pfl_pipeline"):
+                    global_model, personalized_models = pipeline.run_pfl(
+                        base_model_fn,
+                        client_data_dict,  # use training client partitions
+                        X_test, y_test,
+                        num_rounds=config.NUM_FEDERATED_ROUND,
+                        local_epochs=2
+                    )
+
+            #with util.named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
+             #   global_model, personalized_models = pipeline.hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
+             #                                                                y_test)
 
         #######################  LOAD FROM FILES ##################################
         else:
@@ -621,10 +611,20 @@ def start_process(selected_folder_param, done_event):
         log_util.safe_log("Exception in thread:", e, level="error")
         traceback.print_exc()
 
+def plot(global_model_param):
+    global predictions, num_classes
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    #######################  PLOT  #############################
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    with torch.no_grad():
+        X_test_tensor = torch.from_numpy(X_test).float().to(util.setup_device())
+        outputs = global_model_param(X_test_tensor)
+        _, predictions = torch.max(outputs, 1)
+    num_classes = int(max(y_test.max().item(), predictions.cpu().max().item()) + 1)
+    log_util.safe_log("Number of classes:::", num_classes)
+    return predictions, num_classes
 
-def disable_result_buttons():
-    for label, btn in result_buttons.items():
-        btn.config(state="disabled")
+
 
 
 if __name__ == "__main__":

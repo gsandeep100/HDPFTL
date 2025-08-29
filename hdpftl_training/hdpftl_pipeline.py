@@ -3,6 +3,7 @@ import gc
 
 import numpy as np
 import torch
+from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 
 import hdpftl_evaluation.evaluate_global_model as evaluate_global_model
@@ -328,3 +329,90 @@ def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test, writer=Non
     log_util.safe_log("\n✅ HDPFTL complete. Returning global and personalized models.\n")
     util.clear_memory()
     return global_model, personalized_models
+
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
+import numpy as np
+
+def run_pfl(base_model_fn, client_data_dict, X_test, y_test, num_rounds=10, local_epochs=2):
+    """
+    Personalized Federated Learning (FedPer-style).
+    - Shared backbone is trained globally (via FedAvg).
+    - Each client has a personalized classifier head.
+    """
+    device = util.setup_device()
+    global_model = base_model_fn().to(device)
+
+    # Extract backbone (everything except final classifier)
+    global_backbone = nn.Sequential(*list(global_model.children())[:-1]).to(device)
+
+    # Infer backbone output dimension dynamically
+    # (Assumes final layer before classifier is Linear)
+    input_dim = None
+    for layer in reversed(list(global_backbone.children())):
+        if isinstance(layer, nn.Linear):
+            input_dim = layer.out_features
+            break
+    if input_dim is None:
+        raise ValueError("Could not infer backbone output dimension. Check base_model_fn structure.")
+
+    num_classes = len(np.unique(y_test))
+
+    personalized_models = {}
+
+    for rnd in range(num_rounds):
+        log_util.safe_log(f"--- PFL Round {rnd+1}/{num_rounds} ---")
+
+        client_backbones = []
+        client_sample_counts = {}
+
+        # Train each client locally
+        for client_id, (X_client, y_client) in client_data_dict.items():
+            model = base_model_fn().to(device)
+
+            # Copy shared backbone
+            model.load_state_dict(global_model.state_dict(), strict=False)
+
+            # Replace classifier with personalized head (dynamic size)
+            model.classifier = nn.Linear(input_dim, num_classes).to(device)
+
+            # Local training
+            optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+            criterion = nn.CrossEntropyLoss()
+
+            dataset = TensorDataset(torch.tensor(X_client, dtype=torch.float32),
+                                    torch.tensor(y_client, dtype=torch.long))
+            loader = DataLoader(dataset, batch_size=config.BATCH_SIZE_TRAINING, shuffle=True)
+
+            model.train()
+            for _ in range(local_epochs):
+                for xb, yb in loader:
+                    xb, yb = xb.to(device), yb.to(device)
+                    optimizer.zero_grad()
+                    out = model(xb)
+                    loss = criterion(out, yb)
+                    loss.backward()
+                    optimizer.step()
+
+            # Save personalized model
+            personalized_models[client_id] = model
+            client_backbones.append(model.state_dict())
+            client_sample_counts[client_id] = len(y_client)
+
+        # Federated aggregation (FedAvg)
+        global_state = global_model.state_dict()
+        total_samples = sum(client_sample_counts.values())
+
+        for k in global_state.keys():
+            if "classifier" not in k:  # only update backbone
+                weighted_sum = 0
+                for (client_id, _), sd in zip(client_data_dict.items(), client_backbones):
+                    client_weight = client_sample_counts[client_id] / total_samples
+                    weighted_sum += client_weight * sd[k].float()
+                global_state[k] = weighted_sum
+
+        global_model.load_state_dict(global_state, strict=False)
+
+    return global_model, personalized_models
+
