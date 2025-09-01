@@ -3,6 +3,8 @@ import threading
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from numpy import vstack
+from scipy.sparse import csr_matrix
 from sklearn.preprocessing import OrdinalEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression, Ridge
@@ -184,27 +186,26 @@ def train_local_lightgbm(X_train, y_train, X_val, y_val, task='classification', 
 
 def extract_leaf_embeddings(model, X, ordinal_encoders=None, leaf_encoder=None, client_id="client"):
     """
-    Extract leaf embeddings from a LightGBM model with per-client ordinal encoding
-    and reusable OneHotEncoder.
+    Extract sparse one-hot leaf embeddings from a LightGBM model.
 
     Args:
         model: trained LightGBM model
-        X: input features (numpy array or DataFrame)
-        ordinal_encoders: dict of per-column OrdinalEncoders (optional)
-        leaf_encoder: fitted OneHotEncoder for leaf indices (optional, reused across rounds)
-        client_id: string for logging
+        X: input features (np.ndarray or pd.DataFrame)
+        ordinal_encoders: dict of OrdinalEncoders for categorical columns (optional)
+        leaf_encoder: fitted OneHotEncoder for leaf indices (optional, reusable)
+        client_id: logging identifier
 
     Returns:
-        leaf_embeddings: np.ndarray
-        leaf_encoder: fitted OneHotEncoder (can be reused)
+        leaf_embeddings: csr_matrix of shape (n_samples, n_leaf_nodes_total)
+        leaf_encoder: fitted OneHotEncoder (reusable)
     """
 
     # Ensure DataFrame for column access
     if isinstance(X, np.ndarray):
         X = pd.DataFrame(X)
 
-    # Apply per-column ordinal encoders
-    if ordinal_encoders is not None:
+    # Apply ordinal encoders
+    if ordinal_encoders:
         X_enc = X.copy()
         for col, enc in ordinal_encoders.items():
             if col in X_enc.columns:
@@ -212,22 +213,41 @@ def extract_leaf_embeddings(model, X, ordinal_encoders=None, leaf_encoder=None, 
                     X_enc[[col]] = enc.transform(X_enc[[col]])
                 except Exception as e:
                     print(f"[{client_id}] ⚠️ Failed to transform column '{col}': {e}")
-                    X_enc[col] = -1  # fallback
+                    X_enc[col] = -1
         X = X_enc
 
-    # Predict leaf indices
-    leaf_indices = model.predict(X, pred_leaf=True)  # shape (n_samples, n_trees)
+    # Predict leaf indices (n_samples, n_trees)
+    leaf_indices = model.predict(X, pred_leaf=True)
+    leaf_indices = np.array(leaf_indices, dtype=np.int32)
 
-    # Fit or reuse OneHotEncoder (for sklearn >=1.2)
+    # Fit or reuse OneHotEncoder (sparse output)
     if leaf_encoder is None:
-        leaf_encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+        try:
+            leaf_encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=True)
+        except TypeError:
+            leaf_encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=True)
+
         leaf_embeddings = leaf_encoder.fit_transform(leaf_indices)
-        print(f"[{client_id}] Fitted OneHotEncoder for leaf embeddings, shape: {leaf_embeddings.shape}")
+        print(f"[{client_id}] Fitted OneHotEncoder, shape: {leaf_embeddings.shape}")
     else:
         leaf_embeddings = leaf_encoder.transform(leaf_indices)
         print(f"[{client_id}] Transformed leaf embeddings using existing encoder, shape: {leaf_embeddings.shape}")
 
+    # Ensure sparse float32
+    leaf_embeddings = leaf_embeddings.astype(np.float32)
     return leaf_embeddings, leaf_encoder
+
+
+def get_sparse_leaf_embeddings(model, X, ordinal_encoders=None, leaf_encoder=None, client_id="client"):
+    """
+    Wrapper to ensure output is always a sparse csr_matrix (memory safe).
+    """
+    leaf_emb, leaf_encoder = extract_leaf_embeddings(model, X, ordinal_encoders, leaf_encoder, client_id)
+    if not isinstance(leaf_emb, csr_matrix):
+        leaf_emb = csr_matrix(leaf_emb)
+    return leaf_emb, leaf_encoder
+
+
 # ============================================================
 # Client training in a thread
 # ============================================================
@@ -248,6 +268,7 @@ def client_train_thread(client_id, X_train, y_train, X_val, y_val,
         num_classes = None
         if task == 'classification':
             num_classes = len(np.unique(y_train))
+
         model = train_local_lightgbm(
             X_train_enc, y_train,
             X_val_enc, y_val,
@@ -271,28 +292,32 @@ def client_train_thread(client_id, X_train, y_train, X_val, y_val,
 # Multi-round Adaptive Iterative PFL
 # ============================================================
 def multi_round_pfl_adaptive_iterative(clients_data, rounds=3, task='classification', n_estimators=50):
+    from scipy.sparse import vstack, csr_matrix
+
     n_clients = len(clients_data)
     local_models = [None] * n_clients
-    encoders = [None] * n_clients          # per-client categorical encoders
-    leaf_encoders = [None] * n_clients     # per-client one-hot leaf encoders
+    encoders = [None] * n_clients
+    leaf_encoders = [None] * n_clients
     w_globals = np.array([0.5] * n_clients)
 
     round_metrics = {i: [] for i in range(n_clients)}
     round_weights = {i: [] for i in range(n_clients)}
 
     # -----------------------------
-    # 1️⃣ Initial local training in threads
+    # 1️⃣ Initial local training (threads)
     # -----------------------------
     threads = []
     events = []
+
     for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
-        # Split local training into train/validation
+        # Split local training
         X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=42)
         X_tr_enc, X_val_enc, enc = preprocess_for_lightgbm_safe_ordinal(X_tr, X_val, client_id=f"Client-{i}")
         encoders[i] = enc
 
         done_event = threading.Event()
         events.append(done_event)
+
         t = threading.Thread(
             target=client_train_thread,
             args=(i, X_tr_enc, y_tr, X_val_enc, y_val, task, n_estimators, local_models, encoders, done_event)
@@ -300,7 +325,6 @@ def multi_round_pfl_adaptive_iterative(clients_data, rounds=3, task='classificat
         threads.append(t)
         t.start()
 
-    # Wait for all clients to finish training
     for e in events:
         e.wait()
 
@@ -310,63 +334,92 @@ def multi_round_pfl_adaptive_iterative(clients_data, rounds=3, task='classificat
     for round_id in range(rounds):
         print(f"\n=== Round {round_id + 1}/{rounds} ===")
 
-        # 2a. Extract leaf embeddings for global aggregation
-        global_X = []
-        global_y = []
+        # 2a. Extract sparse leaf embeddings for global aggregation
+        global_X_list = []
+        global_y_list = []
+
         for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
-            X_train_enc, _, _ = preprocess_for_lightgbm_safe_ordinal(X_train, X_train, client_id=f"Client-{i}")
-            leaf_emb, leaf_encoders[i] = extract_leaf_embeddings(
+            X_train_enc, _, _ = preprocess_for_lightgbm_safe_ordinal(
+                X_train, X_train, client_id=f"Client-{i}"
+            )
+            leaf_emb, leaf_encoders[i] = get_sparse_leaf_embeddings(
                 local_models[i], X_train_enc, leaf_encoder=leaf_encoders[i], client_id=f"Client-{i}"
             )
-            global_X.append(leaf_emb)
-            global_y.append(y_train)
+            if not isinstance(leaf_emb, csr_matrix):
+                leaf_emb = csr_matrix(leaf_emb)
+            global_X_list.append(leaf_emb)
+            global_y_list.append(y_train)
 
-        global_X = np.vstack(global_X)
-        global_y = np.hstack(global_y)
+        # Stack sparse matrices
+        global_X_sparse = vstack(global_X_list)
+        global_y = np.hstack(global_y_list).astype(np.int32)
 
+        # -----------------------------
         # 2b. Train global aggregator
+        # -----------------------------
         if task == 'classification':
-            global_model = LogisticRegression(max_iter=500)
+            # LogisticRegression supports sparse input with solver='saga'
+            global_model = LogisticRegression(
+                solver="saga",
+                max_iter=5000,
+                penalty="l2",
+                n_jobs=-1
+            )
         else:
             global_model = Ridge()
-        global_model.fit(global_X, global_y)
+
+        # Fit using sparse matrix
+        global_model.fit(global_X_sparse, global_y)
 
         # -----------------------------
         # 2c. Adaptive weighting & local evaluation
         # -----------------------------
         for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
             X_test_enc, _, _ = preprocess_for_lightgbm_safe_ordinal(X_test, X_test, client_id=f"Client-{i}")
-            leaf_emb_test, leaf_encoders[i] = extract_leaf_embeddings(
+            leaf_emb_test, leaf_encoders[i] = get_sparse_leaf_embeddings(
                 local_models[i], X_test_enc, leaf_encoder=leaf_encoders[i], client_id=f"Client-{i}"
             )
-            y_pred_global = global_model.predict(leaf_emb_test)
-            y_pred_local = local_models[i].predict(X_test_enc)
+            if not isinstance(leaf_emb_test, csr_matrix):
+                leaf_emb_test = csr_matrix(leaf_emb_test)
 
-            combined_pred = w_globals[i] * y_pred_global + (1 - w_globals[i]) * y_pred_local
-
-            # Metrics
             if task == 'classification':
-                acc = accuracy_score(y_test, np.round(combined_pred))
+                # Global probabilities
+                y_pred_global_prob = global_model.predict_proba(leaf_emb_test)
+
+                # Local LightGBM probabilities
+                X_test_local_dense = np.array(X_test_enc, dtype=np.float32)
+                y_pred_local_prob = local_models[i].predict_proba(X_test_local_dense)
+
+                combined_prob = w_globals[i] * y_pred_global_prob + (1 - w_globals[i]) * y_pred_local_prob
+                y_pred_label = np.argmax(combined_prob, axis=1)
+
+                acc = accuracy_score(y_test, y_pred_label)
                 round_metrics[i].append(acc)
+
+                loss_global = log_loss(y_test, np.clip(y_pred_global_prob, 1e-8, 1-1e-8))
+                loss_local = log_loss(y_test, np.clip(y_pred_local_prob, 1e-8, 1-1e-8))
+
             else:
+                # Regression
+                y_pred_global = global_model.predict(leaf_emb_test)
+                X_test_local_dense = np.array(X_test_enc, dtype=np.float32)
+                y_pred_local = local_models[i].predict(X_test_local_dense)
+                combined_pred = w_globals[i] * y_pred_global + (1 - w_globals[i]) * y_pred_local
+
                 rmse = np.sqrt(mean_squared_error(y_test, combined_pred))
                 round_metrics[i].append(rmse)
 
-            # Adaptive weight update
-            if task == 'classification':
-                loss_global = log_loss(y_test, np.clip(y_pred_global, 1e-8, 1 - 1e-8))
-                loss_local = log_loss(y_test, np.clip(y_pred_local, 1e-8, 1 - 1e-8))
-            else:
                 loss_global = mean_squared_error(y_test, y_pred_global)
                 loss_local = mean_squared_error(y_test, y_pred_local)
 
+            # Update adaptive weight
             w_globals[i] = loss_local / (loss_local + loss_global + 1e-8)
+            w_globals[i] = np.clip(w_globals[i], 0.1, 0.9)
             round_weights[i].append(w_globals[i])
 
         print("Adaptive weights:", np.round(w_globals, 3))
 
     return local_models, global_model, w_globals, round_metrics, round_weights
-# Plotting functions
 # ============================================================
 def plot_roundwise_metrics(round_metrics, task='classification'):
     num_clients = len(round_metrics)
