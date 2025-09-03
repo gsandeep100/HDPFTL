@@ -130,6 +130,35 @@ def preprocess_for_lightgbm_safe_ordinal(X_train, X_test, client_id="client"):
 
     # Convert DataFrames back to numpy arrays for LightGBM
     return X_train_enc.to_numpy(), X_test_enc.to_numpy(), encoders
+
+def preprocess_for_lightgbm_fast(X_train, X_test, client_id="client"):
+    """
+    Fast preprocessing for LightGBM:
+    - Converts object/string columns to pandas category dtype
+    - Keeps DataFrame (with column names) so LightGBM doesn't warn
+    - Much faster than per-column OrdinalEncoder
+
+    Returns:
+        X_train_enc (pd.DataFrame)
+        X_test_enc (pd.DataFrame)
+        encoders (dict of categories for logging/debugging)
+    """
+    # Ensure DataFrames
+    if isinstance(X_train, np.ndarray):
+        X_train = pd.DataFrame(X_train)
+    if isinstance(X_test, np.ndarray):
+        X_test = pd.DataFrame(X_test)
+
+    encoders = {}
+    for col in X_train.columns:
+        if X_train[col].dtype == "object" or X_test[col].dtype == "object":
+            X_train[col] = X_train[col].astype("category")
+            X_test[col] = X_test[col].astype("category")
+            encoders[col] = list(X_train[col].cat.categories)
+            print(f"[{client_id}] ✅ Converted column '{col}' → categorical")
+
+    return X_train, X_test, encoders
+
 # ============================================================
 # Train LightGBM locally
 # ============================================================
@@ -259,7 +288,7 @@ def client_train_thread(client_id, X_train, y_train, X_val, y_val,
     """
     try:
         # 1️⃣ Preprocess string/object columns safely
-        X_train_enc, X_val_enc, enc = preprocess_for_lightgbm_safe_ordinal(
+        X_train_enc, X_val_enc, enc = preprocess_for_lightgbm_fast(
             X_train, X_val, client_id=f"Client-{client_id}"
         )
         encoders[client_id] = enc
@@ -268,7 +297,7 @@ def client_train_thread(client_id, X_train, y_train, X_val, y_val,
         num_classes = None
         if task == 'classification':
             num_classes = len(np.unique(y_train))
-
+        print("total number of num_classes is:",num_classes)
         model = train_local_lightgbm(
             X_train_enc, y_train,
             X_val_enc, y_val,
@@ -312,7 +341,7 @@ def multi_round_pfl_adaptive_iterative(clients_data, rounds=3, task='classificat
     for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
         # Split local training
         X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=42)
-        X_tr_enc, X_val_enc, enc = preprocess_for_lightgbm_safe_ordinal(X_tr, X_val, client_id=f"Client-{i}")
+        X_tr_enc, X_val_enc, enc = preprocess_for_lightgbm_fast(X_tr, X_val, client_id=f"Client-{i}")
         encoders[i] = enc
 
         done_event = threading.Event()
@@ -339,7 +368,7 @@ def multi_round_pfl_adaptive_iterative(clients_data, rounds=3, task='classificat
         global_y_list = []
 
         for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
-            X_train_enc, _, _ = preprocess_for_lightgbm_safe_ordinal(
+            X_train_enc, _, _ = preprocess_for_lightgbm_fast(
                 X_train, X_train, client_id=f"Client-{i}"
             )
             leaf_emb, leaf_encoders[i] = get_sparse_leaf_embeddings(
@@ -375,7 +404,7 @@ def multi_round_pfl_adaptive_iterative(clients_data, rounds=3, task='classificat
         # 2c. Adaptive weighting & local evaluation
         # -----------------------------
         for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
-            X_test_enc, _, _ = preprocess_for_lightgbm_safe_ordinal(X_test, X_test, client_id=f"Client-{i}")
+            X_test_enc, _, _ = preprocess_for_lightgbm_fast(X_test, X_test, client_id=f"Client-{i}")
             leaf_emb_test, leaf_encoders[i] = get_sparse_leaf_embeddings(
                 local_models[i], X_test_enc, leaf_encoder=leaf_encoders[i], client_id=f"Client-{i}"
             )
