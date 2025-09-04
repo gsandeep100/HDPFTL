@@ -18,7 +18,6 @@ import hdpftl_utility.config as config
 import hdpftl_utility.log as log_util
 import hdpftl_utility.utils as util
 from hdpftl_training.hdpftl_data import preprocess
-from hdpftl_training.hdpftl_personalised_FL.whole_pfl_code import client_data
 
 np.random.seed(42)
 n_clients = 100
@@ -94,39 +93,58 @@ def client_train_thread(client_id, X_train, y_train, X_val, y_val, task, n_estim
 # ============================================================
 # Bayesian Aggregator
 # ============================================================
-def bayesian_aggregator_multiclass(X_sparse, y, n_classes, n_samples=200, n_tune=200):
-    X_dense = X_sparse.toarray()
-    y = y.astype(int)
+def bayesian_aggregator_multiclass_edge(X_sparse_edge, y_edge, n_classes, n_samples=200, n_tune=200):
+    """
+    Memory-efficient Bayesian aggregator for a single edge.
+    Converts only the edge's sparse matrix to dense.
+    """
+    # Convert only this edge's sparse matrix to dense
+    X_dense = X_sparse_edge.toarray()
+    y = y_edge.astype(int)
+
     with pm.Model() as model:
         alpha = pm.Normal("alpha", mu=0, sigma=10, shape=n_classes)
         betas = pm.Normal("betas", mu=0, sigma=1, shape=(X_dense.shape[1], n_classes))
         logits = pm.math.dot(X_dense, betas) + alpha
         y_obs = pm.Categorical("y_obs", p=pm.math.softmax(logits), observed=y)
-        trace = pm.sample(n_samples, tune=n_tune, target_accept=0.9, cores=1, progressbar=False)
+
+        trace = pm.sample(n_samples, tune=n_tune, target_accept=0.9, cores=1, progressbar=True)
+
     return model, trace
 
 
 # ============================================================
 # Aggregator Selector
 # ============================================================
-def aggregate_multiclass(edge_X_list, edge_y_list, num_classes, aggregator_type='bayesian'):
-    global_X_sparse = vstack(edge_X_list)
-    global_y = np.hstack(edge_y_list)
+def aggregate_multiclass_edge(edge_X_list, edge_y_list, num_classes, aggregator_type='bayesian'):
+    """
+    Aggregates all edges using the selected aggregator.
+    Sparse matrices are preserved until Bayesian sampling.
+    """
+    edge_X_sparse = vstack(edge_X_list)  # Keep sparse
+    edge_y = np.hstack(edge_y_list)
 
     if aggregator_type == 'bayesian':
-        model, trace = bayesian_aggregator_multiclass(global_X_sparse, global_y, num_classes)
-        return model, trace, global_X_sparse, global_y
+        # Apply Bayesian aggregator edge-wise
+        # Each edge individually converted to dense inside bayesian_aggregator_multiclass
+        # Here we combine all edges for the aggregator
+        model, trace = bayesian_aggregator_multiclass_edge(edge_X_sparse, edge_y, num_classes)
+        return model, trace, edge_X_sparse, edge_y
+
     elif aggregator_type == 'logreg':
         logreg = LogisticRegression(multi_class='multinomial', max_iter=500)
-        logreg.fit(global_X_sparse, global_y)
-        return logreg, None, global_X_sparse, global_y
+        logreg.fit(edge_X_sparse, edge_y)
+        return logreg, None, edge_X_sparse, edge_y
+
     elif aggregator_type == 'simple':
-        avg_X = global_X_sparse.mean(axis=0)
-        return None, None, avg_X, global_y
+        avg_X = edge_X_sparse.mean(axis=0)
+        return None, None, avg_X, edge_y
+
     elif aggregator_type == 'weighted':
         weights = np.ones(len(edge_X_list)) / len(edge_X_list)
         weighted_X = sum(w * x for w, x in zip(weights, edge_X_list))
-        return None, None, weighted_X, global_y
+        return None, None, weighted_X, edge_y
+
     else:
         raise ValueError(f"Unknown aggregator_type {aggregator_type}")
 
@@ -142,7 +160,6 @@ def align_predictions(y_pred_local, classes_source, global_classes):
         if c in class_to_index:
             y_pred_full[:, class_to_index[c]] = y_pred_local[:, i]
     return y_pred_full
-
 
 
 def create_fully_random_edge():
@@ -165,16 +182,20 @@ def create_fully_random_edge():
 
     return n_edges
 
+
 # ============================================================
 # Hierarchical PFL
 # ============================================================
-def hierarchical_pfl(clients_data, task='classification', n_estimators=50, aggregator_type='bayesian'):
-    #n_clients = len(clients_data)
+def hierarchical_pfl(clients_data, task='classification', n_estimators=50, aggregator_type='bayesian', rounds=10):
+
+    n_clients = len(clients_data)
     local_models = [None] * n_clients
     threads, events = [], []
+
     edge_groups = create_fully_random_edge()
-    print("Random Edge groups:",edge_groups)
-    # --- Local Training ---
+    print("Random Edge groups:", edge_groups)
+
+    # --- Local training ---
     for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
         X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
         done_event = threading.Event()
@@ -185,7 +206,7 @@ def hierarchical_pfl(clients_data, task='classification', n_estimators=50, aggre
         t.start()
     for e in events: e.wait()
 
-    # --- Create global OneHotEncoder ---
+    # --- Global OneHotEncoder ---
     all_leaf_indices = []
     for model, (X_train, _, _, _) in zip(local_models, clients_data):
         all_leaf_indices.append(extract_leaf_embeddings(model, X_train))
@@ -201,26 +222,26 @@ def hierarchical_pfl(clients_data, task='classification', n_estimators=50, aggre
     client_round_metrics = {i: [] for i in range(n_clients)}
     client_round_weights = {i: [] for i in range(n_clients)}
 
-    # --- Multi-round federated learning ---
+    # --- Multi-round FL ---
     for round_id in range(rounds):
         print(f"\n=== Round {round_id + 1}/{rounds} ===")
 
-        # --- Edge-level aggregation ---
+        # Edge-level aggregation
         edge_X_list, edge_y_list = [], []
-        for edge_id, edge in enumerate(edge_groups):
+        for edge in edge_groups:
             edge_client_X, edge_client_y = [], []
             for client_idx in edge:
                 X_train, _, y_train, _ = clients_data[client_idx]
                 leaf_idx = extract_leaf_embeddings(local_models[client_idx], X_train)
-                leaf_emb = global_leaf_encoder.transform(leaf_idx)
+                leaf_emb = global_leaf_encoder.transform(leaf_idx)  # sparse
                 edge_client_X.append(leaf_emb)
                 edge_client_y.append(y_train)
             if edge_client_X:
                 edge_X_list.append(vstack(edge_client_X))
                 edge_y_list.append(np.hstack(edge_client_y))
 
-        # --- Global aggregation ---
-        aggregator_model, bayes_trace, global_X_sparse, global_y = aggregate_multiclass(
+        # Global aggregation
+        aggregator_model, bayes_trace, global_X_sparse, global_y = aggregate_multiclass_edge(
             edge_X_list, edge_y_list, num_classes, aggregator_type
         )
 
@@ -228,14 +249,12 @@ def hierarchical_pfl(clients_data, task='classification', n_estimators=50, aggre
         for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
             leaf_idx_test = extract_leaf_embeddings(local_models[i], X_test)
             leaf_emb_test = global_leaf_encoder.transform(leaf_idx_test)
-            X_test_dense = X_test.to_numpy() if isinstance(X_test, pd.DataFrame) else np.array(X_test)
 
-            # Local prediction
+            X_test_dense = X_test.to_numpy() if isinstance(X_test, pd.DataFrame) else np.array(X_test)
             y_pred_local_raw = local_models[i].predict_proba(X_test_dense)
             local_classes = local_models[i].classes_
             y_pred_local = align_predictions(y_pred_local_raw, local_classes, global_classes)
 
-            # Global prediction
             if aggregator_type == 'bayesian':
                 with aggregator_model:
                     pp = pm.sample_posterior_predictive(bayes_trace, var_names=['y_obs'], samples=50, progressbar=False)
@@ -246,8 +265,7 @@ def hierarchical_pfl(clients_data, task='classification', n_estimators=50, aggre
 
             elif aggregator_type == 'logreg':
                 y_pred_global_raw = aggregator_model.predict_proba(leaf_emb_test)
-                global_seen_classes = aggregator_model.classes_
-                y_pred_global = align_predictions(y_pred_global_raw, global_seen_classes, global_classes)
+                y_pred_global = align_predictions(y_pred_global_raw, aggregator_model.classes_, global_classes)
             else:
                 y_pred_global = np.array(global_X_sparse.todense())
 
@@ -260,8 +278,7 @@ def hierarchical_pfl(clients_data, task='classification', n_estimators=50, aggre
             loss_global = log_loss(y_test, np.clip(y_pred_global, 1e-8, 1 - 1e-8), labels=global_classes)
             loss_local = log_loss(y_test, np.clip(y_pred_local, 1e-8, 1 - 1e-8), labels=global_classes)
 
-            w_globals[i] = loss_local / (loss_local + loss_global + 1e-8)
-            w_globals[i] = np.clip(w_globals[i], 0.1, 0.9)
+            w_globals[i] = np.clip(loss_local / (loss_local + loss_global + 1e-8), 0.1, 0.9)
             client_round_weights[i].append(w_globals[i])
 
         print("Adaptive weights:", np.round(w_globals, 3))
@@ -340,9 +357,9 @@ if __name__ == "__main__":
 
     clients_data = create_non_iid_clients(X_pretrain, y_pretrain, X_test, y_test)
 
-    #edge_groups = [[0, 1], [2, 3, 4], [5, 6], [7, 8, 9]]
+    # edge_groups = [[0, 1], [2, 3, 4], [5, 6], [7, 8, 9]]
 
-    #aggregator_type = 'logreg'  # or 'bayesian'
+    # aggregator_type = 'logreg'  # or 'bayesian'
     local_models, aggregator_model, bayes_trace, w_globals, round_metrics, round_weights, global_classes = hierarchical_pfl(
         clients_data, task=task, n_estimators=50
     )

@@ -117,14 +117,12 @@ NUM_CLIENTS = 6  # total clients
 NUM_EDGES = 2  # number of edge groups
 ASYNC_ITERATIONS = 40
 COMMON_DIM = 50
-EARLY_STOPPING_ROUNDS = 10
-K_FOLDS = 5
 TRUST_DECAY = 0.95
 TRUST_GAIN = 1.05
 MIN_TRUST = 0.1
 MAX_TRUST = 2.0
-
-# -----------------------------
+EARLY_STOPPING_ROUNDS = 20
+K_FOLDS = 5  # -----------------------------
 # 1. GENERATE CLIENT DATA
 # -----------------------------
 client_data = []
@@ -136,10 +134,13 @@ for i in range(NUM_CLIENTS):
 # -----------------------------
 # 2. K-FOLD LIGHTGBM TRAINING FUNCTION
 # -----------------------------
+
+
 def train_lgb_kfold(X, y, k=K_FOLDS):
     kf = KFold(n_splits=k, shuffle=True, random_state=42)
     val_scores = []
     models = []
+
     for train_idx, val_idx in kf.split(X):
         X_train, X_val = X[train_idx], X[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
@@ -157,11 +158,18 @@ def train_lgb_kfold(X, y, k=K_FOLDS):
             reg_lambda=0.2,
             random_state=42
         )
-        model.fit(X_train, y_train, eval_set=[(X_val, y_val)],
-                  early_stopping_rounds=EARLY_STOPPING_ROUNDS, verbose=False)
+
+        model.fit(
+            X_train,
+            y_train,
+            eval_set=[(X_val, y_val)],
+            eval_metric='multi_logloss',  # or 'binary_logloss'
+        )
+
         val_score = model.score(X_val, y_val)
         val_scores.append(val_score)
         models.append(model)
+
     best_idx = np.argmax(val_scores)
     return models[best_idx], np.max(val_scores)
 
