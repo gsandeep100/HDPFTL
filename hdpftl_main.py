@@ -14,15 +14,16 @@ import multiprocessing as mp
 import os
 import pickle
 import shutil
-import tkinter as tk
-import config
 import threading
 import time
+import tkinter as tk
 import traceback
 import warnings
 from multiprocessing import Process
 from tkinter import scrolledtext, messagebox, font
-from tkinter import ttk, filedialog
+from tkinter import ttk
+
+import config
 
 global use_all_files_var, loaded_files
 import numpy as np
@@ -79,7 +80,7 @@ use_all_files_var = None  # default unchecked
 
 log_stop_event = None
 log_thread = None
-config_params = util.sync_config_params(config.saved_config_params) #initialization
+config_params = util.sync_config_params(config.saved_config_params)  # initialization
 
 
 def enable_disable_button():
@@ -114,9 +115,11 @@ def enable_disable_button():
         else:
             btn.config(state="disabled")
 
+
 def disable_result_buttons():
     for label, btn in result_buttons.items():
         btn.config(state="disabled")
+
 
 def open_settings_window():
     import os
@@ -233,9 +236,11 @@ def open_settings_window():
     # ---------- Drag-and-Drop Support ----------
     if DND_AVAILABLE:
         dnd = TkDND(settings_win)
+
         def drop_callback(event):
             files = settings_win.tk.splitlist(event.data)
             add_csv_files(files)
+
         dnd.bindtarget(csv_listbox, drop_callback, 'text/uri-list')
 
     # ---------- Load previous CSVs ----------
@@ -329,6 +334,7 @@ def open_settings_window():
     settings_win.grab_set()
     settings_win.focus_set()
 
+
 def load_from_files(writer_param):
     partition_output_path = config.TRAINED_MODEL_FOLDER_PATH.substitute(
         n=util.get_today_date()) + "partitioned_data.pkl"
@@ -357,6 +363,7 @@ def load_from_files(writer_param):
     return global_model, personalized_models, X_test, y_test, client_data_dict, hierarchical_data, \
         client_data_dict_test, hierarchical_data_test, personalised_acc, client_accs, global_acc, \
         predictions, num_classes
+
 
 def start_log_watcher(log_path, log_text):
     def on_new_line(line):
@@ -389,6 +396,7 @@ def start_log_watcher(log_path, log_text):
     watcher_thread.start()
     return stop_event, watcher_thread  # Return stop_event if you want to stop watching later
 
+
 def stop_log_watcher():
     if log_stop_event:
         log_stop_event.set()  # ✅ This will stop the thread loop
@@ -398,6 +406,7 @@ def stop_log_watcher():
     if log_thread:
         log_thread.join(timeout=2)
         print("Log thread stopped.")
+
 
 def tail_log_file(filepath, on_line_callback, stop_event):
     print(f"Monitoring log file: {filepath}")
@@ -440,6 +449,7 @@ def tail_log_file(filepath, on_line_callback, stop_event):
                 file_inode = None
             time.sleep(0.5)
 
+
 def evaluation(X_test_param, client_data_dict_test_param, global_model_param, personalized_models_param, writer_param,
                y_test_param):
     global personalised_acc, client_accs, global_acc
@@ -473,6 +483,7 @@ def evaluation(X_test_param, client_data_dict_test_param, global_model_param, pe
             pickle.dump((prediction.cpu().numpy(), num_of_classes), f)
 
     return personalised_acc, client_accs, global_acc
+
 
 def start_process(selected_folder_param, done_event):
     global hh, mm, ss
@@ -555,9 +566,9 @@ def start_process(selected_folder_param, done_event):
                         local_epochs=2
                     )
 
-            #with util.named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
-             #   global_model, personalized_models = pipeline.hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
-             #                                                                y_test)
+            # with util.named_timer("hdpftl_pipeline", writer, tag="hdpftl_pipeline"):
+            #   global_model, personalized_models = pipeline.hdpftl_pipeline(base_model_fn, hierarchical_data, X_test,
+            #                                                                y_test)
 
         #######################  LOAD FROM FILES ##################################
         else:
@@ -611,6 +622,7 @@ def start_process(selected_folder_param, done_event):
         log_util.safe_log("Exception in thread:", e, level="error")
         traceback.print_exc()
 
+
 def plot(global_model_param):
     global predictions, num_classes
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -623,8 +635,6 @@ def plot(global_model_param):
     num_classes = int(max(y_test.max().item(), predictions.cpu().max().item()) + 1)
     log_util.safe_log("Number of classes:::", num_classes)
     return predictions, num_classes
-
-
 
 
 if __name__ == "__main__":
@@ -804,7 +814,7 @@ if __name__ == "__main__":
 
 
     def on_selection(event):
-        global selected_folder, result_buttons,log_stop_event, log_thread
+        global selected_folder, result_buttons, log_stop_event, log_thread
         selection = listbox.curselection()
         if selection:
             index = selection[0]
@@ -1232,7 +1242,6 @@ if __name__ == "__main__":
         log_text.tag_config("ERROR", foreground="red")
         log_text.tag_config("CRITICAL", foreground="darkred")
         log_text.tag_config("DEBUG", foreground="gray")
-
 
         # === Optional Controls ===
         log_text.auto_scroll = True

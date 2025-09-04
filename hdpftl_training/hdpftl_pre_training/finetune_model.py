@@ -147,8 +147,8 @@ def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
 
     return transfer_model
 
+
 def init_model(input_dim, target_classes):
     """Return a fresh untrained model for PFL or FL."""
     model = TabularNet(input_dim, target_classes)
     return model
-

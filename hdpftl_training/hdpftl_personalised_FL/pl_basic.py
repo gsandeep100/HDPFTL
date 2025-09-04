@@ -1,149 +1,35 @@
-import os
+# ============================================================
+# Imports
+# ============================================================
 import threading
+
+import lightgbm as lgb
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from numpy import vstack
-from scipy.sparse import csr_matrix
-from sklearn.preprocessing import OrdinalEncoder
+import pymc as pm
+from scipy.sparse import vstack
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, log_loss
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression, Ridge
-from sklearn.metrics import accuracy_score, mean_squared_error, log_loss
+from sklearn.preprocessing import OneHotEncoder
+
 import hdpftl_utility.config as config
 import hdpftl_utility.log as log_util
 import hdpftl_utility.utils as util
-from sklearn.preprocessing import OneHotEncoder
-import lightgbm as lgb
-from sklearn.preprocessing import LabelEncoder
-import hdpftl_training.hdpftl_data.preprocess as preprocess
+from hdpftl_training.hdpftl_data import preprocess
+from hdpftl_training.hdpftl_personalised_FL.whole_pfl_code import client_data
+
+np.random.seed(42)
+n_clients = 100
+n_classes_per_client = 10
+rounds = 300
 
 
 # ============================================================
-# Load multiple CSVs from a folder (common columns)
+# Preprocessing
 # ============================================================
-def load_client_data_from_folder(folder_path, num_clients=3, test_size=0.2, file_extension=".csv", random_state=42):
-    X_list, y_list = [], []
-    common_columns = None
-
-    # Find common columns across all CSVs
-    for fname in os.listdir(folder_path):
-        if fname.endswith(file_extension):
-            df = pd.read_csv(os.path.join(folder_path, fname))
-            cols = df.columns[:-1]  # all except target
-            if common_columns is None:
-                common_columns = set(cols)
-            else:
-                common_columns = common_columns.intersection(set(cols))
-
-    if not common_columns:
-        raise ValueError("No common feature columns found across CSVs!")
-
-    common_columns = list(common_columns)
-    print(f"Using {len(common_columns)} common features across all files.")
-
-    # Load CSVs with only common columns + target
-    for fname in os.listdir(folder_path):
-        if fname.endswith(file_extension):
-            df = pd.read_csv(os.path.join(folder_path, fname))
-            df = df[common_columns + [df.columns[-1]]]
-            X_list.append(df.iloc[:, :-1].values)
-            y_list.append(df.iloc[:, -1].values)
-
-    X_all = np.vstack(X_list)
-    y_all = np.hstack(y_list)
-
-    # Split among clients
-    indices = np.arange(len(X_all))
-    np.random.seed(random_state)
-    np.random.shuffle(indices)
-    splits = np.array_split(indices, num_clients)
-
-    clients_data = []
-    for split in splits:
-        X_client, y_client = X_all[split], y_all[split]
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_client, y_client, test_size=test_size, random_state=random_state
-        )
-        clients_data.append((X_train, X_test, y_train, y_test))
-    return clients_data
-
-
-def preprocess_for_lightgbm(X_train, X_test):
-    """
-    Converts string/object columns to label-encoded integers for LightGBM compatibility.
-    Returns preprocessed NumPy arrays and encoders for each column.
-    """
-    if isinstance(X_train, np.ndarray):
-        X_train = pd.DataFrame(X_train)
-        X_test = pd.DataFrame(X_test)
-
-    encoders = {}
-    X_train_enc = X_train.copy()
-    X_test_enc = X_test.copy()
-
-    for col in X_train.columns:
-        if X_train[col].dtype == 'object':
-            le = LabelEncoder()
-            X_train_enc[col] = le.fit_transform(X_train[col])
-            X_test_enc[col] = le.transform(X_test[col])
-            encoders[col] = le
-    return X_train_enc.to_numpy(), X_test_enc.to_numpy(), encoders
-
-
-def preprocess_for_lightgbm_safe_ordinal(X_train, X_test, client_id="client"):
-    """
-    Safe preprocessing for LightGBM using OrdinalEncoder.
-    Adds per-client logging to track categorical encoding.
-
-    Args:
-        X_train (pd.DataFrame or np.ndarray): Training features.
-        X_test (pd.DataFrame or np.ndarray): Test/validation features.
-        client_id (str): Identifier for logging per client.
-
-    Returns:
-        X_train_enc (np.ndarray): Encoded training features.
-        X_test_enc (np.ndarray): Encoded test features.
-        encoders (dict): Dict of OrdinalEncoder objects per categorical column.
-    """
-    # Convert numpy arrays to DataFrames if needed
-    if isinstance(X_train, np.ndarray):
-        X_train = pd.DataFrame(X_train)
-    if isinstance(X_test, np.ndarray):
-        X_test = pd.DataFrame(X_test)
-
-    X_train_enc = X_train.copy()
-    X_test_enc = X_test.copy()
-    encoders = {}
-
-    for col in X_train.columns:
-        if X_train[col].dtype == 'object' or X_test[col].dtype == 'object':
-            try:
-                oe = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
-                X_train_enc[[col]] = oe.fit_transform(X_train[[col]])
-                X_test_enc[[col]] = oe.transform(X_test[[col]])
-                encoders[col] = oe
-                print(f"[{client_id}] ✅ Encoded column '{col}' with categories: {list(oe.categories_[0])}")
-            except Exception as e:
-                print(f"[{client_id}] ⚠️ Failed to encode column '{col}': {e}")
-                X_train_enc[col] = -1
-                X_test_enc[col] = -1
-
-    # Convert DataFrames back to numpy arrays for LightGBM
-    return X_train_enc.to_numpy(), X_test_enc.to_numpy(), encoders
-
-def preprocess_for_lightgbm_fast(X_train, X_test, client_id="client"):
-    """
-    Fast preprocessing for LightGBM:
-    - Converts object/string columns to pandas category dtype
-    - Keeps DataFrame (with column names) so LightGBM doesn't warn
-    - Much faster than per-column OrdinalEncoder
-
-    Returns:
-        X_train_enc (pd.DataFrame)
-        X_test_enc (pd.DataFrame)
-        encoders (dict of categories for logging/debugging)
-    """
-    # Ensure DataFrames
+def preprocess_for_lightgbm_fast(X_train, X_test):
     if isinstance(X_train, np.ndarray):
         X_train = pd.DataFrame(X_train)
     if isinstance(X_test, np.ndarray):
@@ -155,380 +41,310 @@ def preprocess_for_lightgbm_fast(X_train, X_test, client_id="client"):
             X_train[col] = X_train[col].astype("category")
             X_test[col] = X_test[col].astype("category")
             encoders[col] = list(X_train[col].cat.categories)
-            print(f"[{client_id}] ✅ Converted column '{col}' → categorical")
-
     return X_train, X_test, encoders
 
-# ============================================================
-# Train LightGBM locally
-# ============================================================
-def train_local_lightgbm(X_train, y_train, X_val, y_val, task='classification', params=None, n_estimators=100, num_classes=None):
-    if params is None:
-        if task == 'classification':
-            # Check if multiclass
-            if num_classes is not None and num_classes > 2:
-                params = {
-                    'objective': 'multiclass',
-                    'metric': 'multi_logloss',
-                    'num_class': num_classes,
-                    'boosting_type': 'gbdt',
-                    'num_leaves': 31,
-                    'learning_rate': 0.05,
-                    'verbose': -1,
-                    'n_estimators': n_estimators
-                }
-            else:
-                params = {
-                    'objective': 'binary',
-                    'metric': 'binary_logloss',
-                    'boosting_type': 'gbdt',
-                    'num_leaves': 31,
-                    'learning_rate': 0.05,
-                    'verbose': -1,
-                    'n_estimators': n_estimators
-                }
-        else:
-            # Regression
-            params = {
-                'objective': 'regression',
-                'metric': 'rmse',
-                'boosting_type': 'gbdt',
-                'num_leaves': 31,
-                'learning_rate': 0.05,
-                'verbose': -1,
-                'n_estimators': n_estimators
-            }
 
-    model = lgb.LGBMClassifier(**params) if task=='classification' else lgb.LGBMRegressor(**params)
-    # Use callbacks for early stopping instead of verbose
-    model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        eval_metric=params['metric'],
-        callbacks=[lgb.early_stopping(stopping_rounds=20)]
-    )
+# ============================================================
+# Local LightGBM Training
+# ============================================================
+def train_local_lightgbm(X_train, y_train, X_val, y_val, task='classification', n_estimators=100, num_classes=None):
+    if task == 'classification':
+        if num_classes and num_classes > 2:
+            params = {'objective': 'multiclass', 'metric': 'multi_logloss', 'num_class': num_classes,
+                      'boosting_type': 'gbdt', 'num_leaves': 31, 'learning_rate': 0.05, 'verbose': -1,
+                      'n_estimators': n_estimators}
+            model = lgb.LGBMClassifier(**params)
+        else:
+            params = {'objective': 'binary', 'metric': 'binary_logloss', 'boosting_type': 'gbdt', 'num_leaves': 31,
+                      'learning_rate': 0.05, 'verbose': -1, 'n_estimators': n_estimators}
+            model = lgb.LGBMClassifier(**params)
+    else:
+        params = {'objective': 'regression', 'metric': 'rmse', 'boosting_type': 'gbdt', 'num_leaves': 31,
+                  'learning_rate': 0.05, 'verbose': -1, 'n_estimators': n_estimators}
+        model = lgb.LGBMRegressor(**params)
+
+    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], eval_metric=params['metric'],
+              callbacks=[lgb.early_stopping(stopping_rounds=20)])
     return model
 
+
 # ============================================================
-# Extract one-hot leaf embeddings
+# Leaf Embeddings
 # ============================================================
-
-def extract_leaf_embeddings(model, X, ordinal_encoders=None, leaf_encoder=None, client_id="client"):
-    """
-    Extract sparse one-hot leaf embeddings from a LightGBM model.
-
-    Args:
-        model: trained LightGBM model
-        X: input features (np.ndarray or pd.DataFrame)
-        ordinal_encoders: dict of OrdinalEncoders for categorical columns (optional)
-        leaf_encoder: fitted OneHotEncoder for leaf indices (optional, reusable)
-        client_id: logging identifier
-
-    Returns:
-        leaf_embeddings: csr_matrix of shape (n_samples, n_leaf_nodes_total)
-        leaf_encoder: fitted OneHotEncoder (reusable)
-    """
-
-    # Ensure DataFrame for column access
+def extract_leaf_embeddings(model, X):
     if isinstance(X, np.ndarray):
         X = pd.DataFrame(X)
-
-    # Apply ordinal encoders
-    if ordinal_encoders:
-        X_enc = X.copy()
-        for col, enc in ordinal_encoders.items():
-            if col in X_enc.columns:
-                try:
-                    X_enc[[col]] = enc.transform(X_enc[[col]])
-                except Exception as e:
-                    print(f"[{client_id}] ⚠️ Failed to transform column '{col}': {e}")
-                    X_enc[col] = -1
-        X = X_enc
-
-    # Predict leaf indices (n_samples, n_trees)
     leaf_indices = model.predict(X, pred_leaf=True)
-    leaf_indices = np.array(leaf_indices, dtype=np.int32)
-
-    # Fit or reuse OneHotEncoder (sparse output)
-    if leaf_encoder is None:
-        try:
-            leaf_encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=True)
-        except TypeError:
-            leaf_encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=True)
-
-        leaf_embeddings = leaf_encoder.fit_transform(leaf_indices)
-        print(f"[{client_id}] Fitted OneHotEncoder, shape: {leaf_embeddings.shape}")
-    else:
-        leaf_embeddings = leaf_encoder.transform(leaf_indices)
-        print(f"[{client_id}] Transformed leaf embeddings using existing encoder, shape: {leaf_embeddings.shape}")
-
-    # Ensure sparse float32
-    leaf_embeddings = leaf_embeddings.astype(np.float32)
-    return leaf_embeddings, leaf_encoder
-
-
-def get_sparse_leaf_embeddings(model, X, ordinal_encoders=None, leaf_encoder=None, client_id="client"):
-    """
-    Wrapper to ensure output is always a sparse csr_matrix (memory safe).
-    """
-    leaf_emb, leaf_encoder = extract_leaf_embeddings(model, X, ordinal_encoders, leaf_encoder, client_id)
-    if not isinstance(leaf_emb, csr_matrix):
-        leaf_emb = csr_matrix(leaf_emb)
-    return leaf_emb, leaf_encoder
+    return np.array(leaf_indices, dtype=np.int32)
 
 
 # ============================================================
-# Client training in a thread
+# Client Training Thread
 # ============================================================
-def client_train_thread(client_id, X_train, y_train, X_val, y_val,
-                        task, n_estimators, local_models, encoders, done_event):
-    """
-    Thread function to train a local LightGBM model for a single client.
-    Stores the trained model and encoder in shared lists.
-    """
+def client_train_thread(client_id, X_train, y_train, X_val, y_val, task, n_estimators, local_models, done_event):
     try:
-        # 1️⃣ Preprocess string/object columns safely
-        X_train_enc, X_val_enc, enc = preprocess_for_lightgbm_fast(
-            X_train, X_val, client_id=f"Client-{client_id}"
-        )
-        encoders[client_id] = enc
-
-        # 2️⃣ Train model using the common utility
-        num_classes = None
-        if task == 'classification':
-            num_classes = len(np.unique(y_train))
-        print("total number of num_classes is:",num_classes)
-        model = train_local_lightgbm(
-            X_train_enc, y_train,
-            X_val_enc, y_val,
-            task=task,
-            n_estimators=n_estimators,
-            num_classes=num_classes
-        )
-
-        # 3️⃣ Store trained model in shared list
+        X_train_enc, X_val_enc, _ = preprocess_for_lightgbm_fast(X_train, X_val)
+        num_classes = len(np.unique(y_train)) if task == 'classification' else None
+        model = train_local_lightgbm(X_train_enc, y_train, X_val_enc, y_val, task, n_estimators, num_classes)
         local_models[client_id] = model
-
-    except Exception as e:
-        print(f"[Client-{client_id}] ⚠️ Training failed: {e}")
-
     finally:
-        # 4️⃣ Signal that training is done
         done_event.set()
 
 
 # ============================================================
-# Multi-round Adaptive Iterative PFL
+# Bayesian Aggregator
 # ============================================================
-def multi_round_pfl_adaptive_iterative(clients_data, rounds=3, task='classification', n_estimators=50):
-    from scipy.sparse import vstack, csr_matrix
+def bayesian_aggregator_multiclass(X_sparse, y, n_classes, n_samples=200, n_tune=200):
+    X_dense = X_sparse.toarray()
+    y = y.astype(int)
+    with pm.Model() as model:
+        alpha = pm.Normal("alpha", mu=0, sigma=10, shape=n_classes)
+        betas = pm.Normal("betas", mu=0, sigma=1, shape=(X_dense.shape[1], n_classes))
+        logits = pm.math.dot(X_dense, betas) + alpha
+        y_obs = pm.Categorical("y_obs", p=pm.math.softmax(logits), observed=y)
+        trace = pm.sample(n_samples, tune=n_tune, target_accept=0.9, cores=1, progressbar=False)
+    return model, trace
 
-    n_clients = len(clients_data)
+
+# ============================================================
+# Aggregator Selector
+# ============================================================
+def aggregate_multiclass(edge_X_list, edge_y_list, num_classes, aggregator_type='bayesian'):
+    global_X_sparse = vstack(edge_X_list)
+    global_y = np.hstack(edge_y_list)
+
+    if aggregator_type == 'bayesian':
+        model, trace = bayesian_aggregator_multiclass(global_X_sparse, global_y, num_classes)
+        return model, trace, global_X_sparse, global_y
+    elif aggregator_type == 'logreg':
+        logreg = LogisticRegression(multi_class='multinomial', max_iter=500)
+        logreg.fit(global_X_sparse, global_y)
+        return logreg, None, global_X_sparse, global_y
+    elif aggregator_type == 'simple':
+        avg_X = global_X_sparse.mean(axis=0)
+        return None, None, avg_X, global_y
+    elif aggregator_type == 'weighted':
+        weights = np.ones(len(edge_X_list)) / len(edge_X_list)
+        weighted_X = sum(w * x for w, x in zip(weights, edge_X_list))
+        return None, None, weighted_X, global_y
+    else:
+        raise ValueError(f"Unknown aggregator_type {aggregator_type}")
+
+
+# ============================================================
+# Align Predictions to Global Classes
+# ============================================================
+def align_predictions(y_pred_local, classes_source, global_classes):
+    class_to_index = {c: i for i, c in enumerate(global_classes)}
+    n_samples, n_global = y_pred_local.shape[0], len(global_classes)
+    y_pred_full = np.zeros((n_samples, n_global))
+    for i, c in enumerate(classes_source):
+        if c in class_to_index:
+            y_pred_full[:, class_to_index[c]] = y_pred_local[:, i]
+    return y_pred_full
+
+
+
+def create_fully_random_edge():
+    """
+    Create a fully random 2D list such that:
+    - All numbers 0.total-1 appear exactly once
+    - Rows have random lengths
+    - Number of rows is random
+    """
+    numbers = np.arange(n_clients)
+    np.random.shuffle(numbers)
+
+    n_edges = []
+    idx = 0
+    while idx < n_clients:
+        # Random row size: at least 1, at most remaining numbers
+        row_size = np.random.randint(1, n_clients - idx + 1)
+        n_edges.append(list(numbers[idx:idx + row_size]))
+        idx += row_size
+
+    return n_edges
+
+# ============================================================
+# Hierarchical PFL
+# ============================================================
+def hierarchical_pfl(clients_data, task='classification', n_estimators=50, aggregator_type='bayesian'):
+    #n_clients = len(clients_data)
     local_models = [None] * n_clients
-    encoders = [None] * n_clients
-    leaf_encoders = [None] * n_clients
-    w_globals = np.array([0.5] * n_clients)
-
-    round_metrics = {i: [] for i in range(n_clients)}
-    round_weights = {i: [] for i in range(n_clients)}
-
-    # -----------------------------
-    # 1️⃣ Initial local training (threads)
-    # -----------------------------
-    threads = []
-    events = []
-
+    threads, events = [], []
+    edge_groups = create_fully_random_edge()
+    print("Random Edge groups:",edge_groups)
+    # --- Local Training ---
     for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
-        # Split local training
-        X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=42)
-        X_tr_enc, X_val_enc, enc = preprocess_for_lightgbm_fast(X_tr, X_val, client_id=f"Client-{i}")
-        encoders[i] = enc
-
+        X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
         done_event = threading.Event()
-        events.append(done_event)
-
-        t = threading.Thread(
-            target=client_train_thread,
-            args=(i, X_tr_enc, y_tr, X_val_enc, y_val, task, n_estimators, local_models, encoders, done_event)
-        )
+        t = threading.Thread(target=client_train_thread,
+                             args=(i, X_tr, y_tr, X_val, y_val, task, n_estimators, local_models, done_event))
         threads.append(t)
+        events.append(done_event)
         t.start()
+    for e in events: e.wait()
 
-    for e in events:
-        e.wait()
+    # --- Create global OneHotEncoder ---
+    all_leaf_indices = []
+    for model, (X_train, _, _, _) in zip(local_models, clients_data):
+        all_leaf_indices.append(extract_leaf_embeddings(model, X_train))
+    all_leaf_indices = np.vstack(all_leaf_indices)
+    global_leaf_encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=True)
+    global_leaf_encoder.fit(all_leaf_indices)
 
-    # -----------------------------
-    # 2️⃣ Multi-round federated learning
-    # -----------------------------
+    # Global classes
+    global_classes = np.unique(np.hstack([y for _, _, y, _ in clients_data]))
+    num_classes = len(global_classes)
+
+    w_globals = np.array([0.5] * n_clients)
+    client_round_metrics = {i: [] for i in range(n_clients)}
+    client_round_weights = {i: [] for i in range(n_clients)}
+
+    # --- Multi-round federated learning ---
     for round_id in range(rounds):
         print(f"\n=== Round {round_id + 1}/{rounds} ===")
 
-        # 2a. Extract sparse leaf embeddings for global aggregation
-        global_X_list = []
-        global_y_list = []
+        # --- Edge-level aggregation ---
+        edge_X_list, edge_y_list = [], []
+        for edge_id, edge in enumerate(edge_groups):
+            edge_client_X, edge_client_y = [], []
+            for client_idx in edge:
+                X_train, _, y_train, _ = clients_data[client_idx]
+                leaf_idx = extract_leaf_embeddings(local_models[client_idx], X_train)
+                leaf_emb = global_leaf_encoder.transform(leaf_idx)
+                edge_client_X.append(leaf_emb)
+                edge_client_y.append(y_train)
+            if edge_client_X:
+                edge_X_list.append(vstack(edge_client_X))
+                edge_y_list.append(np.hstack(edge_client_y))
 
+        # --- Global aggregation ---
+        aggregator_model, bayes_trace, global_X_sparse, global_y = aggregate_multiclass(
+            edge_X_list, edge_y_list, num_classes, aggregator_type
+        )
+
+        # --- Evaluation ---
         for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
-            X_train_enc, _, _ = preprocess_for_lightgbm_fast(
-                X_train, X_train, client_id=f"Client-{i}"
-            )
-            leaf_emb, leaf_encoders[i] = get_sparse_leaf_embeddings(
-                local_models[i], X_train_enc, leaf_encoder=leaf_encoders[i], client_id=f"Client-{i}"
-            )
-            if not isinstance(leaf_emb, csr_matrix):
-                leaf_emb = csr_matrix(leaf_emb)
-            global_X_list.append(leaf_emb)
-            global_y_list.append(y_train)
+            leaf_idx_test = extract_leaf_embeddings(local_models[i], X_test)
+            leaf_emb_test = global_leaf_encoder.transform(leaf_idx_test)
+            X_test_dense = X_test.to_numpy() if isinstance(X_test, pd.DataFrame) else np.array(X_test)
 
-        # Stack sparse matrices
-        global_X_sparse = vstack(global_X_list)
-        global_y = np.hstack(global_y_list).astype(np.int32)
+            # Local prediction
+            y_pred_local_raw = local_models[i].predict_proba(X_test_dense)
+            local_classes = local_models[i].classes_
+            y_pred_local = align_predictions(y_pred_local_raw, local_classes, global_classes)
 
-        # -----------------------------
-        # 2b. Train global aggregator
-        # -----------------------------
-        if task == 'classification':
-            # LogisticRegression supports sparse input with solver='saga'
-            global_model = LogisticRegression(
-                solver="saga",
-                max_iter=5000,
-                penalty="l2",
-                n_jobs=-1
-            )
-        else:
-            global_model = Ridge()
+            # Global prediction
+            if aggregator_type == 'bayesian':
+                with aggregator_model:
+                    pp = pm.sample_posterior_predictive(bayes_trace, var_names=['y_obs'], samples=50, progressbar=False)
+                y_pred_global_raw = np.zeros((X_test_dense.shape[0], len(global_classes)))
+                for c in global_classes:
+                    y_pred_global_raw[:, c] = np.mean(pp['y_obs'] == c, axis=0)
+                y_pred_global = y_pred_global_raw
 
-        # Fit using sparse matrix
-        global_model.fit(global_X_sparse, global_y)
-
-        # -----------------------------
-        # 2c. Adaptive weighting & local evaluation
-        # -----------------------------
-        for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
-            X_test_enc, _, _ = preprocess_for_lightgbm_fast(X_test, X_test, client_id=f"Client-{i}")
-            leaf_emb_test, leaf_encoders[i] = get_sparse_leaf_embeddings(
-                local_models[i], X_test_enc, leaf_encoder=leaf_encoders[i], client_id=f"Client-{i}"
-            )
-            if not isinstance(leaf_emb_test, csr_matrix):
-                leaf_emb_test = csr_matrix(leaf_emb_test)
-
-            if task == 'classification':
-                # Global probabilities
-                y_pred_global_prob = global_model.predict_proba(leaf_emb_test)
-
-                # Local LightGBM probabilities
-                X_test_local_dense = np.array(X_test_enc, dtype=np.float32)
-                y_pred_local_prob = local_models[i].predict_proba(X_test_local_dense)
-
-                combined_prob = w_globals[i] * y_pred_global_prob + (1 - w_globals[i]) * y_pred_local_prob
-                y_pred_label = np.argmax(combined_prob, axis=1)
-
-                acc = accuracy_score(y_test, y_pred_label)
-                round_metrics[i].append(acc)
-
-                loss_global = log_loss(y_test, np.clip(y_pred_global_prob, 1e-8, 1-1e-8))
-                loss_local = log_loss(y_test, np.clip(y_pred_local_prob, 1e-8, 1-1e-8))
-
+            elif aggregator_type == 'logreg':
+                y_pred_global_raw = aggregator_model.predict_proba(leaf_emb_test)
+                global_seen_classes = aggregator_model.classes_
+                y_pred_global = align_predictions(y_pred_global_raw, global_seen_classes, global_classes)
             else:
-                # Regression
-                y_pred_global = global_model.predict(leaf_emb_test)
-                X_test_local_dense = np.array(X_test_enc, dtype=np.float32)
-                y_pred_local = local_models[i].predict(X_test_local_dense)
-                combined_pred = w_globals[i] * y_pred_global + (1 - w_globals[i]) * y_pred_local
+                y_pred_global = np.array(global_X_sparse.todense())
 
-                rmse = np.sqrt(mean_squared_error(y_test, combined_pred))
-                round_metrics[i].append(rmse)
+            # Combine local + global
+            combined_prob = w_globals[i] * y_pred_global + (1 - w_globals[i]) * y_pred_local
+            y_pred_label = np.argmax(combined_prob, axis=1)
 
-                loss_global = mean_squared_error(y_test, y_pred_global)
-                loss_local = mean_squared_error(y_test, y_pred_local)
+            acc = accuracy_score(y_test, y_pred_label)
+            client_round_metrics[i].append(acc)
+            loss_global = log_loss(y_test, np.clip(y_pred_global, 1e-8, 1 - 1e-8), labels=global_classes)
+            loss_local = log_loss(y_test, np.clip(y_pred_local, 1e-8, 1 - 1e-8), labels=global_classes)
 
-            # Update adaptive weight
             w_globals[i] = loss_local / (loss_local + loss_global + 1e-8)
             w_globals[i] = np.clip(w_globals[i], 0.1, 0.9)
-            round_weights[i].append(w_globals[i])
+            client_round_weights[i].append(w_globals[i])
 
         print("Adaptive weights:", np.round(w_globals, 3))
 
-    return local_models, global_model, w_globals, round_metrics, round_weights
+    return local_models, aggregator_model, bayes_trace, w_globals, client_round_metrics, client_round_weights, global_classes
+
+
 # ============================================================
-def plot_roundwise_metrics(round_metrics, task='classification'):
-    num_clients = len(round_metrics)
-    plt.figure(figsize=(10,6))
-    for i in range(num_clients):
-        plt.plot(range(1,len(round_metrics[i])+1), round_metrics[i], marker='o', label=f"Client {i+1}")
-    plt.xlabel("Federated Round")
-    plt.ylabel("Accuracy" if task=='classification' else "RMSE")
-    plt.title("Client Metrics Over Federated Rounds")
+# Visualization
+# ============================================================
+def plot_metrics_and_weights(round_metrics, round_weights):
+    n_clients = len(round_metrics)
+    plt.figure(figsize=(14, 5))
+    for i in range(n_clients):
+        plt.plot(round_metrics[i], label=f'Client-{i} Accuracy')
+    plt.xlabel("Round")
+    plt.ylabel("Accuracy")
     plt.legend()
-    plt.grid(True)
+    plt.title("Per-Client Accuracy per Round")
     plt.show()
 
-def plot_roundwise_weights(round_weights):
-    num_clients = len(round_weights)
-    plt.figure(figsize=(10,6))
-    for i in range(num_clients):
-        plt.plot(range(1,len(round_weights[i])+1), round_weights[i], marker='o', label=f"Client {i+1}")
-    plt.xlabel("Federated Round")
-    plt.ylabel("Adaptive Weight w_global")
-    plt.title("Client Adaptive Weights Over Federated Rounds")
+    plt.figure(figsize=(14, 5))
+    for i in range(n_clients):
+        plt.plot(round_weights[i], label=f'Client-{i} Weight')
+    plt.xlabel("Round")
+    plt.ylabel("Adaptive Weight")
     plt.legend()
-    plt.grid(True)
+    plt.title("Adaptive Weights per Round")
     plt.show()
 
-def plot_metrics_and_weights(round_metrics, round_weights, task='classification'):
-    num_clients = len(round_metrics)
-    rounds = len(next(iter(round_metrics.values())))
-    fig, axes = plt.subplots(num_clients,2,figsize=(12,4*num_clients))
-    if num_clients==1:
-        axes=axes.reshape(1,2)
-    for i in range(num_clients):
-        axes[i,0].plot(range(1,rounds+1), round_metrics[i], marker='o', color='tab:blue')
-        axes[i,0].set_title(f"Client {i+1} Metrics")
-        axes[i,0].set_xlabel("Federated Round")
-        axes[i,0].set_ylabel("Accuracy" if task=='classification' else "RMSE")
-        axes[i,0].grid(True)
 
-        axes[i,1].plot(range(1,rounds+1), round_weights[i], marker='o', color='tab:orange')
-        axes[i,1].set_title(f"Client {i+1} Adaptive Weight (w_global)")
-        axes[i,1].set_xlabel("Federated Round")
-        axes[i,1].set_ylabel("Weight")
-        axes[i,1].grid(True)
-    plt.tight_layout()
-    plt.show()
+# ============================================================
+# Client Creation
+# ============================================================
+def create_non_iid_clients(X, y, X_test, y_test, random_state=None):
+    if random_state is not None:
+        np.random.seed(random_state)
+
+    y_arr = y.values if isinstance(y, pd.Series) else y
+    X_arr = X.values if isinstance(X, pd.DataFrame) else X
+
+    unique_classes = np.unique(y_arr)
+    class_indices = {c: np.where(y_arr == c)[0] for c in unique_classes}
+
+    clients_data = []
+    for _ in range(n_clients):
+        selected_classes = np.random.choice(unique_classes, n_classes_per_client, replace=False)
+        client_idx = np.hstack([class_indices[c] for c in selected_classes])
+        np.random.shuffle(client_idx)
+        X_client = X_arr[client_idx]
+        y_client = y_arr[client_idx]
+        if isinstance(X, pd.DataFrame):
+            X_client = pd.DataFrame(X_client, columns=X.columns)
+        if isinstance(y, pd.Series):
+            y_client = pd.Series(y_client, name=y.name)
+        clients_data.append((X_client, X_test, y_client, y_test))
+    return clients_data
+
 
 # ============================================================
 # Main
 # ============================================================
-if __name__=="__main__":
+if __name__ == "__main__":
     folder_path = "CIC_IoT_dataset_2023"
-    log_path_str = config.LOGS_DIR_TEMPLATE.substitute(dataset=folder_path, date=util.get_today_date())
+    log_path_str = config.LOGS_DIR_TEMPLATE.substitute(
+        dataset=folder_path, date=util.get_today_date()
+    )
     util.is_folder_exist(log_path_str)
     log_util.setup_logging(log_path_str)
 
-    task = 'classification'  # or 'regression'
+    task = "classification"
 
-    #clients_data = load_client_data_from_folder(folder_path, num_clients=3, test_size=0.2)
-    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess.preprocess_data(log_path_str,folder_path)
-
-    # Make it look like a list of clients
-    clients_data = [
-        (X_pretrain, X_test, y_pretrain, y_test)
-    ]
-    local_models, global_model, w_globals, round_metrics, round_weights = multi_round_pfl_adaptive_iterative(
-        clients_data, rounds=5, task=task, n_estimators=50
+    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess.preprocess_data(
+        log_path_str, folder_path
     )
 
-    # Final evaluation
-    print("\n=== Final Client Metrics ===")
-    for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
-        y_pred = local_models[i].predict(X_test)
-        if task=='classification':
-            acc = accuracy_score(y_test, y_pred)
-            print(f"Client {i+1} Accuracy: {acc:.4f}, w_global={w_globals[i]:.3f}")
-        else:
-            rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-            print(f"Client {i+1} RMSE: {rmse:.4f}, w_global={w_globals[i]:.3f}")
+    clients_data = create_non_iid_clients(X_pretrain, y_pretrain, X_test, y_test)
 
-    # Plot
-    plot_roundwise_metrics(round_metrics, task=task)
-    plot_roundwise_weights(round_weights)
-    plot_metrics_and_weights(round_metrics, round_weights, task=task)
+    #edge_groups = [[0, 1], [2, 3, 4], [5, 6], [7, 8, 9]]
+
+    #aggregator_type = 'logreg'  # or 'bayesian'
+    local_models, aggregator_model, bayes_trace, w_globals, round_metrics, round_weights, global_classes = hierarchical_pfl(
+        clients_data, task=task, n_estimators=50
+    )
+
+    plot_metrics_and_weights(round_metrics, round_weights)

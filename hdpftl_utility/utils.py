@@ -61,11 +61,13 @@ def sync_config_params(config_params):
 def setup_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 def reload_config():
     """Reload config.py and return the fresh module."""
     import importlib
     import hdpftl_utility.config as cfg
     return importlib.reload(cfg)
+
 
 def make_dir(path):
     if not os.path.exists(path):

@@ -3,6 +3,9 @@
     <words>
       <w>accs</w>
       <w>hdpftl</w>
+      <w>logloss</w>
+      <w>pred</w>
+      <w>rmse</w>
     </words>
   </dictionary>
 </component>

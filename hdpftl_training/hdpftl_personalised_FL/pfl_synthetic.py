@@ -3,17 +3,17 @@ Federated LightGBM + Leaf Embeddings + Personalized Meta-Classifier + Test Predi
 Handles non-IID clients, pads leaf arrays to avoid dimension mismatch.
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 import lightgbm as lgb
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from scipy.sparse import vstack
+from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.decomposition import PCA
-from scipy.sparse import vstack
-import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
 
 # -------------------------------
 # Step 1: Generate synthetic non-IID client data
@@ -24,6 +24,7 @@ num_samples_per_client = 20_000
 num_features = 50
 num_classes = 10
 num_boost_round = 500  # number of trees per client
+
 
 def generate_non_iid_data(alpha=0.3):
     np.random.seed(seed)
@@ -50,6 +51,7 @@ def generate_non_iid_data(alpha=0.3):
         client_datasets[client_id] = (client_X, client_y)
 
     return client_datasets
+
 
 clients = generate_non_iid_data(alpha=0.3)
 for cid, (Xc, yc) in clients.items():
@@ -94,12 +96,14 @@ for client_id, (X, y) in clients.items():
 all_leaf_arrays = client_train_leaf + client_test_leaf
 max_cols = max(arr.shape[1] for arr in all_leaf_arrays)
 
+
 def pad_leaf_array(arr, max_cols):
     n_samples, n_cols = arr.shape
     if n_cols < max_cols:
         pad = np.full((n_samples, max_cols - n_cols), -1)  # use -1 for missing leaves
         arr = np.hstack([arr, pad])
     return arr
+
 
 client_train_leaf = [pad_leaf_array(arr, max_cols) for arr in client_train_leaf]
 client_test_leaf = [pad_leaf_array(arr, max_cols) for arr in client_test_leaf]

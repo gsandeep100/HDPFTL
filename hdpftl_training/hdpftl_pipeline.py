@@ -1,11 +1,6 @@
 import copy
 import gc
 
-import numpy as np
-import torch
-from torch import nn
-from torch.utils.data import TensorDataset, DataLoader
-
 import hdpftl_evaluation.evaluate_global_model as evaluate_global_model
 import hdpftl_training.hdpftl_aggregation.hdpftl_fedavg as hdpftl_fedavg
 import hdpftl_training.save_model as save
@@ -330,10 +325,12 @@ def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test, writer=Non
     util.clear_memory()
     return global_model, personalized_models
 
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
+
 
 def run_pfl(base_model_fn, client_data_dict, X_test, y_test, num_rounds=10, local_epochs=2):
     """
@@ -362,7 +359,7 @@ def run_pfl(base_model_fn, client_data_dict, X_test, y_test, num_rounds=10, loca
     personalized_models = {}
 
     for rnd in range(num_rounds):
-        log_util.safe_log(f"--- PFL Round {rnd+1}/{num_rounds} ---")
+        log_util.safe_log(f"--- PFL Round {rnd + 1}/{num_rounds} ---")
 
         client_backbones = []
         client_sample_counts = {}
@@ -415,4 +412,3 @@ def run_pfl(base_model_fn, client_data_dict, X_test, y_test, num_rounds=10, loca
         global_model.load_state_dict(global_state, strict=False)
 
     return global_model, personalized_models
-

@@ -1,14 +1,13 @@
 # pfl_runner.py
-import os
-import gc
 import copy
-import numpy as np
+import gc
+
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
-import hdpftl_utility.log as log_util
 
 import config  # your hdpftl_utility/config.py (import path as in your project)
+import hdpftl_utility.log as log_util
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
 
 
@@ -16,6 +15,7 @@ from hdpftl_training.hdpftl_models.TabularNet import TabularNet
 
 def setup_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def load_pretrained_shared(model_shared):
     """Load PRETRAIN checkpoint into model.shared (strict=False ok)."""
@@ -34,6 +34,7 @@ def load_pretrained_shared(model_shared):
     if unexpected:
         log_util.safe_log(f"[PRETRAIN->GLOBAL] Unexpected shared keys: {unexpected}", level="warning")
 
+
 def get_today_date_safe():
     # Use your util.get_today_date() if available; otherwise local fallback
     try:
@@ -43,10 +44,12 @@ def get_today_date_safe():
         from datetime import datetime
         return datetime.now().strftime("%Y%m%d")
 
+
 def is_bn_key(k: str) -> bool:
     # Keep BN stats local (FedBN): skip keys typical for BN
     bn_patterns = ("bn", "running_mean", "running_var", "num_batches_tracked")
     return any(p in k for p in bn_patterns)
+
 
 # ========= Client object & data wiring =========
 
@@ -54,18 +57,26 @@ def make_client(input_dim, X_train, y_train, X_val, y_val, batch_size=None):
     """
     Build a client dict with its loaders & metadata.
     """
-    if hasattr(X_train, "values"): Xtr = torch.tensor(X_train.values, dtype=torch.float32)
-    else: Xtr = torch.tensor(X_train, dtype=torch.float32)
-    if hasattr(y_train, "values"): ytr = torch.tensor(y_train.values, dtype=torch.long)
-    else: ytr = torch.tensor(y_train, dtype=torch.long)
-    if hasattr(X_val, "values"): Xv = torch.tensor(X_val.values, dtype=torch.float32)
-    else: Xv = torch.tensor(X_val, dtype=torch.float32)
-    if hasattr(y_val, "values"): yv = torch.tensor(y_val.values, dtype=torch.long)
-    else: yv = torch.tensor(y_val, dtype=torch.long)
+    if hasattr(X_train, "values"):
+        Xtr = torch.tensor(X_train.values, dtype=torch.float32)
+    else:
+        Xtr = torch.tensor(X_train, dtype=torch.float32)
+    if hasattr(y_train, "values"):
+        ytr = torch.tensor(y_train.values, dtype=torch.long)
+    else:
+        ytr = torch.tensor(y_train, dtype=torch.long)
+    if hasattr(X_val, "values"):
+        Xv = torch.tensor(X_val.values, dtype=torch.float32)
+    else:
+        Xv = torch.tensor(X_val, dtype=torch.float32)
+    if hasattr(y_val, "values"):
+        yv = torch.tensor(y_val.values, dtype=torch.long)
+    else:
+        yv = torch.tensor(y_val, dtype=torch.long)
 
     bs = batch_size or getattr(config, "BATCH_SIZE_TRAINING", 32)
     train_loader = DataLoader(TensorDataset(Xtr, ytr), batch_size=bs, shuffle=True, pin_memory=False)
-    val_loader   = DataLoader(TensorDataset(Xv,  yv ), batch_size=bs, shuffle=False, pin_memory=False)
+    val_loader = DataLoader(TensorDataset(Xv, yv), batch_size=bs, shuffle=False, pin_memory=False)
 
     num_classes = int(len(torch.unique(ytr)))
     return {
@@ -73,9 +84,10 @@ def make_client(input_dim, X_train, y_train, X_val, y_val, batch_size=None):
         "num_classes": num_classes,
         "train_loader": train_loader,
         "val_loader": val_loader,
-        "head_state": None,   # will hold personalized head weights
-        "id": None,           # optional: set an ID for saving heads
+        "head_state": None,  # will hold personalized head weights
+        "id": None,  # optional: set an ID for saving heads
     }
+
 
 # ========= Core pFL functions =========
 
@@ -89,11 +101,13 @@ def build_model_skeleton(input_dim, rep_dim=64, out_dim=2):
     m.classifier = nn.Linear(rep_dim, out_dim)
     return m
 
+
 def make_client_head(rep_dim, num_classes):
     return nn.Linear(rep_dim, num_classes)
 
+
 def client_update(
-    global_shared_state, client, epochs=None, lr=1e-3, mu=0.0, rep_dim=64, fedbn=True, device=None
+        global_shared_state, client, epochs=None, lr=1e-3, mu=0.0, rep_dim=64, fedbn=True, device=None
 ):
     """
     Train client's shared backbone + head locally.
@@ -125,7 +139,8 @@ def client_update(
     global_anchor = [p.detach().clone().to(device) for _, p in model.shared.state_dict().items()]
 
     # Training
-    model.train(); head.train()
+    model.train();
+    head.train()
     for _ in range(local_epochs):
         for xb, yb in client["train_loader"]:
             xb, yb = xb.to(device), yb.to(device)
@@ -140,7 +155,7 @@ def client_update(
                 for (name, p), g in zip(model.shared.state_dict().items(), global_anchor):
                     if fedbn and is_bn_key(name):
                         continue
-                    prox = prox + torch.sum((p - g)**2)
+                    prox = prox + torch.sum((p - g) ** 2)
                 loss = loss + 0.5 * mu * prox
 
             loss.backward()
@@ -161,9 +176,11 @@ def client_update(
 
     # Cleanup
     del model, head, opt, crit
-    torch.cuda.empty_cache(); gc.collect()
+    torch.cuda.empty_cache();
+    gc.collect()
 
     return updated_shared, head_state, {"val_acc": val_acc}
+
 
 def fedavg_shared(shared_states):
     """
@@ -177,8 +194,10 @@ def fedavg_shared(shared_states):
         avg[k] = sum(sd[k] for sd in shared_states) / float(len(shared_states))
     return avg
 
+
 def evaluate_personalized(model, head, loader, device):
-    model.eval(); head.eval()
+    model.eval();
+    head.eval()
     correct = total = 0
     with torch.no_grad():
         for xb, yb in loader:

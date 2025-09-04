@@ -171,4 +171,14 @@ saved_config_params = {
     "NUM_FEDERATED_ROUND": 5,
     "USE_UPLOADED_TEST_FILES": False
 }
-TEST_CSV_PATHS = ('/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/wednesday_plus.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/wednesday.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/tuesday_plus.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/tuesday.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/thursday_plus.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/thursday.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/monday_plus.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/monday.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/friday_plus.csv', '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/friday.csv')
+TEST_CSV_PATHS = (
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/wednesday_plus.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/wednesday.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/tuesday_plus.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/tuesday.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/thursday_plus.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/thursday.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/monday_plus.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/monday.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/friday_plus.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/friday.csv')

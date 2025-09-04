@@ -1,12 +1,12 @@
-import numpy as np
-from sklearn.datasets import make_classification
-from sklearn.model_selection import KFold
-from sklearn.metrics.pairwise import cosine_similarity
 import lightgbm as lgb
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import matplotlib.pyplot as plt
+from sklearn.datasets import make_classification
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.model_selection import KFold
 
 # -----------------------------
 # PARAMETERS
@@ -26,6 +26,7 @@ client_data = []
 for i in range(NUM_CLIENTS):
     X, y = make_classification(n_samples=200, n_features=10, n_informative=7, random_state=i)
     client_data.append((X, y))
+
 
 # -----------------------------
 # 2. DEFINE AUTOENCODER
@@ -48,6 +49,7 @@ class AutoEncoder(nn.Module):
         z = self.encoder(x)
         x_hat = self.decoder(z)
         return x_hat, z
+
 
 # -----------------------------
 # 3. INITIALIZE CLIENTS (DEVICE LAYER)
@@ -107,8 +109,9 @@ for X_np, y_np in client_data:
 edges = []
 clients_per_edge = NUM_CLIENTS // NUM_EDGES
 for i in range(NUM_EDGES):
-    edge_clients = list(range(i*clients_per_edge, (i+1)*clients_per_edge))
+    edge_clients = list(range(i * clients_per_edge, (i + 1) * clients_per_edge))
     edges.append({'clients': edge_clients})
+
 
 # -----------------------------
 # 5. STATISTICAL SIMILARITY FUNCTION
@@ -116,8 +119,9 @@ for i in range(NUM_EDGES):
 def compute_similarity(client_a, client_b):
     Z_a = client_a['latent']
     Z_b = client_b['latent']
-    sim = cosine_similarity(Z_a.mean(axis=0).reshape(1,-1), Z_b.mean(axis=0).reshape(1,-1))
-    return sim[0,0]
+    sim = cosine_similarity(Z_a.mean(axis=0).reshape(1, -1), Z_b.mean(axis=0).reshape(1, -1))
+    return sim[0, 0]
+
 
 # -----------------------------
 # 6. P2P GOSSIP WITH STATISTICAL SIMILARITY
@@ -132,11 +136,11 @@ def gossip_update(client_a, client_b):
 
     # Compute CV-style pseudo accuracy
     acc_old = np.mean(np.argmax(y_pred_a, axis=1) == client_a['y'])
-    acc_new = np.mean(np.argmax((y_pred_a + y_pred_b)/2, axis=1) == client_a['y'])
+    acc_new = np.mean(np.argmax((y_pred_a + y_pred_b) / 2, axis=1) == client_a['y'])
 
     # Adaptive alpha using statistical similarity
     sim = compute_similarity(client_a, client_b)
-    alpha = 0.5*(1+sim)
+    alpha = 0.5 * (1 + sim)
     if acc_new > acc_old:
         alpha *= 1.1
     else:
@@ -144,13 +148,14 @@ def gossip_update(client_a, client_b):
     alpha = np.clip(alpha, 0, 1)
 
     # Update classifier by weighted blending of leaf predictions
-    blended_pred = (1-alpha)*y_pred_a + alpha*y_pred_b
+    blended_pred = (1 - alpha) * y_pred_a + alpha * y_pred_b
     clf_a.classes_ = np.arange(blended_pred.shape[1])
     clf_a.predict_proba = lambda X: blended_pred
 
     # Update trust
     idx_b = clients.index(client_b)
     client_a['trust'][idx_b] = alpha
+
 
 # -----------------------------
 # 7. ASYNCHRONOUS ITERATIONS

@@ -1,4 +1,3 @@
-
 """
 
 
@@ -101,22 +100,21 @@ Global test accuracy
 
 """
 
-
-import numpy as np
 import lightgbm as lgb
-from sklearn.linear_model import LogisticRegression
-from sklearn.datasets import make_classification
-from sklearn.model_selection import KFold
-from sklearn.random_projection import SparseRandomProjection
 import matplotlib.pyplot as plt
+import numpy as np
 import seaborn as sns
 from matplotlib.animation import FuncAnimation, PillowWriter
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import KFold
+from sklearn.random_projection import SparseRandomProjection
 
 # -----------------------------
 # PARAMETERS
 # -----------------------------
-NUM_CLIENTS = 6           # total clients
-NUM_EDGES = 2             # number of edge groups
+NUM_CLIENTS = 6  # total clients
+NUM_EDGES = 2  # number of edge groups
 ASYNC_ITERATIONS = 40
 COMMON_DIM = 50
 EARLY_STOPPING_ROUNDS = 10
@@ -133,6 +131,7 @@ client_data = []
 for i in range(NUM_CLIENTS):
     X, y = make_classification(n_samples=200, n_features=10, n_informative=7, random_state=i)
     client_data.append((X, y))
+
 
 # -----------------------------
 # 2. K-FOLD LIGHTGBM TRAINING FUNCTION
@@ -166,6 +165,7 @@ def train_lgb_kfold(X, y, k=K_FOLDS):
     best_idx = np.argmax(val_scores)
     return models[best_idx], np.max(val_scores)
 
+
 # -----------------------------
 # 3. INITIALIZE DEVICE LAYER CLIENTS
 # -----------------------------
@@ -197,6 +197,7 @@ for X, y in client_data:
         'trust': np.ones(NUM_CLIENTS)
     })
 
+
 # -----------------------------
 # 4. K-FOLD GOSSIP UPDATE FUNCTION
 # -----------------------------
@@ -217,7 +218,7 @@ def gossip_update_kfold(client_a, client_b, k=K_FOLDS):
             y_val_fold = y[val_idx]
 
             leaf_val = client_a['feature_model'].predict(X_val, pred_leaf=True)
-            X_embed_val = np.zeros((X_val.shape[0], client_a['feature_model'].predict(X, pred_leaf=True).max()+1))
+            X_embed_val = np.zeros((X_val.shape[0], client_a['feature_model'].predict(X, pred_leaf=True).max() + 1))
             for i_row, leaf_row in enumerate(leaf_val):
                 X_embed_val[i_row, leaf_row] = 1
             X_proj_val = client_a['projector'].transform(X_embed_val)
@@ -232,10 +233,12 @@ def gossip_update_kfold(client_a, client_b, k=K_FOLDS):
 
     w_b, w_a = 0.5, 0.5
     if acc_new > acc_old:
-        w_b *= 1.1; w_a *= 0.9
+        w_b *= 1.1;
+        w_a *= 0.9
     else:
-        w_b *= 0.9; w_a *= 1.1
-    w_a, w_b = w_a/(w_a+w_b), w_b/(w_a+w_b)
+        w_b *= 0.9;
+        w_a *= 1.1
+    w_a, w_b = w_a / (w_a + w_b), w_b / (w_a + w_b)
 
     client_a['classifier'].coef_ = w_a * coef_old + w_b * client_b['classifier'].coef_
     client_a['classifier'].intercept_ = w_a * intercept_old + w_b * client_b['classifier'].intercept_
@@ -246,13 +249,14 @@ def gossip_update_kfold(client_a, client_b, k=K_FOLDS):
     else:
         client_a['trust'][idx_b] = max(MIN_TRUST, client_a['trust'][idx_b] * TRUST_DECAY)
 
+
 # -----------------------------
 # 5. EDGE LAYER INITIALIZATION
 # -----------------------------
 edges = []
 clients_per_edge = NUM_CLIENTS // NUM_EDGES
 for i in range(NUM_EDGES):
-    edge_clients = list(range(i*clients_per_edge, (i+1)*clients_per_edge))
+    edge_clients = list(range(i * clients_per_edge, (i + 1) * clients_per_edge))
     edges.append({'clients': edge_clients})
 
 # -----------------------------
@@ -283,7 +287,7 @@ for t in range(ASYNC_ITERATIONS):
     all_preds = []
     for client in clients:
         leaf_indices = client['feature_model'].predict(X_test_all, pred_leaf=True)
-        X_embed = np.zeros((X_test_all.shape[0], leaf_indices.max()+1))
+        X_embed = np.zeros((X_test_all.shape[0], leaf_indices.max() + 1))
         for i_row, leaf_row in enumerate(leaf_indices):
             X_embed[i_row, leaf_row] = 1
         X_proj = client['projector'].transform(X_embed)
@@ -297,23 +301,28 @@ for t in range(ASYNC_ITERATIONS):
 # -----------------------------
 # 7. ANIMATION
 # -----------------------------
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,6))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
 
 def update(frame):
-    ax1.clear(); ax2.clear()
+    ax1.clear();
+    ax2.clear()
     heatmap_data = np.array([np.mean(clients[i]['trust']) for i in range(NUM_CLIENTS)])
     sns.heatmap(heatmap_data, annot=True, fmt=".2f", cmap="YlGnBu",
                 xticklabels=[f'C{i}' for i in range(NUM_CLIENTS)],
                 yticklabels=[f'C{i}' for i in range(NUM_CLIENTS)], cbar=True, ax=ax1)
-    ax1.set_title(f'Trust per Client\nIteration {frame+1}')
+    ax1.set_title(f'Trust per Client\nIteration {frame + 1}')
     for i, peer_idx in enumerate(peer_selection_history[frame]):
-        ax1.text(peer_idx+0.5, i+0.5, "★", color='red', ha='center', va='center', fontsize=12, fontweight='bold')
+        ax1.text(peer_idx + 0.5, i + 0.5, "★", color='red', ha='center', va='center', fontsize=12, fontweight='bold')
 
     for idx in range(NUM_CLIENTS):
-        ax2.plot(range(frame+1), weight_norm_history[idx][:frame+1], label=f'C{idx} Weight Norm')
-    ax2.plot(range(frame+1), global_test_accuracy[:frame+1], 'k--', label='Global Test Acc', linewidth=2)
-    ax2.set_xlabel('Iteration'); ax2.set_ylabel('Value')
-    ax2.set_title('Classifier Weight Norms & Global Test Accuracy'); ax2.legend()
+        ax2.plot(range(frame + 1), weight_norm_history[idx][:frame + 1], label=f'C{idx} Weight Norm')
+    ax2.plot(range(frame + 1), global_test_accuracy[:frame + 1], 'k--', label='Global Test Acc', linewidth=2)
+    ax2.set_xlabel('Iteration');
+    ax2.set_ylabel('Value')
+    ax2.set_title('Classifier Weight Norms & Global Test Accuracy');
+    ax2.legend()
+
 
 anim = FuncAnimation(fig, update, frames=ASYNC_ITERATIONS, interval=300)
 writer = PillowWriter(fps=2)

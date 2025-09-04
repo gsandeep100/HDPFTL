@@ -1,14 +1,15 @@
 # full_fedper_leaf_embeddings.py
-import numpy as np
+import random
+
 import lightgbm as lgb
-from sklearn.linear_model import LogisticRegression
-from sklearn.datasets import make_classification
-from sklearn.model_selection import KFold
-from sklearn.random_projection import SparseRandomProjection
 import matplotlib.pyplot as plt
+import numpy as np
 import seaborn as sns
 from matplotlib.animation import FuncAnimation, PillowWriter
-import random
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import KFold
+from sklearn.random_projection import SparseRandomProjection
 
 # -----------------------------
 # Reproducibility
@@ -23,10 +24,10 @@ random.seed(RNG)
 NUM_CLIENTS = 6
 NUM_EDGES = 2
 ASYNC_ITERATIONS = 40
-COMMON_DIM = 64                # common embedding dim after projection
+COMMON_DIM = 64  # common embedding dim after projection
 EARLY_STOPPING_ROUNDS = 10
 K_FOLDS = 5
-EDGE_PERIOD = 8                # how often edges exchange summaries (set None to disable)
+EDGE_PERIOD = 8  # how often edges exchange summaries (set None to disable)
 TRUST_DECAY = 0.95
 TRUST_GAIN = 1.05
 MIN_TRUST = 0.01
@@ -59,6 +60,7 @@ for i in range(NUM_CLIENTS):
     )
     client_data.append((X, y))
 
+
 # -----------------------------
 # Helper: convert LightGBM leaf indices -> one-hot embedding
 # -----------------------------
@@ -79,6 +81,7 @@ def leaf_indices_to_onehot(leaf_indices):
         offset += w
     return X_embed
 
+
 # -----------------------------
 # 2. K-FOLD LightGBM training per client + leaf embeddings + projection + classifier
 # -----------------------------
@@ -94,14 +97,15 @@ for idx, (X, y) in enumerate(client_data):
         model = lgb.LGBMClassifier(**LGB_PARAMS)
         model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)],
                   early_stopping_rounds=EARLY_STOPPING_ROUNDS, verbose=False)
-        score = model.best_score_['valid_0']['binary_logloss'] if hasattr(model, "best_score_") else model.score(X_val, y_val)
+        score = model.best_score_['valid_0']['binary_logloss'] if hasattr(model, "best_score_") else model.score(X_val,
+                                                                                                                 y_val)
         if score < best_score:
             best_score = score
             best_model = model
 
     # Extract leaf indices for whole local dataset
     leaf_idx = best_model.predict(X, pred_leaf=True)  # shape (n_samples, n_trees)
-    X_embed = leaf_indices_to_onehot(leaf_idx)         # high-dim sparse embedding
+    X_embed = leaf_indices_to_onehot(leaf_idx)  # high-dim sparse embedding
 
     # Random projection to common dimension
     projector = SparseRandomProjection(n_components=COMMON_DIM, random_state=RNG)
@@ -118,7 +122,7 @@ for idx, (X, y) in enumerate(client_data):
         'classifier': clf,
         'X': X,
         'y': y,
-        'leaf_embed': X_embed,      # keep for possible diagnostics
+        'leaf_embed': X_embed,  # keep for possible diagnostics
         'proj_X': X_proj,
         'val_score': best_score,
         'n_samples': X.shape[0],
@@ -136,6 +140,7 @@ for e in range(NUM_EDGES):
     stop = start + clients_per_edge
     edges.append({'id': e, 'clients': list(range(start, stop))})
 
+
 # -----------------------------
 # Helper: compute projected embeddings for arbitrary X using client's pipeline
 # -----------------------------
@@ -147,6 +152,7 @@ def project_with_client(client, X_query):
     # Using SparseRandomProjection.transform is valid; width may differ across clients but transformer maps accordingly.
     X_proj = client['projector'].transform(X_embed)
     return X_proj
+
 
 # -----------------------------
 # 4. Gossip update using K-fold CV on projected embeddings (adaptive alpha)
@@ -171,7 +177,7 @@ def gossip_update_kfold(client_a, client_b, k=K_FOLDS):
     inter_candidate = 0.5 * inter_a + 0.5 * inter_b
 
     # Prepare projected embeddings for client_a local data using client_a's pipeline
-    X_proj = client_a['proj_X']    # we already computed at init
+    X_proj = client_a['proj_X']  # we already computed at init
 
     y = client_a['y']
     kf = KFold(n_splits=k, shuffle=True, random_state=RNG)
@@ -210,9 +216,11 @@ def gossip_update_kfold(client_a, client_b, k=K_FOLDS):
 
     # Event-driven adjustment
     if acc_new > acc_old:
-        w_b *= 1.1; w_a *= 0.9
+        w_b *= 1.1;
+        w_a *= 0.9
     else:
-        w_b *= 0.9; w_a *= 1.1
+        w_b *= 0.9;
+        w_a *= 1.1
     # normalize
     w_a, w_b = w_a / (w_a + w_b), w_b / (w_a + w_b)
 
@@ -230,6 +238,7 @@ def gossip_update_kfold(client_a, client_b, k=K_FOLDS):
     else:
         client_a['trust'][idx_b] = max(MIN_TRUST, client_a['trust'][idx_b] * TRUST_DECAY)
 
+
 # -----------------------------
 # 5. Edge-to-edge summary exchange (optional)
 # -----------------------------
@@ -243,6 +252,7 @@ def edge_summary(edge):
     avg_trust = np.mean(np.vstack(trusts), axis=0)
     return {'coef': avg_coef, 'inter': avg_inter, 'trust': avg_trust}
 
+
 def edge_exchange(edges, alpha_edge=0.2):
     summaries = [edge_summary(e) for e in edges]
     for i, edge in enumerate(edges):
@@ -255,10 +265,13 @@ def edge_exchange(edges, alpha_edge=0.2):
         cross_trust = np.mean([s['trust'] for s in other], axis=0)
         # distribute small update to clients in this edge
         for cidx in edge['clients']:
-            clients[cidx]['classifier'].coef_ = (1-alpha_edge)*clients[cidx]['classifier'].coef_ + alpha_edge*cross_coef
-            clients[cidx]['classifier'].intercept_ = (1-alpha_edge)*clients[cidx]['classifier'].intercept_ + alpha_edge*cross_inter
+            clients[cidx]['classifier'].coef_ = (1 - alpha_edge) * clients[cidx][
+                'classifier'].coef_ + alpha_edge * cross_coef
+            clients[cidx]['classifier'].intercept_ = (1 - alpha_edge) * clients[cidx][
+                'classifier'].intercept_ + alpha_edge * cross_inter
             # gently nudge trust
-            clients[cidx]['trust'] = 0.9*clients[cidx]['trust'] + 0.1*cross_trust
+            clients[cidx]['trust'] = 0.9 * clients[cidx]['trust'] + 0.1 * cross_trust
+
 
 # -----------------------------
 # 6. ASYNCHRONOUS GOSSIP LOOP (with global test eval and tracking)
@@ -274,7 +287,7 @@ y_test_all = np.hstack([c['y'][-40:] for c in clients])
 for t in range(ASYNC_ITERATIONS):
     peer_selected = []
     # optional edge exchange at intervals
-    if EDGE_PERIOD and t>0 and (t % EDGE_PERIOD == 0):
+    if EDGE_PERIOD and t > 0 and (t % EDGE_PERIOD == 0):
         edge_exchange(edges, alpha_edge=0.15)
 
     for i, client in enumerate(clients):
@@ -305,35 +318,40 @@ for t in range(ASYNC_ITERATIONS):
     y_pred = np.argmax(avg_probs, axis=1)
     acc = np.mean(y_pred == y_test_all)
     global_test_accuracy.append(acc)
-    print(f"Iter {t+1}/{ASYNC_ITERATIONS}  Global Acc: {acc:.4f}")
+    print(f"Iter {t + 1}/{ASYNC_ITERATIONS}  Global Acc: {acc:.4f}")
 
 # -----------------------------
 # 7. ANIMATION: Trust heatmap (rows = clients), global accuracy curve
 # -----------------------------
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,6))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
 
 def update(frame):
-    ax1.clear(); ax2.clear()
+    ax1.clear();
+    ax2.clear()
     # trust matrix heatmap (each row is that client's trust vector)
     trust_mat = np.vstack([clients[i]['trust'] for i in range(NUM_CLIENTS)])
     sns.heatmap(trust_mat, annot=False, cmap="YlGnBu", ax=ax1,
                 xticklabels=[f"C{j}" for j in range(NUM_CLIENTS)],
                 yticklabels=[f"C{i}" for i in range(NUM_CLIENTS)])
-    ax1.set_title(f"Trust matrix (rows: trusting client) — Iter {frame+1}")
+    ax1.set_title(f"Trust matrix (rows: trusting client) — Iter {frame + 1}")
     # overlay peer selection markers
     peers = peer_selection_history[frame]
     for r, peer in enumerate(peers):
         ax1.text(peer + 0.5, r + 0.5, "★", color='red', ha='center', va='center', fontsize=10)
 
     # global accuracy curve
-    ax2.plot(range(frame+1), global_test_accuracy[:frame+1], 'k--', label="Global Test Acc")
+    ax2.plot(range(frame + 1), global_test_accuracy[:frame + 1], 'k--', label="Global Test Acc")
     for i in range(NUM_CLIENTS):
-        ax2.plot(range(frame+1), weight_norm_history[i][:frame+1], alpha=0.6, label=f"C{i} weight norm" if frame==0 else "")
+        ax2.plot(range(frame + 1), weight_norm_history[i][:frame + 1], alpha=0.6,
+                 label=f"C{i} weight norm" if frame == 0 else "")
     ax2.set_ylim(0, 1.05)
-    ax2.set_xlabel("Iteration"); ax2.set_ylabel("Value")
+    ax2.set_xlabel("Iteration");
+    ax2.set_ylabel("Value")
     ax2.set_title("Global Accuracy & classifier weight norms")
     if frame == 0:
         ax2.legend(loc='upper right', fontsize='small')
+
 
 anim = FuncAnimation(fig, update, frames=ASYNC_ITERATIONS, interval=300)
 writer = PillowWriter(fps=2)
