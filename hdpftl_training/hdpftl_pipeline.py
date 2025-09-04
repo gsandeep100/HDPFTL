@@ -1,6 +1,8 @@
 import copy
 import gc
 
+from sklearn.model_selection import train_test_split
+
 import hdpftl_evaluation.evaluate_global_model as evaluate_global_model
 import hdpftl_training.hdpftl_aggregation.hdpftl_fedavg as hdpftl_fedavg
 import hdpftl_training.save_model as save
@@ -34,7 +36,7 @@ def split_among_devices(X_client, y_client, seed=42):
     return device_data
 
 
-def dirichlet_partition(X, y, alpha, num_clients, seed=42):
+def dirichlet_partition(X, y, num_clients, seed=42, alpha = 0.5):
     """
     Partition dataset indices using Dirichlet distribution to simulate non-IID data.
 
@@ -87,7 +89,6 @@ def dirichlet_partition(X, y, alpha, num_clients, seed=42):
 
     return client_data_dict
 
-
 def dirichlet_partition_with_devices(X, y, alpha=0.3, num_clients=5, num_devices_per_client=2):
     """
     Hierarchical partitioning:
@@ -123,6 +124,55 @@ def dirichlet_partition_with_devices(X, y, alpha=0.3, num_clients=5, num_devices
         gc.collect()
 
     return client_data_dict, hierarchical_data
+
+def dirichlet_partition_for_edges_clients(X, y, edges_groups, seed=42, alpha=0.5, min_samples_per_client=5):
+    """
+    Partition dataset among clients based on edges_groups.
+    Each edge group defines which clients belong together.
+
+    Returns:
+        clients_data: list of tuples (X_train, X_test, y_train, y_test) for each client
+        hierarchical_data: dict of client_id -> list of device datasets [(X_device, y_device), ...]
+    """
+    client_data_dict = dirichlet_partition(X, y, num_clients=len(edges_groups), seed=seed, alpha=alpha)
+
+    hierarchical_data = {}
+    clients_data = []
+
+    for i, (client_id, (X_c, y_c)) in enumerate(client_data_dict.items()):
+        num_samples = len(X_c)
+        if num_samples < min_samples_per_client:
+            print(f"[WARN] Client {client_id} has too few samples ({num_samples}), skipping.")
+            continue
+
+        # Split into devices according to the edge group size
+        num_devices = max(len(edges_groups[i]), 1)
+        device_indices = np.array_split(np.arange(num_samples), num_devices)
+
+        device_data = []
+        for d_idx in device_indices:
+            X_device = torch.tensor(X_c[d_idx]).float()
+            y_device = torch.tensor(y_c[d_idx]).long()
+            device_data.append((X_device, y_device))
+
+            # free temporary tensors
+            del X_device, y_device
+            gc.collect()
+
+        hierarchical_data[client_id] = device_data
+
+        # --- train/test split for hierarchical_pfl ---
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_c, y_c, test_size=0.2, random_state=seed
+        )
+
+        clients_data.append((X_train, X_test, y_train, y_test))
+
+        # free memory
+        del X_c, y_c, device_indices, device_data
+        gc.collect()
+
+    return clients_data, hierarchical_data
 
 
 def safe_split(tensor, proportions, dim=0):
