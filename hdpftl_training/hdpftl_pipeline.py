@@ -36,7 +36,7 @@ def split_among_devices(X_client, y_client, seed=42):
     return device_data
 
 
-def dirichlet_partition(X, y, num_clients, seed=42, alpha = 0.5):
+def dirichlet_partition(X, y, num_clients, seed=42, alpha=0.5):
     """
     Partition dataset indices using Dirichlet distribution to simulate non-IID data.
 
@@ -89,6 +89,7 @@ def dirichlet_partition(X, y, num_clients, seed=42, alpha = 0.5):
 
     return client_data_dict
 
+
 def dirichlet_partition_with_devices(X, y, alpha=0.3, num_clients=5, num_devices_per_client=2):
     """
     Hierarchical partitioning:
@@ -124,6 +125,7 @@ def dirichlet_partition_with_devices(X, y, alpha=0.3, num_clients=5, num_devices
         gc.collect()
 
     return client_data_dict, hierarchical_data
+
 
 def dirichlet_partition_for_edges_clients(X, y, edges_groups, seed=42, alpha=0.5, min_samples_per_client=5):
     """
