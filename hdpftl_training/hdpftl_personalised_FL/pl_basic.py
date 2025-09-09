@@ -114,7 +114,6 @@ import threading
 from datetime import datetime
 from typing import List, Tuple, Optional, Dict, Union
 from sklearn.linear_model import LogisticRegression
-
 import lightgbm as lgb
 import matplotlib.pyplot as plt
 import numpy as np
@@ -286,8 +285,10 @@ def bayesian_aggregator_edge(X_sparse_edge: csr_matrix, y_edge: np.ndarray,
         betas = pm.Normal("betas", mu=0, sigma=0.5, shape=(X_sparse_edge.shape[1], n_classes))
         logits = pm.math.dot(X_sparse_edge.toarray(), betas) + alpha if X_dense is None else pm.math.dot(X_dense,
                                                                                                          betas) + alpha
-        y_obs = pm.Categorical("y_obs", p=pm.math.softmax(logits), observed=y)
-        trace = pm.sample(n_samples, tune=n_tune, target_accept=0.9, cores=1, progressbar=True, init='adapt_diag')
+
+        logits_shifted = logits - pm.math.max(logits, axis=1, keepdims=True)
+        y_obs = pm.Categorical("y_obs", p=pm.math.softmax(logits_shifted), observed=y)
+        trace = pm.sample(n_samples, tune=n_tune, target_accept=0.9,cores=1, progressbar=True, init='jitter+adapt_diag')
     return model, trace
 
 
@@ -306,10 +307,21 @@ def pad_sparse_matrices(matrices: List[csr_matrix]) -> List[csr_matrix]:
 
 def one_hot_encode_leaf_embeddings(leaf_embeddings: csr_matrix) -> csr_matrix:
     """
-    Convert leaf indices from LightGBM into one-hot encoded sparse matrix.
+    Convert LightGBM leaf indices to one-hot encoding.
+
+    leaf_embeddings: csr_matrix of shape [n_samples, n_trees] (integers)
+    returns: csr_matrix of shape [n_samples, n_trees * num_leaves]
     """
+    # Convert to dense array for OneHotEncoder
+    if isinstance(leaf_embeddings, csr_matrix):
+        leaf_dense = leaf_embeddings.toarray()
+    else:
+        leaf_dense = leaf_embeddings
+
     ohe = OneHotEncoder(sparse_output=True, handle_unknown='ignore')
-    return ohe.fit_transform(leaf_embeddings)
+    leaf_ohe_sparse = ohe.fit_transform(leaf_dense)
+    return leaf_ohe_sparse
+
 
 # ============================================================
 # Aggregate Edge
@@ -410,6 +422,47 @@ def hierarchical_pfl(clients_data: List[ClientData], edge_groups: List[List[int]
                 aggregator_model, bayes_trace, _, _ = aggregate_multiclass_edge(edge_X_list, edge_y_list, num_classes)
                 edge_aggregators.append((aggregator_model, bayes_trace))
 
+            # --- build edge_predictions (avg of local client probs per edge) ---
+            edge_predictions: Dict[int, np.ndarray] = {}
+            for edge_idx, edge in enumerate(edge_groups):
+                edge_client_preds = []
+                for client_idx in edge:
+                    model = local_models[client_idx]
+                    # clients share the same X_test in your pipeline (clients_data[*][1])
+                    if model is None:
+                        continue
+                    # grab the shared test set (same for all clients in your code)
+                    _, X_test_shared, _, _ = clients_data[client_idx]
+                    if X_test_shared is None or X_test_shared.shape[0] == 0:
+                        continue
+                    # get client-local probabilities and align them to global classes
+                    try:
+                        client_prob = model.predict_proba(X_test_shared)  # shape (n_test, n_local_classes)
+                        client_prob_aligned = align_predictions(client_prob, model.classes_,
+                                                                global_classes)  # (n_test, n_global)
+                        # safe normalization just in case
+                        client_prob_aligned = client_prob_aligned / (
+                                    client_prob_aligned.sum(axis=1, keepdims=True) + 1e-12)
+                        client_prob_aligned = np.clip(client_prob_aligned, 1e-8, 1 - 1e-8)
+                        edge_client_preds.append(client_prob_aligned)
+                    except Exception as e:
+                        # model.predict_proba may fail for some models; skip them
+                        print(f"[WARN] edge {edge_idx} client {client_idx} predict_proba failed: {e}")
+                        continue
+
+                if len(edge_client_preds) > 0:
+                    # average across clients in the edge -> (n_test, n_global)
+                    edge_pred = np.mean(edge_client_preds, axis=0)
+                    # normalize & clip to be safe
+                    edge_pred = edge_pred / (edge_pred.sum(axis=1, keepdims=True) + 1e-12)
+                    edge_pred = np.clip(edge_pred, 1e-8, 1 - 1e-8)
+                    edge_predictions[edge_idx] = edge_pred
+                else:
+                    # no valid clients' predictions for this edge
+                    edge_predictions[edge_idx] = None
+            # --- done building edge_predictions ---
+
+
         # Client predictions & adaptive weighting
         round_global_correct, round_global_total = 0, 0
         for i, (X_train, X_test, y_train, y_test) in enumerate(clients_data):
@@ -420,21 +473,51 @@ def hierarchical_pfl(clients_data: List[ClientData], edge_groups: List[List[int]
             leaf_emb_test = csr_matrix(leaf_idx_test)
 
             y_pred_local_raw = model.predict_proba(X_test)
+            print(y_pred_local_raw[:5])
+
             y_pred_local = align_predictions(y_pred_local_raw, model.classes_, global_classes)
 
             aggregator_model, bayes_trace = edge_aggregators[i % len(edge_aggregators)]
+
             if config["aggregator_type"] == 'bayesian' and aggregator_model is not None:
                 with aggregator_model:
-                    pp = pm.sample_posterior_predictive(bayes_trace, var_names=['y_obs'], samples=10, progressbar=False)
-                y_pred_global_raw = np.zeros((X_test.shape[0], len(global_classes)))
-                for c in global_classes:
-                    y_pred_global_raw[:, c] = np.mean(pp['y_obs'] == c, axis=0)
+                    pp = pm.sample_posterior_predictive(bayes_trace, random_seed=42,var_names=['y_obs'],progressbar=False)
+                    print("pp['y_obs'] shape:", pp['y_obs'].shape)
+                    print("First 5 samples:\n", pp['y_obs'][:5])
+
+                # pp['y_obs'].shape = (n_samples, n_data)
+                # Count occurrences for each class per sample
+                num_classes = len(global_classes)
+                counts = np.apply_along_axis(lambda x: np.bincount(x, minlength=num_classes),
+                                             axis=0, arr=pp['y_obs'])
+                # counts.shape = (num_classes, n_data)
+
+                # Transpose to shape (n_data, num_classes) and normalize
+                y_pred_global_raw = counts.T / pp['y_obs'].shape[0]
                 y_pred_global = y_pred_global_raw
+
+                print("y_pred_global_raw[:5]:\n", y_pred_global[:5])
+                print("Row sums (should be 1):\n", y_pred_global.sum(axis=1)[:5])
             else:
-                y_pred_global = np.zeros_like(y_pred_local)
+                # ⚠️ Bayesian failed → use edge-averaged fallback (if available)
+                print("[WARN] Bayesian aggregator unavailable, falling back to edge-average")
+                # choose corresponding edge index for this client
+                # Note: you currently pick aggregator_model, bayes_trace with edge_aggregators[i % len(edge_aggregators)]
+                # so we use the same mapping to get edge index
+                mapped_edge_idx = i % len(edge_groups)  # or use actual mapping if you have one
+                edge_pred = edge_predictions.get(mapped_edge_idx, None)
+                if edge_pred is not None:
+                    y_pred_global = edge_pred.copy()  # shape (n_test, n_global)
+                else:
+                    # final fallback: just use local prediction
+                    print("[WARN] No edge predictions available, using local fallback")
+                    y_pred_global = y_pred_local.copy()
+                # debug print (optional)
+                print("y_pred_global (fallback) first rows:\n", y_pred_global[:3])
 
             combined_prob = w_globals[i] * y_pred_global + (1 - w_globals[i]) * y_pred_local
-            combined_prob /= combined_prob.sum(axis=1, keepdims=True)
+            combined_prob = combined_prob / (combined_prob.sum(axis=1, keepdims=True) + 1e-12)
+            combined_prob = np.clip(combined_prob, 1e-8, 1 - 1e-8)
             y_pred_label = np.argmax(combined_prob, axis=1)
 
             acc = accuracy_score(y_test, y_pred_label)
