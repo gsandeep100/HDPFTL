@@ -4,19 +4,19 @@
 import os
 import pickle
 from datetime import datetime
-from typing import List, Tuple, Union
-from collections import Counter
+from typing import Tuple, Union
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import pymc as pm
-from scipy.sparse import csr_matrix, vstack
-from sklearn.feature_selection import VarianceThreshold
+from sklearn.isotonic import IsotonicRegression
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-
+from sklearn.preprocessing import LabelEncoder
+from scipy.sparse import csr_matrix, hstack, vstack
+from sklearn.preprocessing import OneHotEncoder
+from scipy.special import softmax as sp_softmax
 # Custom preprocessing
-from hdpftl_training.hdpftl_data.preprocess import preprocess_data
+from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
 
 # ============================================================
 # Type Aliases
@@ -43,350 +43,479 @@ config = {
     "results_path": "results"
 }
 
-np.random.seed(config["random_seed"])
+np.random.seed(config["random_seed"])  # ensures reproducibility
 
 
 # ============================================================
 # Helper Functions
 # ============================================================
-def create_non_iid_clients(
-        X: ArrayLike, y: ArrayLike, X_test: ArrayLike, y_test: ArrayLike,
-        n_clients: int = 50, n_edges: int = 10, min_clients_per_edge: int = 5,
-        random_state: int = 42
-) -> Tuple[List[ClientData], List[List[int]]]:
-    np.random.seed(random_state)
-    X_np = X.to_numpy() if isinstance(X, (pd.DataFrame, pd.Series)) else X
-    y_np = y.to_numpy() if isinstance(y, (pd.DataFrame, pd.Series)) else y
-    X_test_np = X_test.to_numpy() if isinstance(X_test, (pd.DataFrame, pd.Series)) else X_test
-    y_test_np = y_test.to_numpy() if isinstance(y_test, (pd.DataFrame, pd.Series)) else y_test
 
-    n_samples = X_np.shape[0]
+def create_non_iid_clients(X, y, X_test, y_test,
+                                n_clients=50, n_edges=10, min_clients_per_edge=5,
+                                random_state=42):
+    """
+    Safely split dataset into clients and edges (non-IID), ensuring
+    X/y are consistent per client.
+    """
+    np.random.seed(random_state)
+
+    X = X.to_numpy() if isinstance(X, (pd.DataFrame, pd.Series)) else X
+    y = y.to_numpy() if isinstance(y, (pd.DataFrame, pd.Series)) else y
+    X_test = X_test.to_numpy() if isinstance(X_test, (pd.DataFrame, pd.Series)) else X_test
+    y_test = y_test.to_numpy() if isinstance(y_test, (pd.DataFrame, pd.Series)) else y_test
+
+    assert X.shape[0] == y.shape[0], "X and y must have same number of samples!"
+
+    n_samples = X.shape[0]
     shuffled_idx = np.random.permutation(n_samples)
     samples_per_client = n_samples // n_clients
 
     clients_data = []
+
     for i in range(n_clients):
-        idx = shuffled_idx[i * samples_per_client:(i + 1) * samples_per_client]
-        clients_data.append((X_np[idx], X_test_np, y_np[idx], y_test_np))
+        start = i * samples_per_client
+        end = start + samples_per_client if i != n_clients - 1 else n_samples
+        idx = shuffled_idx[start:end]
+
+        X_client = X[idx]
+        y_client = y[idx]
+
+        # Shared test set
+        clients_data.append((X_client, X_test, y_client, y_test))
 
     # Assign clients to edges
     clients_per_edge = max(min_clients_per_edge, n_clients // n_edges)
-    edge_groups = []
     all_client_indices = list(range(n_clients))
     np.random.shuffle(all_client_indices)
+
+    edge_groups = []
     for i in range(0, n_clients, clients_per_edge):
         edge_groups.append(all_client_indices[i:i + clients_per_edge])
 
     return clients_data, edge_groups
 
-# When the model predicts fewer columns, pad with zeros for missing classes:
+
+
+
 def pad_proba(pred_proba, present_classes, num_classes):
+    """
+    Pads predicted probability matrix to match total num_classes.
+    Handles missing classes during partial training.
+    """
     full = np.zeros((pred_proba.shape[0], num_classes))
-    full[:, present_classes] = pred_proba
+    for i, cls in enumerate(present_classes):
+        full[:, cls] = pred_proba[:, i]
     return full
 
 
-def train_lightgbm(X_train, y_train, X_val=None, y_val=None, n_estimators=50, num_classes=None):
-    """Train LightGBM safely with LabelEncoder and num_class"""
+def train_lightgbm(X_train, y_train, num_classes=None, n_estimators=1, random_state=42):
+    """
+    Train LightGBM safely even if some classes are missing in this client batch.
+    """
+    X_np = X_train.to_numpy() if isinstance(X_train, (pd.DataFrame, pd.Series)) else X_train
+    y_np = y_train.to_numpy() if isinstance(y_train, (pd.DataFrame, pd.Series)) else y_train
+
     if num_classes is None:
-        num_classes = len(np.unique(y_train))
+        num_classes = len(np.unique(y_np))
+
     if num_classes > 2:
         model = lgb.LGBMClassifier(
             objective="multiclass",
             num_class=num_classes,
             metric="multi_logloss",
-            boosting_type="gbdt",
-            num_leaves=31,
-            learning_rate=0.05,
             n_estimators=n_estimators,
+            random_state=random_state,
             verbose=-1
         )
     else:
         model = lgb.LGBMClassifier(
             objective="binary",
             metric="binary_logloss",
-            boosting_type="gbdt",
-            num_leaves=31,
-            learning_rate=0.05,
             n_estimators=n_estimators,
+            random_state=random_state,
             verbose=-1
         )
 
-    if X_val is not None and y_val is not None:
-        # Clip validation labels to allowed range to avoid unseen labels
-        y_val_fixed = np.clip(y_val, 0, num_classes - 1)
-        model.fit(
-            X_train, y_train,
-            eval_set=[(X_val, y_val_fixed)],
-            eval_metric=model._objective,
-            callbacks=[lgb.early_stopping(stopping_rounds=20)]
-        )
-    else:
-        model.fit(X_train, y_train)
+    model.fit(X_np, y_np)
+
+    # Ensure safe predict_proba
+    def safe_predict_proba(X_in):
+        X_in_np = X_in.to_numpy() if isinstance(X_in, (pd.DataFrame, pd.Series)) else X_in
+        pred = model.predict_proba(X_in_np)
+        if pred.shape[1] < num_classes:
+            full = np.zeros((pred.shape[0], num_classes))
+            for i, cls in enumerate(model.classes_):
+                full[:, cls] = pred[:, i]
+            pred = full
+        return pred
+
+    model.safe_predict_proba = safe_predict_proba
     return model
 
 
-def extract_leaf_embeddings(model, X: ArrayLike) -> np.ndarray:
-    # Keep feature names consistent with model.feature_name_
+
+def extract_leaf_embeddings(model, X):
+    """Return leaf indices, ensuring consistent features."""
     if isinstance(X, pd.DataFrame):
-        X_fix = X[model.feature_name_]           # reorder columns if needed
+        X_fix = X[model.feature_name_]
     else:
         X_fix = pd.DataFrame(X, columns=model.feature_name_)
     return model.predict(X_fix, pred_leaf=True).astype(int)
 
 
-def one_hot_encode_leaf_embeddings(leaf_embeddings: np.ndarray) -> csr_matrix:
+def one_hot_encode_leaf_embeddings(leaf_embeddings, max_leaf=None):
+    """Convert leaf indices to sparse one-hot embeddings with consistent width."""
     ohe = OneHotEncoder(sparse_output=True, handle_unknown='ignore')
-    return ohe.fit_transform(leaf_embeddings)
+    if max_leaf is None:
+        return ohe.fit_transform(leaf_embeddings), ohe
+    else:
+        # Fit on max_leaf dummy data to ensure consistent columns
+        dummy = np.zeros((1, leaf_embeddings.shape[1]))
+        leaf_embeddings_padded = np.vstack([leaf_embeddings, dummy])
+        ohe.fit(leaf_embeddings_padded)
+        one_hot = ohe.transform(leaf_embeddings)
+        # Pad columns if needed
+        if one_hot.shape[1] < max_leaf:
+            n_samples = one_hot.shape[0]
+            one_hot = hstack([one_hot, csr_matrix((n_samples, max_leaf - one_hot.shape[1]))])
+        return one_hot, ohe
+
+
+def safe_split(X, y, test_size=0.2, random_state=42):
+    """
+    Safely split dataset while ensuring all classes appear in the training set.
+    Prevents ValueError for "least populated class has only 1 member".
+    """
+    for _ in range(10):
+        X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=None)
+        missing = set(np.unique(y_val)) - set(np.unique(y_tr))
+        if not missing:
+            return X_tr, X_val, y_tr, y_val
+
+    # fallback: move missing samples from val -> train
+    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=None)
+    missing = set(np.unique(y_val)) - set(np.unique(y_tr))
+    if missing:
+        mask = np.isin(y_val, list(missing))
+        X_tr = np.vstack([X_tr, X_val[mask]])
+        y_tr = np.concatenate([y_tr, y_val[mask]])
+        X_val = X_val[~mask]
+        y_val = y_val[~mask]
+    return X_tr, X_val, y_tr, y_val
 
 
 # ============================================================
 # Device Level Boosting
 # ============================================================
-
-def device_level_boosting(clients_data: List[ClientData], rounds=10, num_classes=None):
+def device_level_boosting(clients_data, num_classes):
     """
-    Sequential boosting at device level with safe residual updates.
-    Handles rare classes and ensures all LightGBM predictions match num_classes.
+    Sequential boosting for each device, with residual updates and safe predict_proba.
     """
     device_models = []
 
-    for X_train, X_test, y_train, y_test in clients_data:
-        # Determine number of classes once
-        if num_classes is None:
-            num_classes = len(np.unique(y_train))
+    for X_dev, _, y_dev, _ in clients_data:
+        y_enc = y_dev  # already aligned
+        residual = np.zeros((X_dev.shape[0], num_classes))
+        residual[np.arange(X_dev.shape[0]), y_enc] = 1.0
 
-        # One-hot encode training labels
-        y_onehot = np.zeros((y_train.shape[0], num_classes), dtype=float)
-        y_onehot[np.arange(y_train.shape[0]), y_train] = 1.0
-        residual = y_onehot.copy()
         models_per_device = []
-
-        for r in range(rounds):
-            # Pseudo-labels from current residuals
+        for _ in range(config["device_boosting_rounds"]):
             y_pseudo = residual.argmax(axis=1)
-
-            # Train-test split safely, fallback if rare classes exist
-            X_tr, X_val, y_tr, y_val = safe_split(
-                X_train, y_pseudo, test_size=0.2, random_state=config["random_seed"], num_classes=num_classes
-            )
-
-            # Train LightGBM classifier
-            model = train_lightgbm(
-                X_tr, y_tr, X_val, y_val,
-                n_estimators=config["n_estimators"],
-                num_classes=num_classes
-            )
-
-            # Predict probabilities on full device data
-            X_train_fix = (
-                X_train[model.feature_name_] if isinstance(X_train, pd.DataFrame)
-                else pd.DataFrame(X_train, columns=model.feature_name_)
-            )
-            pred_proba_raw = model.predict_proba(X_train_fix)
-            pred_proba_full = pad_proba(pred_proba_raw, model.classes_.astype(int), num_classes)
-
-            # Update residuals
-            residual -= pred_proba_full
+            model = train_lightgbm(X_dev, y_pseudo, num_classes=num_classes, n_estimators=1)
+            pred_proba = model.predict_proba(X_dev)
+            residual -= pred_proba
             models_per_device.append(model)
 
         device_models.append(models_per_device)
 
     return device_models
 
-# ============================================================
+
+# =============================================================
 # Edge Level Boosting
 # ============================================================
-def edge_level_boosting(edge_groups, device_models, clients_data, num_classes=None):
+def edge_level_boosting(edge_groups, clients_data, num_classes):
     """
-    Edge-level sequential boosting with residual feedback.
-    Each edge aggregates devices and refines residuals with consistent num_classes.
+    Sequential boosting at edge level with stacked device data.
     """
-    all_edge_models = []
+    edge_models = []
 
-    for edge_idx, edge_devices in enumerate(edge_groups):
-        # Stack all edge device data for the edge-level model
-        X_train_edge = np.concatenate([clients_data[device_idx][0] for device_idx in edge_devices], axis=0)
-        y_train_edge = np.concatenate([clients_data[device_idx][2] for device_idx in edge_devices], axis=0)
+    for edge_clients in edge_groups:
+        X_edge = np.vstack([clients_data[i][0] for i in edge_clients])
+        y_edge = np.hstack([clients_data[i][2] for i in edge_clients])
 
-        if num_classes is None:
-            num_classes = len(np.unique(y_train_edge))
+        residual_edge = np.zeros((X_edge.shape[0], num_classes))
+        residual_edge[np.arange(y_edge.shape[0]), y_edge] = 1.0
 
-        # Initialize residuals for the edge
-        y_onehot_edge = np.zeros((y_train_edge.shape[0], num_classes))
-        y_onehot_edge[np.arange(y_train_edge.shape[0]), y_train_edge] = 1.0
-        residuals_edge = y_onehot_edge.copy()
+        for _ in range(config["edge_boosting_rounds"]):
+            y_pseudo = residual_edge.argmax(axis=1)
+            model = train_lightgbm(pd.DataFrame(X_edge), y_pseudo, num_classes=num_classes, n_estimators=1)
+            pred_proba = model.predict_proba(X_edge)
+            residual_edge -= pred_proba
 
-        edge_device_models = {}
+        edge_models.append(model)
 
-        # Track start index to slice residuals per device
-        start_idx = 0
-        for device_idx in edge_devices:
-            X_dev = clients_data[device_idx][0]
-            n_samples = X_dev.shape[0]
+    return edge_models
 
-            # Slice residuals for this device
-            residual_dev = residuals_edge[start_idx:start_idx + n_samples]
-            y_pseudo = residual_dev.argmax(axis=1)
 
-            # Train device-level LightGBM
-            model = train_lightgbm(
-                X_dev, y_pseudo,
-                n_estimators=config["device_boosting_rounds"],
-                num_classes=num_classes
-            )
-
-            # Predict probabilities on device data
-            X_dev_fix = (
-                X_dev[model.feature_name_] if isinstance(X_dev, pd.DataFrame)
-                else pd.DataFrame(X_dev, columns=model.feature_name_)
-            )
-            pred_proba_raw = model.predict_proba(X_dev_fix)
-            pred_proba_full = pad_proba(pred_proba_raw, model.classes_.astype(int), num_classes)
-
-            # Update only this device's portion of residuals
-            residuals_edge[start_idx:start_idx + n_samples] -= pred_proba_full
-            start_idx += n_samples
-
-            edge_device_models[device_idx] = model
-
-        # Edge-level model on aggregated edge data
-        y_pseudo_edge = residuals_edge.argmax(axis=1)
-        edge_model = train_lightgbm(
-            X_train_edge, y_pseudo_edge,
-            n_estimators=config["edge_boosting_rounds"],
-            num_classes=num_classes
-        )
-        edge_device_models["edge_model"] = edge_model
-        all_edge_models.append(edge_device_models)
-
-    return all_edge_models
-
-# ============================================================
+# =============================================================
 # Gossip Bayesian Aggregator
 # ============================================================
-def gossip_layer_bayesian(edge_models, clients_data, num_classes):
-    X_list, y_list = [], []
-    for edge in edge_models:
-        for key, model in edge.items():
-            if key == "edge_model":
-                continue
-            for idx, (X_train, _, y_train, _) in enumerate(clients_data):
-                leaf = extract_leaf_embeddings(model, X_train)
-                leaf_ohe = one_hot_encode_leaf_embeddings(leaf)
-                X_list.append(leaf_ohe)
-                y_list.append(y_train)
-    X_sparse = vstack(X_list)
-    y = np.hstack(y_list)
 
-    if config["variance_prune"]:
-        vt = VarianceThreshold(threshold=config["variance_threshold"])
-        X_sparse = vt.fit_transform(X_sparse)
+def gossip_layer_bayesian(edge_models, clients_data, num_classes, use_calibration=True):
+    """
+    Robust Bayesian aggregation with consistent shapes.
+    """
+    leaf_ohe_per_edge = []
+    y_per_edge = []
+    max_features = 0
 
-    scaler = StandardScaler(with_mean=False)
-    X_proc = scaler.fit_transform(X_sparse)
+    # --- Collect all leaf embeddings first ---
+    for edge_model in edge_models:
+        edge_features = []
+        edge_labels = []
 
-    n_features = X_proc.shape[1]
+        for idx, (X_dev, _, y_dev, _) in enumerate(clients_data):
+            leaf = extract_leaf_embeddings(edge_model, X_dev)
+            leaf_ohe = one_hot_encode_leaf_embeddings(leaf)[0]
+            edge_features.append(leaf_ohe)
+            edge_labels.append(y_dev)
+
+        # Determine max features
+        edge_max = max([f.shape[1] for f in edge_features])
+        if edge_max > max_features:
+            max_features = edge_max
+
+        leaf_ohe_per_edge.append(edge_features)
+        y_per_edge.append(np.hstack(edge_labels))
+
+    # --- Pad features to max_features ---
+    padded_edges = []
+    for edge_features in leaf_ohe_per_edge:
+        padded_edge = []
+        for f in edge_features:
+            n_samples, n_cols = f.shape
+            if n_cols < max_features:
+                f = hstack([f, csr_matrix((n_samples, max_features - n_cols))])
+            padded_edge.append(f)
+        padded_edges.append(padded_edge)
+
+    # --- Compute calibrated probabilities per edge ---
+    calibrated_probs_edges = []
+    for edge_idx, edge_features in enumerate(padded_edges):
+        X_edge = vstack(edge_features)
+        y_edge = y_per_edge[edge_idx]
+        edge_model = edge_models[edge_idx]
+
+        # Predict
+        if hasattr(edge_model, "predict_proba"):
+            probs = edge_model.predict_proba(X_edge)
+        else:
+            probs = np.zeros((X_edge.shape[0], num_classes))
+
+        # Isotonic calibration
+        if use_calibration:
+            calibrated_probs = np.zeros_like(probs)
+            for c in range(num_classes):
+                iso = IsotonicRegression(out_of_bounds='clip')
+                iso.fit(probs[:, c], y_edge == c)
+                calibrated_probs[:, c] = iso.transform(probs[:, c])
+            # Normalize
+            calibrated_probs /= calibrated_probs.sum(axis=1, keepdims=True)
+        else:
+            calibrated_probs = probs
+
+        calibrated_probs_edges.append(calibrated_probs)
+
+    # --- Stack edge probabilities horizontally for Bayesian ---
+    # Make sure rows match by using min_rows
+    min_rows = min(p.shape[0] for p in calibrated_probs_edges)
+    X_proc = np.hstack([p[:min_rows] for p in calibrated_probs_edges])
+    y_global = np.hstack([y[:min_rows] for y in y_per_edge])
+
+    # --- Bayesian multinomial model ---
     with pm.Model() as model:
         alpha = pm.Normal("alpha", mu=0, sigma=1, shape=(num_classes,))
-        betas = pm.Normal("betas", mu=0, sigma=1, shape=(n_features, num_classes))
+        betas = pm.Normal("betas", mu=0, sigma=1, shape=(X_proc.shape[1], num_classes))
         logits = pm.math.dot(X_proc, betas) + alpha
         p = pm.math.softmax(logits)
-        y_obs = pm.Categorical("y_obs", p=p, observed=y)
-        trace = pm.sample(draws=config["bayes_n_samples"], tune=config["bayes_n_tune"],
-                          chains=2, cores=2, target_accept=0.9, progressbar=True)
+        y_obs = pm.Categorical("y_obs", p=p, observed=y_global)
+
+        trace = pm.sample(
+            draws=config["bayes_n_samples"],
+            tune=config["bayes_n_tune"],
+            chains=2,
+            cores=2,
+            target_accept=0.9,
+            progressbar=True
+        )
+
     return model, trace
 
 
+def variance_prune_sparse(X_sparse, threshold=1e-4):
+    """
+    Remove sparse columns with variance below threshold.
+    X_sparse: csr_matrix
+    Returns: pruned csr_matrix
+    """
+    # Compute variance per column
+    mean = X_sparse.mean(axis=0).A1
+    mean_sq = X_sparse.power(2).mean(axis=0).A1
+    var = mean_sq - mean**2
+    keep_cols = np.where(var > threshold)[0]
+    return X_sparse[:, keep_cols], keep_cols
 # ============================================================
-# Residual Feedback Loop
+# Forward Pass with Feedback
 # ============================================================
-def compute_residual(y_true, y_pred):
-    return y_true - y_pred
-
-
-def backward_edge_refinement(edge_models, device_models, edge_groups, clients_data, global_residuals):
-    # Sequentially update edge and device models
-    start_idx = 0
-    for edge_idx, edge in enumerate(edge_groups):
-        edge_size = sum([clients_data[device_idx][0].shape[0] for device_idx in edge])
-        edge_residuals = global_residuals[start_idx:start_idx + edge_size]
-        start_idx += edge_size
-
-        residual = edge_residuals.copy()
-        for key, model in edge_models[edge_idx].items():
-            if key == "edge_model":
-                continue
-            X_dev = clients_data[key][0]
-            y_pseudo = residual.argmax(axis=1)
-            model.fit(X_dev, y_pseudo, init_model=model)
-            pred = model.predict(X_dev)
-            residual -= pred
-    return edge_models, device_models
-
 
 def forward_pass_with_feedback(clients_data, edge_groups, n_iterations=3):
     """
-    Full HDPFTL forward pass with residual feedback, safe class handling, and
-    Bayesian gossip aggregation.
+    Full pipeline with:
+    - Device boosting
+    - Edge boosting
+    - Bayesian aggregation
+    - Residual feedback
+    (Fixed to safely pad / stack arrays of unequal lengths)
     """
-    # 1️⃣ Device-level sequential boosting
-    device_models = device_level_boosting(
-        clients_data,
-        rounds=config["device_boosting_rounds"]
-    )
+    # Label encoding
+    all_labels = np.hstack([y_dev for X_dev, _, y_dev, _ in clients_data])
+    le = LabelEncoder()
+    le.fit(all_labels)
+    num_classes = len(le.classes_)
 
-    # Determine total number of classes across all clients
-    all_labels = np.hstack([y for _, _, y, _ in clients_data])
-    num_classes = len(np.unique(all_labels))
+    residuals_clients = [None] * len(clients_data)
 
-    # 2️⃣ Edge-level sequential boosting
-    edge_models = edge_level_boosting(
-        edge_groups,
-        device_models,
-        clients_data,
-        num_classes=num_classes
-    )
-
-    # 3️⃣ Iterative residual feedback loop
     for iteration in range(n_iterations):
-        print(f"[INFO] Residual Feedback Iteration {iteration + 1}/{n_iterations}")
+        print(f"[INFO] Iteration {iteration+1}/{n_iterations}")
 
-        # 3a️⃣ Bayesian gossip aggregation
-        gossip_model, gossip_trace = gossip_layer_bayesian(edge_models, clients_data, num_classes)
+        # --- Device Level ---
+        device_models = []
+        for idx, (X_dev, _, y_dev, _) in enumerate(clients_data):
+            y_enc = le.transform(y_dev)
+            if residuals_clients[idx] is None:
+                residual = np.zeros((X_dev.shape[0], num_classes))
+                residual[np.arange(X_dev.shape[0]), y_enc] = 1.0
+            else:
+                residual = residuals_clients[idx]
 
-        # 3b️⃣ Optionally, compute residuals for refinement (simplified version)
-        # Here, we skip complex posterior residual update for stability
-        # residuals could be computed from leaf embeddings + Bayesian predictions if desired
+            models_per_device = []
+            for _ in range(config["device_boosting_rounds"]):
+                y_pseudo = residual.argmax(axis=1)
+                model = train_lightgbm(X_dev, y_pseudo, num_classes=num_classes, n_estimators=1)
+                pred_proba = model.predict_proba(X_dev)
+                residual -= pred_proba
+                models_per_device.append(model)
 
+            residuals_clients[idx] = residual
+            device_models.append(models_per_device)
+
+        # --- Edge Level ---
+        edge_models = []
+        for edge_clients in edge_groups:
+            X_edge = np.vstack([clients_data[i][0] for i in edge_clients])
+            y_edge = np.hstack([clients_data[i][2] for i in edge_clients])
+            residual_edge = np.vstack([residuals_clients[i] for i in edge_clients])
+
+            for _ in range(config["edge_boosting_rounds"]):
+                y_pseudo = residual_edge.argmax(axis=1)
+                model = train_lightgbm(pd.DataFrame(X_edge), y_pseudo, num_classes=num_classes, n_estimators=1)
+                pred_proba = model.predict_proba(X_edge)
+                residual_edge -= pred_proba
+
+            edge_models.append(model)
+
+        # --- Bayesian aggregation ---
+        X_bayes_list = []
+        y_bayes_list = []
+        for edge_idx, edge_clients in enumerate(edge_groups):
+            X_edge_stack = np.vstack([clients_data[i][0] for i in edge_clients])
+            y_edge_stack = np.hstack([clients_data[i][2] for i in edge_clients])
+            edge_model = edge_models[edge_idx]
+            probs = edge_model.safe_predict_proba(X_edge_stack)
+
+            # Ensure 2-D shape
+            probs = np.atleast_2d(probs)
+            if probs.ndim == 1:      # (N,) -> (N,1)
+                probs = probs[:, None]
+
+            X_bayes_list.append(probs)
+            y_bayes_list.append(y_edge_stack)
+
+        # Pad arrays along rows to allow horizontal stacking
+        max_rows = max(arr.shape[0] for arr in X_bayes_list)
+        padded_X_bayes = []
+        for arr in X_bayes_list:
+            rows, cols = arr.shape
+            pad_rows = max_rows - rows
+            # pad_rows can be 0 if already max
+            padded = np.pad(
+                arr,
+                ((0, pad_rows), (0, 0)),
+                mode='constant',
+                constant_values=0
+            )
+            padded_X_bayes.append(padded)
+
+        X_proc = np.hstack(padded_X_bayes)
+
+        # For labels we truncate/pad to max_rows to match X_proc
+        padded_y_bayes = []
+        for arr in y_bayes_list:
+            if arr.shape[0] < max_rows:
+                arr_padded = np.pad(arr, (0, max_rows - arr.shape[0]),
+                                    mode='constant',
+                                    constant_values=-1)  # -1 marks padded rows
+            else:
+                arr_padded = arr[:max_rows]
+            padded_y_bayes.append(arr_padded)
+
+        y_global = np.hstack(padded_y_bayes)
+        valid_mask = y_global != -1
+        y_global = y_global[valid_mask]
+        X_proc = X_proc[valid_mask]
+
+        y_global_enc = le.transform(y_global)
+
+        with pm.Model() as gossip_model:
+            alpha = pm.Normal("alpha", mu=0, sigma=1, shape=(num_classes,))
+            betas = pm.Normal("betas", mu=0, sigma=1, shape=(X_proc.shape[1], num_classes))
+            logits = pm.math.dot(X_proc, betas) + alpha
+            p = pm.math.softmax(logits)
+            y_obs = pm.Categorical("y_obs", p=p, observed=y_global_enc)
+
+            gossip_trace = pm.sample(
+                draws=config["bayes_n_samples"],
+                tune=config["bayes_n_tune"],
+                chains=2,
+                cores=2,
+                target_accept=0.9,
+                progressbar=True
+            )
+
+        # --- Residual Feedback ---
+        global_preds = X_proc @ gossip_trace['betas'].mean(axis=0) + gossip_trace['alpha'].mean(axis=0)
+        global_probs = sp_softmax(global_preds, axis=1)
+        global_residual = np.zeros_like(global_probs)
+        global_residual[np.arange(len(y_global_enc)), y_global_enc] = 1.0
+        global_residual -= global_probs
+
+        # Split residuals back to clients
+        start_idx = 0
+        for e_idx, edge_clients in enumerate(edge_groups):
+            n_samples_edge = sum(clients_data[i][0].shape[0] for i in edge_clients)
+            residual_edge_feedback = global_residual[start_idx:start_idx + n_samples_edge]
+            start_idx += n_samples_edge
+
+            offset = 0
+            for d_idx in edge_clients:
+                n_samples_dev = clients_data[d_idx][0].shape[0]
+                residuals_clients[d_idx] = residual_edge_feedback[offset:offset + n_samples_dev]
+                offset += n_samples_dev
+
+    print("[INFO] Completed all iterations with Bayesian aggregation.")
     return device_models, edge_models, gossip_model, gossip_trace
 
-def safe_split(X, y, test_size=0.2, random_state=42, num_classes=None):
-    """
-    Split while guaranteeing that every class in y appears in the training set.
-    Falls back to repeated shuffling if needed.
-    """
-    from collections import Counter
-    for _ in range(10):  # try a few times
-        X_tr, X_val, y_tr, y_val = train_test_split(
-            X, y, test_size=test_size, random_state=random_state, stratify=None
-        )
-        # Check if all classes in val exist in train
-        missing = set(np.unique(y_val)) - set(np.unique(y_tr))
-        if not missing:
-            return X_tr, X_val, y_tr, y_val
-    # Worst-case fallback: move missing samples from val → train
-    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=test_size,
-                                                random_state=random_state, stratify=None)
-    missing = set(np.unique(y_val)) - set(np.unique(y_tr))
-    if missing:
-        mask = np.isin(y_val, list(missing))
-        # move these samples into train
-        X_tr = np.vstack([X_tr, X_val[mask]])
-        y_tr = np.concatenate([y_tr, y_val[mask]])
-        X_val = X_val[~mask]
-        y_val = y_val[~mask]
-    return X_tr, X_val, y_tr, y_val
 
 # ============================================================
 # Main Execution
@@ -397,9 +526,15 @@ if __name__ == "__main__":
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
 
-    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(log_path_str,
-                                                                                                       folder_path)
+    # Flag to enable/disable Isotonic calibration before Bayesian layer
+    USE_CALIBRATION = True
 
+    # Preprocess and split
+    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = safe_preprocess_data(
+        log_path_str, folder_path
+    )
+
+    # Create non-IID clients and edge groups
     clients_data, edge_groups = create_non_iid_clients(
         X_pretrain, y_pretrain, X_test, y_test,
         n_clients=config["n_clients"],
@@ -408,10 +543,10 @@ if __name__ == "__main__":
     )
     print(f"[INFO] Created {len(clients_data)} clients across {len(edge_groups)} edges.")
 
-    device_models, edge_models, gossip_model, gossip_trace = forward_pass_with_feedback(
-        clients_data, edge_groups, n_iterations=3
-    )
+    # Run full HDPFTL pipeline with optional calibration
+    device_models, edge_models, gossip_model, gossip_trace = forward_pass_with_feedback(clients_data, edge_groups, n_iterations=3)
 
+    # Save results
     if config["save_results"]:
         os.makedirs(config["results_path"], exist_ok=True)
         with open(os.path.join(config["results_path"], "device_models.pkl"), "wb") as f:
