@@ -58,7 +58,6 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 ArrayLike = Union[np.ndarray, pd.DataFrame, pd.Series]
 ClientData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 
-
 # ============================================================
 # Helper Functions
 # ============================================================
@@ -129,19 +128,12 @@ def predict_proba_fixed(model, X, num_classes, le: LabelEncoder = None):
             full[:, int(cls)] = pred[:, i]
     return full
 
-
 # ============================================================
 # Core Pipeline Functions
 # ============================================================
 
 def device_layer_boosting(clients_data, residuals_clients, device_models, le, num_classes):
-    """
-    Device Layer:
-    - Intra-device sequential boosting
-    - Inter-device sequential boosting inside each edge
-    - Residuals updated per device
-    - Variance-based weak learner pruning
-    """
+    """Device Layer: intra-device + inter-device boosting with variance-based pruning."""
     for idx, (X_dev, _, y_dev, _) in enumerate(clients_data):
         X_dev, y_dev = safe_array(X_dev), safe_array(y_dev)
         y_enc = le.transform(y_dev)
@@ -161,7 +153,6 @@ def device_layer_boosting(clients_data, residuals_clients, device_models, le, nu
             except Exception:
                 model = train_lightgbm(X_dev, y_pseudo, num_classes=num_classes, n_estimators=1)
             pred_proba = predict_proba_fixed(model, X_dev, num_classes, le=le)
-            # Variance-based pruning
             if config["variance_prune"]:
                 var = np.var(pred_proba, axis=0)
                 mask = var >= config["variance_threshold"]
@@ -174,12 +165,7 @@ def device_layer_boosting(clients_data, residuals_clients, device_models, le, nu
 
 
 def edge_layer_boosting(edge_groups, clients_data, residuals_clients, le, num_classes):
-    """
-    Edge Layer:
-    - Sequential boosting of devices within edge
-    - Residuals propagated across devices and edges
-    - Variance-based weak learner pruning
-    """
+    """Edge Layer: sequential boosting across devices with variance pruning."""
     edge_models = []
     for edge_clients in edge_groups:
         if len(edge_clients) == 0:
@@ -207,24 +193,13 @@ def edge_layer_boosting(edge_groups, clients_data, residuals_clients, le, num_cl
 
 
 def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_calibration=True):
-    """
-    Gossip Layer:
-    - Predict device outputs
-    - Optional isotonic calibration per class
-    - Variance-based weak learner pruning
-    - Bayesian aggregation with fallback
-    - Returns global residuals per client
-    """
-    X_proc_list = []
-    y_proc_list = []
+    """Gossip Layer: calibration + pruning + Bayesian aggregation with fallback."""
+    X_proc_list, y_proc_list = [], []
 
     for client_idx, (X_dev, _, y_dev, _) in enumerate(clients_data):
         X_dev, y_dev = safe_array(X_dev), safe_array(y_dev)
         models_for_client = device_models[client_idx]
-        if models_for_client is None or len(models_for_client) == 0:
-            model_for_client = train_lightgbm(X_dev, y_dev, num_classes, n_estimators=1)
-        else:
-            model_for_client = models_for_client[-1]
+        model_for_client = models_for_client[-1] if models_for_client else train_lightgbm(X_dev, y_dev, num_classes, n_estimators=1)
 
         probs = predict_proba_fixed(model_for_client, X_dev, num_classes, le=le)
 
@@ -233,7 +208,7 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
             probs_safe = np.nan_to_num(probs, nan=1e-8)
             probs_safe[probs_safe < 1e-8] = 1e-8
             for c in range(num_classes):
-                y_c = np.array(le.transform(y_dev) == c).astype(int)
+                y_c = np.array(le.transform(y_dev) == c, dtype=int)
                 positives = np.sum(y_c)
                 if positives < config["isotonic_min_positives"]:
                     calibrated[:, c] = probs_safe[:, c]
@@ -248,7 +223,7 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
             row_sums[row_sums == 0] = 1.0
             probs = calibrated / row_sums
 
-        # Variance-based weak learner pruning after calibration
+        # Variance-based pruning after calibration
         if config["variance_prune"]:
             var = np.var(probs, axis=0)
             mask = var >= config["variance_threshold"]
@@ -301,19 +276,16 @@ def forward_pass_with_feedback(clients_data, edge_groups, config, n_iterations=3
 
     residuals_clients = [None] * len(clients_data)
     device_models = [None] * len(clients_data)
-    cum_lengths = np.cumsum([0] + [c[0].shape[0] for c in clients_data])
     for iteration in range(n_iterations):
         logging.info(f"Iteration {iteration + 1}/{n_iterations}")
-        # Device Layer
         residuals_clients, device_models = device_layer_boosting(clients_data, residuals_clients, device_models, le, num_classes)
-        # Edge Layer
         edge_models = edge_layer_boosting(edge_groups, clients_data, residuals_clients, le, num_classes)
-        # Gossip Layer
         global_residual, gossip_summary = gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_calibration)
-        # Residual feedback to clients
+        # Feedback: assign per-client residuals
         for idx, (X_dev, _, _, _) in enumerate(clients_data):
             n = X_dev.shape[0]
-            residuals_clients[idx] = np.tile(global_residual[idx], (n, 1))
+            # Correct tiling
+            residuals_clients[idx] = np.repeat(global_residual[idx][np.newaxis, :], n, axis=0)
     return device_models, edge_models, gossip_summary
 
 
@@ -340,15 +312,15 @@ def main():
         clients_data, edge_groups, config, n_iterations=3, use_calibration=True
     )
 
+    # Save all models safely
     if config["save_results"]:
         os.makedirs(config["results_path"], exist_ok=True)
-        with open(os.path.join(config["results_path"], "device_models.pkl"), "wb") as f:
-            pickle.dump(device_models, f)
-        with open(os.path.join(config["results_path"], "edge_models.pkl"), "wb") as f:
-            pickle.dump(edge_models, f)
-        if gossip_summary is not None:
-            with open(os.path.join(config["results_path"], "gossip_summary.pkl"), "wb") as f:
-                pickle.dump(gossip_summary, f)
+        for name, obj in [("device_models.pkl", device_models),
+                          ("edge_models.pkl", edge_models),
+                          ("gossip_summary.pkl", gossip_summary)]:
+            if obj is not None:
+                with open(os.path.join(config["results_path"], name), "wb") as f:
+                    pickle.dump(obj, f)
         logging.info("[INFO] Saved all models and gossip summary.")
 
 
