@@ -419,6 +419,7 @@ def safe_clean_dataframe(df: pd.DataFrame,
 
     return df
 
+
 def safe_preprocess_data(log_path_str, folder_path):
     """
     Loads and preprocesses the dataset.
