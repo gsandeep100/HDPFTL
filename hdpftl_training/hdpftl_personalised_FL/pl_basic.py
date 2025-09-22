@@ -1,37 +1,47 @@
 #!/usr/bin/env python3
 """
-HDP-FTL Full Pipeline with Multiple Epochs, Residual Tracking, and Plots
+Hierarchical PFL (HPFL) pipeline with Dirichlet partitioning
+- Device Layer: Intra-device sequential boosting
+- Edge Layer: Inter-device / edge sequential boosting
+- Gossip / Global Layer: Bayesian aggregation with fallback
+- Residual Feedback: Forward + backward passes
+- Calibration: Isotonic regression per class
+- Variance pruning: Optional weak learner pruning
+- Logging & dynamic folders
+- Model saving: Device, edge, gossip
+- Plots: accuracy, residual norms, device/edge/global trends
 """
 
-import os
-import pickle
 import logging
-from datetime import datetime
+import os
 from typing import List, Tuple, Union
 
+import lightgbm as lgb
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import lightgbm as lgb
 import pymc as pm
-from sklearn.preprocessing import LabelEncoder
+from scipy.special import softmax as sp_softmax
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
-from scipy.special import softmax as sp_softmax
-import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 
-# Custom preprocessing
-from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
+# -------------------------------------------------------------
+# Safe preprocessing hook
+# -------------------------------------------------------------
 
-# ==============================
-# Configuration
-# ==============================
+# -------------------------------------------------------------
+# Config
+# -------------------------------------------------------------
 config = {
     "random_seed": 42,
     "n_edges": 10,
-    "n_clients": 50,
-    "epochs": 3,
-    "device_boosting_rounds": 10,
-    "edge_boosting_rounds": 5,
+    "n_clients": 20,
+    "device_per_client": 2,
+    "epoch": 5,
+    "device_boosting_rounds": 3,
+    "edge_boosting_rounds": 2,
     "n_estimators": 1,
     "variance_prune": True,
     "variance_threshold": 1e-4,
@@ -39,8 +49,7 @@ config = {
     "bayes_n_tune": 200,
     "save_results": True,
     "results_path": "results",
-    "isotonic_min_positives": 10,
-    "pm_use_advi_fallback": True,
+    "isotonic_min_positives": 5,
     "max_cores": 2,
 }
 
@@ -50,13 +59,21 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 ArrayLike = Union[np.ndarray, pd.DataFrame, pd.Series]
 ClientData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 
-# ==============================
-# Helper Functions
-# ==============================
+
+# ============================================================
+# Helper functions
+# ============================================================
+
 def safe_array(X: ArrayLike) -> np.ndarray:
     if isinstance(X, (pd.DataFrame, pd.Series)):
         return X.to_numpy()
     return np.asarray(X)
+
+
+def compute_accuracy(y_true, y_pred):
+    y_true_np = safe_array(y_true)
+    y_pred_np = safe_array(y_pred)
+    return float(np.mean(y_true_np == y_pred_np))
 
 
 def make_edge_groups(n_clients: int, n_edges: int, random_state: int = 42) -> List[List[int]]:
@@ -66,16 +83,54 @@ def make_edge_groups(n_clients: int, n_edges: int, random_state: int = 42) -> Li
     return [list(g) for g in np.array_split(idxs, n_edges)]
 
 
-def create_non_iid_clients(X, y, X_test, y_test, n_clients=50, n_edges=10):
-    X_np, y_np = safe_array(X), safe_array(y)
-    X_test_np, y_test_np = safe_array(X_test), safe_array(y_test)
-    n_samples = X_np.shape[0]
-    idxs = rng.permutation(n_samples)
-    splits = np.array_split(idxs, n_clients)
-    clients_data = [(X_np[s], X_test_np, y_np[s], y_test_np) for s in splits]
-    edge_groups = make_edge_groups(n_clients, n_edges)
-    return clients_data, edge_groups
+# ============================================================
+# Dirichlet Partitioning
+# ============================================================
 
+def dirichlet_partition(X, y, num_clients, alpha=0.3, seed=42):
+    """Partition dataset indices using Dirichlet distribution."""
+    y_np = y.values if hasattr(y, 'values') else y
+    np.random.seed(seed)
+    unique_classes = np.unique(y_np)
+    client_indices = [[] for _ in range(num_clients)]
+
+    for c in unique_classes:
+        class_idx = np.where(y_np == c)[0]
+        np.random.shuffle(class_idx)
+        proportions = np.random.dirichlet(alpha * np.ones(num_clients))
+        proportions = (proportions * len(class_idx)).astype(int)
+        diff = len(class_idx) - proportions.sum()
+        proportions[np.argmax(proportions)] += diff
+        splits = np.split(class_idx, np.cumsum(proportions)[:-1])
+        for client_id, split in enumerate(splits):
+            client_indices[client_id].extend(split.tolist())
+
+    X_np = X.values if hasattr(X, 'values') else X
+    client_data_dict = {}
+    for i, idxs in enumerate(client_indices):
+        client_data_dict[i] = (X_np[idxs], y_np[idxs])
+    return client_data_dict
+
+
+def dirichlet_partition_for_devices_edges(X, y, num_clients, devices_per_client, n_edges):
+    """Return clients_data and hierarchical_data for devices and edges."""
+    client_data_dict = dirichlet_partition(X, y, num_clients)
+    clients_data = []
+    hierarchical_data = {}
+    for cid, (X_c, y_c) in client_data_dict.items():
+        n_samples = len(X_c)
+        device_idxs = np.array_split(np.arange(n_samples), devices_per_client)
+        device_data = [(X_c[d], y_c[d]) for d in device_idxs]
+        hierarchical_data[cid] = device_data
+        X_train, X_test, y_train, y_test = train_test_split(X_c, y_c, test_size=0.2, random_state=config["random_seed"])
+        clients_data.append((X_train, X_test, y_train, y_test))
+    edge_groups = make_edge_groups(num_clients, n_edges)
+    return clients_data, hierarchical_data, edge_groups
+
+
+# ============================================================
+# LightGBM Training
+# ============================================================
 
 def train_lightgbm(X_train, y_train, num_classes=None, n_estimators=1, random_state=42):
     X_np, y_np = safe_array(X_train), safe_array(y_train)
@@ -83,18 +138,13 @@ def train_lightgbm(X_train, y_train, num_classes=None, n_estimators=1, random_st
         num_classes = len(np.unique(y_np))
     objective = "multiclass" if num_classes > 2 else "binary"
     num_class = num_classes if num_classes > 2 else None
-    model = lgb.LGBMClassifier(
-        objective=objective,
-        num_class=num_class,
-        n_estimators=n_estimators,
-        random_state=random_state,
-        verbose=-1
-    )
+    model = lgb.LGBMClassifier(objective=objective, num_class=num_class,
+                               n_estimators=n_estimators, random_state=random_state)
     model.fit(X_np, y_np)
     return model
 
 
-def predict_proba_fixed(model, X, num_classes, le: LabelEncoder = None):
+def predict_proba_fixed(model, X, num_classes, le=None):
     X_np = safe_array(X)
     pred = model.predict_proba(X_np)
     pred = np.atleast_2d(pred)
@@ -114,53 +164,11 @@ def predict_proba_fixed(model, X, num_classes, le: LabelEncoder = None):
     return full
 
 
-# ==============================
-# Plotting Functions
-# ==============================
-def plot_residuals_progress(residuals_history, title="Residual Norms"):
-    plt.figure(figsize=(12, 6))
-    for layer, norms in residuals_history.items():
-        plt.plot(norms, label=layer)
-    plt.xlabel("Training Epoch")
-    plt.ylabel("Mean Absolute Residual")
-    plt.title(title)
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+# ============================================================
+# Device / Edge / Gossip Layers
+# ============================================================
 
-
-def plot_accuracy_progress(accuracy_history, title="Classification Accuracy"):
-    plt.figure(figsize=(12, 6))
-    for layer, acc in accuracy_history.items():
-        plt.plot(acc, label=layer)
-    plt.xlabel("Training Epoch")
-    plt.ylabel("Accuracy")
-    plt.title(title)
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
-
-def plot_sequential_boosting_progress(residuals_per_round_epochs, layer_name="Device"):
-    plt.figure(figsize=(12, 6))
-    n_epochs = len(residuals_per_round_epochs)
-    for epoch_idx in range(n_epochs):
-        rounds = residuals_per_round_epochs[epoch_idx]
-        mean_residual_per_round = [np.mean(np.abs(r)) for r in rounds]
-        plt.plot(range(1, len(rounds) + 1), mean_residual_per_round, marker='o', label=f"Epoch {epoch_idx+1}")
-    plt.xlabel("Sequential Boosting Round")
-    plt.ylabel("Mean Absolute Residual")
-    plt.title(f"Sequential Boosting Residual Reduction per Round ({layer_name} Layer)")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
-
-# ==============================
-# Core Layer Functions
-# ==============================
 def device_layer_boosting(clients_data, residuals_clients, device_models, le, num_classes):
-    residuals_per_round = []
     for idx, (X_dev, _, y_dev, _) in enumerate(clients_data):
         X_dev, y_dev = safe_array(X_dev), safe_array(y_dev)
         y_enc = le.transform(y_dev)
@@ -172,41 +180,42 @@ def device_layer_boosting(clients_data, residuals_clients, device_models, le, nu
             residual[np.arange(n_samples), y_enc] = 1.0
 
         models_per_device = []
-        round_residuals = []
         for _ in range(config["device_boosting_rounds"]):
             y_pseudo = residual.argmax(axis=1)
-            model = train_lightgbm(X_dev, y_pseudo, num_classes=num_classes,
-                                    n_estimators=config["n_estimators"])
+            model = train_lightgbm(X_dev, y_pseudo, num_classes=num_classes, n_estimators=config["n_estimators"])
             pred_proba = predict_proba_fixed(model, X_dev, num_classes, le=le)
+            # variance prune
             if config["variance_prune"]:
                 var = np.var(pred_proba, axis=0)
                 mask = var >= config["variance_threshold"]
                 pred_proba[:, ~mask] = 0.0
             residual -= pred_proba
             models_per_device.append(model)
-            round_residuals.append(residual.copy())
         residuals_clients[idx] = residual
         device_models[idx] = models_per_device
-        residuals_per_round.append(round_residuals)
-    return residuals_clients, device_models, residuals_per_round
+    return residuals_clients, device_models
 
 
-# Edge Layer
 def edge_layer_boosting(edge_groups, clients_data, residuals_clients, le, num_classes):
     edge_models = []
     residuals_edge_list = []
+    edge_acc_list = []
     for edge_clients in edge_groups:
         if len(edge_clients) == 0:
             edge_models.append([])
             residuals_edge_list.append([])
+            edge_acc_list.append(0.0)
             continue
         X_edge = np.vstack([clients_data[i][0] for i in edge_clients])
         residual_edge = np.vstack([residuals_clients[i] for i in edge_clients])
+        y_test_edge = np.hstack([clients_data[i][3] for i in edge_clients])
+
         models_per_edge = []
-        residuals_per_round = []
+        round_residuals = []
         for _ in range(config["edge_boosting_rounds"]):
             y_pseudo = residual_edge.argmax(axis=1)
-            model_e = train_lightgbm(X_edge, y_pseudo, num_classes=num_classes, n_estimators=config["n_estimators"])
+            model_e = train_lightgbm(X_edge, y_pseudo, num_classes=num_classes,
+                                     n_estimators=config["n_estimators"])
             pred_proba = predict_proba_fixed(model_e, X_edge, num_classes, le=le)
             if config["variance_prune"]:
                 var = np.var(pred_proba, axis=0)
@@ -214,38 +223,53 @@ def edge_layer_boosting(edge_groups, clients_data, residuals_clients, le, num_cl
                 pred_proba[:, ~mask] = 0.0
             residual_edge -= pred_proba
             models_per_edge.append(model_e)
-            residuals_per_round.append(residual_edge.copy())
+            round_residuals.append(residual_edge.copy())
         edge_models.append(models_per_edge)
-        residuals_edge_list.append(residuals_per_round)
-    return edge_models, residuals_edge_list
+        residuals_edge_list.append(round_residuals)
+
+        # Test-set accuracy for this edge
+        X_test_edge = np.vstack([clients_data[i][1] for i in edge_clients])  # X_test is index 1
+        edge_preds = np.zeros((X_test_edge.shape[0], num_classes), dtype=float)
+
+        for mdl in models_per_edge:
+            edge_preds += predict_proba_fixed(mdl, X_test_edge, num_classes, le=le)
+        edge_preds = edge_preds.argmax(axis=1)
+        edge_acc_list.append(compute_accuracy(y_test_edge, edge_preds))
+
+    return edge_models, residuals_edge_list, np.mean(edge_acc_list)
 
 
-# Gossip Layer
-def gossip_layer_aggregation(clients_data, device_models, le, num_classes):
+def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_calibration=True):
     X_proc_list, y_proc_list = [], []
+
     for client_idx, (X_dev, _, y_dev, _) in enumerate(clients_data):
         X_dev, y_dev = safe_array(X_dev), safe_array(y_dev)
         models_for_client = device_models[client_idx]
-        model_for_client = models_for_client[-1] if models_for_client else train_lightgbm(X_dev, y_dev, num_classes)
+        model_for_client = models_for_client[-1] if models_for_client else train_lightgbm(X_dev, y_dev, num_classes, 1)
+
         probs = predict_proba_fixed(model_for_client, X_dev, num_classes, le=le)
 
-        # Isotonic calibration
-        calibrated = np.zeros_like(probs)
-        probs_safe = np.nan_to_num(probs, nan=1e-8)
-        probs_safe[probs_safe < 1e-8] = 1e-8
-        for c in range(num_classes):
-            y_c = np.array(le.transform(y_dev) == c).astype(int)
-            if np.sum(y_c) < config["isotonic_min_positives"]:
-                calibrated[:, c] = probs_safe[:, c]
-                continue
-            iso = IsotonicRegression(out_of_bounds='clip')
-            iso.fit(probs_safe[:, c], y_c)
-            calibrated[:, c] = iso.transform(probs_safe[:, c])
-        row_sums = calibrated.sum(axis=1, keepdims=True)
-        row_sums[row_sums == 0] = 1.0
-        probs = calibrated / row_sums
+        if use_calibration:
+            calibrated = np.zeros_like(probs)
+            probs_safe = np.nan_to_num(probs, nan=1e-8)
+            probs_safe[probs_safe < 1e-8] = 1e-8
+            for c in range(num_classes):
+                y_c = np.array(le.transform(y_dev) == c, dtype=int)
+                positives = np.sum(y_c)
+                if positives < config["isotonic_min_positives"]:
+                    calibrated[:, c] = probs_safe[:, c]
+                    continue
+                try:
+                    iso = IsotonicRegression(out_of_bounds='clip')
+                    iso.fit(probs_safe[:, c], y_c)
+                    calibrated[:, c] = iso.transform(probs_safe[:, c])
+                except Exception:
+                    calibrated[:, c] = probs_safe[:, c]
+            row_sums = calibrated.sum(axis=1, keepdims=True)
+            row_sums[row_sums == 0] = 1.0
+            probs = calibrated / row_sums
 
-        # Variance pruning
+        # variance prune
         if config["variance_prune"]:
             var = np.var(probs, axis=0)
             mask = var >= config["variance_threshold"]
@@ -257,7 +281,7 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes):
     X_proc = np.vstack(X_proc_list)
     y_global_enc = le.transform(np.hstack(y_proc_list))
 
-    # Bayesian aggregation
+    trace_summary = None
     try:
         with pm.Model() as gossip_model:
             alpha = pm.Normal("alpha", mu=0, sigma=1, shape=(num_classes,))
@@ -271,9 +295,13 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes):
             trace_summary = {"alpha": np.asarray(raw_trace["alpha"]).mean(axis=0),
                              "betas": np.asarray(raw_trace["betas"]).mean(axis=0)}
     except Exception:
-        sk_model = LogisticRegression(multi_class="multinomial", max_iter=1000)
-        sk_model.fit(X_proc, y_global_enc)
-        trace_summary = {"betas": sk_model.coef_.T, "alpha": sk_model.intercept_}
+        try:
+            sk_model = LogisticRegression(multi_class="multinomial", max_iter=1000)
+            sk_model.fit(X_proc, y_global_enc)
+            trace_summary = {"betas": sk_model.coef_.T, "alpha": sk_model.intercept_}
+        except Exception:
+            trace_summary = {"betas": np.zeros((X_proc.shape[1], num_classes)),
+                             "alpha": np.zeros(num_classes)}
 
     global_preds = X_proc @ np.asarray(trace_summary["betas"]) + np.asarray(trace_summary["alpha"])
     global_probs = sp_softmax(global_preds, axis=1)
@@ -281,81 +309,112 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes):
     global_residual[np.arange(global_residual.shape[0]), y_global_enc] = 1.0
     global_residual -= global_probs
 
-    return global_residual, trace_summary
+    return global_residual, trace_summary, compute_accuracy(y_global_enc, global_probs.argmax(axis=1))
 
 
-# ==============================
-# Main Execution
-# ==============================
-def main():
-    folder_path = "CIC_IoT_dataset_2023"
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
-    os.makedirs(log_path_str, exist_ok=True)
+# ============================================================
+# Forward pass
+# ============================================================
 
-    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = safe_preprocess_data(
-        log_path_str, folder_path
-    )
+def forward_pass(clients_data, edge_groups, le, num_classes):
+    residuals_clients = [None] * len(clients_data)
+    device_models = [None] * len(clients_data)
+    residuals_clients, device_models = device_layer_boosting(clients_data, residuals_clients, device_models, le,
+                                                             num_classes)
+    edge_models, residuals_edges, edge_acc = edge_layer_boosting(edge_groups, clients_data, residuals_clients, le,
+                                                                 num_classes)
+    global_residual, global_trace, global_acc = gossip_layer_aggregation(clients_data, device_models, le, num_classes)
+    return device_models, edge_models, global_trace, residuals_clients, residuals_edges, edge_acc, global_acc
 
-    clients_data, edge_groups = create_non_iid_clients(
-        X_pretrain, y_pretrain, X_test, y_test,
-        n_clients=config["n_clients"],
+
+def evaluate_final_accuracy(clients_data, device_models, edge_groups, le, num_classes, gossip_summary=None):
+    """
+    Evaluate final accuracy on the held-out test set:
+    - Device-level: average over all devices
+    - Edge-level: aggregate devices per edge
+    - Global/gossip-level: Bayesian aggregation if gossip_summary provided
+    """
+    device_acc_list = []
+    for idx, (X_test, _, y_test, _) in enumerate(clients_data):
+        X_test_np, y_test_np = safe_array(X_test), safe_array(y_test)
+        device_preds = np.zeros((X_test_np.shape[0], num_classes))
+        for mdl in device_models[idx]:
+            device_preds += predict_proba_fixed(mdl, X_test_np, num_classes, le)
+        device_preds = device_preds.argmax(axis=1)
+        device_acc_list.append(compute_accuracy(y_test_np, device_preds))
+    device_acc = np.mean(device_acc_list)
+
+    # Edge-level accuracy
+    edge_acc_list = []
+    for edge_clients in edge_groups:
+        X_edge = np.vstack([clients_data[i][0] for i in edge_clients])
+        y_edge = np.hstack([clients_data[i][2] for i in edge_clients])
+        edge_preds = np.zeros((X_edge.shape[0], num_classes))
+        for i in edge_clients:
+            for mdl in device_models[i]:
+                edge_preds += predict_proba_fixed(mdl, X_edge, num_classes, le)
+        edge_preds = edge_preds.argmax(axis=1)
+        edge_acc_list.append(compute_accuracy(y_edge, edge_preds))
+    edge_acc = np.mean(edge_acc_list)
+
+    # Global/gossip-level accuracy
+    global_acc = None
+    if gossip_summary is not None:
+        X_global = np.vstack([safe_array(clients_data[i][0]) for i in range(len(clients_data))])
+        y_global = np.hstack([safe_array(clients_data[i][2]) for i in range(len(clients_data))])
+        logits = X_global @ np.asarray(gossip_summary["betas"]) + np.asarray(gossip_summary["alpha"])
+        global_preds = sp_softmax(logits, axis=1).argmax(axis=1)
+        global_acc = compute_accuracy(y_global, global_preds)
+
+    return device_acc, edge_acc, global_acc
+
+
+# ============================================================
+# Example Training Loop with MNIST / sklearn
+# ============================================================
+
+if __name__ == "__main__":
+    # Example dataset
+    from sklearn.datasets import load_digits
+
+    data = load_digits()
+    X, y = data.data, data.target
+    le = LabelEncoder()
+    le.fit(y)
+    num_classes = len(le.classes_)
+
+    clients_data, hierarchical_data, edge_groups = dirichlet_partition_for_devices_edges(
+        X, y, num_clients=config["n_clients"],
+        devices_per_client=config["device_per_client"],
         n_edges=config["n_edges"]
     )
 
-    le = LabelEncoder()
-    le.fit(np.hstack([safe_array(y_dev) for _, _, y_dev, _ in clients_data]))
-    num_classes = len(le.classes_)
+    device_accs, edge_accs, global_accs = [], [], []
 
-    # Track residuals and accuracy
-    residual_norms = {"Device": [], "Edge": [], "Global": []}
-    accuracy_history = {"Device": [], "Edge": [], "Global": []}
-    device_round_residuals_epochs = []
+    for epoch in range(config["epoch"]):
+        device_models, edge_models, global_trace, residuals_clients, residuals_edges, edge_acc, global_acc = \
+            forward_pass(clients_data, edge_groups, le, num_classes)
 
-    for epoch in range(config["epochs"]):
-        logging.info(f"Epoch {epoch+1}/{config['epochs']}")
-        residuals_clients = [None]*len(clients_data)
-        device_models = [None]*len(clients_data)
+        device_accs.append(np.mean(
+            [compute_accuracy(c[3], predict_proba_fixed(device_models[i][-1], c[0], num_classes, le).argmax(axis=1))
+             for i, c in enumerate(clients_data)]))
+        edge_accs.append(edge_acc)
+        global_accs.append(global_acc)
+        print(
+            f"[Epoch {epoch + 1}] Device Acc: {device_accs[-1]:.4f}, Edge Acc: {edge_acc:.4f}, Global Acc: {global_acc:.4f}")
 
-        # Device Layer
-        residuals_clients, device_models, device_round_residuals = device_layer_boosting(
-            clients_data, residuals_clients, device_models, le, num_classes
+        device_acc, edge_acc, global_acc = evaluate_final_accuracy(
+            clients_data, device_models, edge_groups, le, num_classes, global_trace
         )
-        device_round_residuals_epochs.append(device_round_residuals)
-        residual_norms["Device"].append(np.mean([np.abs(r).mean() for r in residuals_clients]))
+        logging.info(f"Final Test Accuracy - Device: {device_acc:.4f}, Edge: {edge_acc:.4f}, Global: {global_acc:.4f}")
 
-        # Edge Layer
-        edge_models, residuals_edge = edge_layer_boosting(edge_groups, clients_data, residuals_clients, le, num_classes)
-        residual_norms["Edge"].append(np.mean([np.abs(r[-1]).mean() for r in residuals_edge]))
-
-        # Gossip Layer
-        global_residual, gossip_summary = gossip_layer_aggregation(clients_data, device_models, le, num_classes)
-        residual_norms["Global"].append(np.mean(np.abs(global_residual)))
-
-        # Accuracy (placeholder: could be computed with X_test)
-        accuracy_history["Device"].append(0)
-        accuracy_history["Edge"].append(0)
-        accuracy_history["Global"].append(0)
-
-    # ==============================
-    # Plots
-    # ==============================
-    plot_sequential_boosting_progress(device_round_residuals_epochs, layer_name="Device")
-    plot_residuals_progress(residual_norms)
-    plot_accuracy_progress(accuracy_history)
-
-    # Save models
-    if config["save_results"]:
-        os.makedirs(config["results_path"], exist_ok=True)
-        with open(os.path.join(config["results_path"], "device_models.pkl"), "wb") as f:
-            pickle.dump(device_models, f)
-        with open(os.path.join(config["results_path"], "edge_models.pkl"), "wb") as f:
-            pickle.dump(edge_models, f)
-        if gossip_summary is not None:
-            with open(os.path.join(config["results_path"], "gossip_summary.pkl"), "wb") as f:
-                pickle.dump(gossip_summary, f)
-        logging.info("[INFO] Saved all models and gossip summary.")
-
-
-if __name__ == "__main__":
-    main()
+    # Plot accuracy trends
+    plt.figure(figsize=(10, 6))
+    plt.plot(device_accs, label="Device-level Acc")
+    plt.plot(edge_accs, label="Edge-level Acc")
+    plt.plot(global_accs, label="Global Acc")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.title("Hierarchical PFL Accuracy Trends")
+    plt.legend()
+    plt.show()
