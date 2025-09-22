@@ -420,14 +420,14 @@ def safe_clean_dataframe(df: pd.DataFrame,
     return df
 
 
-def safe_preprocess_data(log_path_str, folder_path):
+def safe_preprocess_data(log_path_str, folder_path, scaler_type='minmax'):
     """
     Loads and preprocesses the dataset.
-    Ensures X/y have consistent shapes and returns train/test splits.
+    Returns train/test splits and fine-tune splits safely aligned.
     """
-    # --- Your original preprocessing ---
+    # --- Load and preprocess ---
     X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data(
-        log_path_str, folder_path
+        log_path_str, folder_path, scaler_type=scaler_type
     )
 
     # --- Align shapes safely ---
@@ -435,18 +435,16 @@ def safe_preprocess_data(log_path_str, folder_path):
         X_np = X.to_numpy() if isinstance(X, (pd.DataFrame, pd.Series)) else X
         y_np = y.to_numpy() if isinstance(y, (pd.DataFrame, pd.Series)) else y
         min_len = min(X_np.shape[0], y_np.shape[0])
-        X_aligned = X_np[:min_len]
-        y_aligned = y_np[:min_len]
-        return X_aligned, y_aligned
+        return X_np[:min_len], y_np[:min_len]
 
     X_pretrain, y_pretrain = align_xy(X_pretrain, y_pretrain)
     X_finetune, y_finetune = align_xy(X_finetune, y_finetune)
     X_test, y_test = align_xy(X_test, y_test)
 
-    # Final shapes check
-    print(f"[INFO] X_pretrain: {X_pretrain.shape}, y_pretrain: {y_pretrain.shape}")
-    print(f"[INFO] X_finetune: {X_finetune.shape}, y_finetune: {y_finetune.shape}")
-    print(f"[INFO] X_test: {X_test.shape}, y_test: {y_test.shape}")
+    print(f"[INFO] Shapes after preprocessing:")
+    print(f"X_pretrain: {X_pretrain.shape}, y_pretrain: {y_pretrain.shape}")
+    print(f"X_finetune: {X_finetune.shape}, y_finetune: {y_finetune.shape}")
+    print(f"X_test: {X_test.shape}, y_test: {y_test.shape}")
 
     return X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test
 

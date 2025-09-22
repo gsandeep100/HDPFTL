@@ -15,7 +15,6 @@ Hierarchical PFL (HPFL) pipeline with Dirichlet partitioning
 import logging
 import os
 from datetime import datetime
-from multiprocessing import util
 from typing import List, Tuple, Union
 
 import lightgbm as lgb
@@ -29,12 +28,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-from hdpftl_training.hdpftl_data import preprocess
 from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
-
-# -------------------------------------------------------------
-# Safe preprocessing hook
-# -------------------------------------------------------------
 
 # -------------------------------------------------------------
 # Config
@@ -42,11 +36,11 @@ from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
 config = {
     "random_seed": 42,
     "n_edges": 10,
-    "n_device": 20,
-    "device_per_edge": 2,
-    "epoch": 20,
-    "device_boosting_rounds": 3,
-    "edge_boosting_rounds": 2,
+    "n_device": 50,
+    "device_per_edge": 5,
+    "epoch": 50,
+    "device_boosting_rounds": 10,
+    "edge_boosting_rounds": 10,
     "n_estimators": 20,
     "variance_prune": True,
     "variance_threshold": 1e-4,
@@ -56,6 +50,8 @@ config = {
     "results_path": "results",
     "isotonic_min_positives": 5,
     "max_cores": 2,
+    "alpha": 1.0,
+
 }
 
 rng = np.random.default_rng(config["random_seed"])
@@ -69,7 +65,8 @@ DeviceData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 # Helper functions
 # ============================================================
 
-def safe_array(X: ArrayLike) -> np.ndarray:
+def safe_array(X):
+    """Convert input to NumPy array if it is a DataFrame or Series."""
     if isinstance(X, (pd.DataFrame, pd.Series)):
         return X.to_numpy()
     return np.asarray(X)
@@ -120,7 +117,7 @@ def dirichlet_partition(X, y, num_devices, alpha=0.3, seed=42):
 
 def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_edges):
     """Return device_data and hierarchical_data for devices and edges."""
-    device_data_dict = dirichlet_partition(X, y, num_devices)
+    device_data_dict = dirichlet_partition(X, y, num_devices, config["alpha"], config["random_seed"])
     devices_data = []
     hierarchical_data = {}
     for cid, (X_c, y_c) in device_data_dict.items():
@@ -139,13 +136,25 @@ def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_
 # ============================================================
 
 def train_lightgbm(X_train, y_train, num_classes=None, n_estimators=1, random_state=42):
-    X_np, y_np = safe_array(X_train), safe_array(y_train)
+    """
+    Train LightGBM classifier with safe NumPy arrays to avoid feature name warnings.
+    Handles multiclass or binary classification.
+    """
+    X_np = safe_array(X_train)
+    y_np = safe_array(y_train)
+
     if num_classes is None:
         num_classes = len(np.unique(y_np))
+
     objective = "multiclass" if num_classes > 2 else "binary"
     num_class = num_classes if num_classes > 2 else None
-    model = lgb.LGBMClassifier(objective=objective, num_class=num_class,
-                               n_estimators=n_estimators, random_state=random_state)
+
+    model = lgb.LGBMClassifier(
+        objective=objective,
+        num_class=num_class,
+        n_estimators=n_estimators,
+        random_state=random_state
+    )
     model.fit(X_np, y_np)
     return model
 
@@ -156,18 +165,18 @@ def train_lightgbm(X_train, y_train, num_classes=None, n_estimators=1, random_st
 
 def predict_proba_fixed(model, X, num_classes, le=None):
     """
-    Predict probabilities with shape (n_samples, num_classes)
-    even if some classes are missing in the model's training set.
+    Predict probabilities safely, even if some classes were missing during training.
+    Ensures shape (n_samples, num_classes) and uses NumPy arrays to avoid warnings.
     """
     X_np = safe_array(X)
     pred = model.predict_proba(X_np)
     pred = np.atleast_2d(pred)
 
-    # If output already matches num_classes, return
+    # Already matches num_classes
     if pred.shape[1] == num_classes:
         return pred
 
-    # Otherwise, fill missing classes
+    # Fill missing classes
     full = np.zeros((pred.shape[0], num_classes), dtype=float)
     model_classes = getattr(model, "classes_", np.arange(pred.shape[1]))
 
@@ -181,10 +190,11 @@ def predict_proba_fixed(model, X, num_classes, le=None):
         for i, cls in enumerate(model_classes):
             full[:, int(cls)] = pred[:, i]
 
-    # Ensure sum of probabilities > 0 to avoid NaNs in softmax downstream
+    # Normalize to avoid zeros
     row_sums = full.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0] = 1.0
     full /= row_sums
+
     return full
 
 
@@ -211,6 +221,10 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
         models_per_device = []
         for _ in range(config["device_boosting_rounds"]):
             y_pseudo = residual.argmax(axis=1)
+            print("unique y_pseudo: " + str(np.unique(y_pseudo)))  ##Sandeep
+            # Skip if only one unique class
+            if len(np.unique(y_pseudo)) < 2:
+                continue
             model = train_lightgbm(
                 X_dev, y_pseudo, num_classes=num_classes, n_estimators=config["n_estimators"]
             )
@@ -515,32 +529,87 @@ def evaluate_final_accuracy(devices_data, device_models, edge_groups, le, num_cl
     return device_acc, edge_acc, global_acc
 
 
+# -----------------------------
+# Step 2: Hierarchical Dirichlet Partition
+# -----------------------------
+def dirichlet_partition_for_devices_edges_non_iid(X, y, num_devices, device_per_edge, n_edges, alpha=0.5, seed=42):
+    """
+    Hierarchical non-IID partition.
+    Each device gets its own local train/test split for device-level training.
+    """
+    X_np = X.to_numpy() if isinstance(X, (pd.DataFrame, pd.Series)) else X
+    y_np = y.to_numpy() if isinstance(y, (pd.DataFrame, pd.Series)) else y
+    rng = np.random.default_rng(seed)
+
+    unique_classes = np.unique(y_np)
+    device_indices = [[] for _ in range(num_devices)]
+
+    # Step 1: Non-IID class partition across devices
+    for c in unique_classes:
+        class_idx = np.where(y_np == c)[0]
+        rng.shuffle(class_idx)
+        proportions = rng.dirichlet(alpha * np.ones(num_devices))
+        proportions = np.maximum((proportions * len(class_idx)).astype(int), 1)
+        diff = len(class_idx) - proportions.sum()
+        proportions[np.argmax(proportions)] += diff
+        splits = np.split(class_idx, np.cumsum(proportions)[:-1])
+        for device_id, split in enumerate(splits):
+            device_indices[device_id].extend(split.tolist())
+
+    # Step 2: Build device-level data with local train/test
+    devices_data = []
+    hierarchical_data = {}
+    for device_id, idxs in enumerate(device_indices):
+        X_dev, y_dev = X_np[idxs], y_np[idxs]
+        n_samples = len(X_dev)
+
+        # Split each device into mini-devices if needed
+        mini_idxs = np.array_split(np.arange(n_samples), device_per_edge)
+        device_subdata = [(X_dev[i], y_dev[i]) for i in mini_idxs]
+        hierarchical_data[device_id] = device_subdata
+
+        # Local train/test split per device
+        X_train, X_test_local, y_train, y_test_local = train_test_split(
+            X_dev, y_dev, test_size=0.3, random_state=seed
+        )
+        devices_data.append((X_train, X_test_local, y_train, y_test_local))
+
+    # Step 3: Create edge groups
+    edge_groups = make_edge_groups(num_devices, n_edges, random_state=seed)
+
+    return devices_data, hierarchical_data, edge_groups
+
+
 # ============================================================
 # Training Loop Example
 # ============================================================
 
 if __name__ == "__main__":
 
-    folder_path = "CIC_IoT_dataset_2023"
+    folder_path = "CIC_IoT_DIAD_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
 
+    # 1. Preprocess
     X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = safe_preprocess_data(
-        log_path_str, folder_path
+        log_path_str, folder_path, scaler_type='minmax'
     )
 
-
+    # 2. Encode labels
     le = LabelEncoder()
     le.fit(y_pretrain)
     num_classes = len(le.classes_)
 
-    devices_data, hierarchical_data, edge_groups = dirichlet_partition_for_devices_edges(
-        X_finetune, y_finetune, num_devices=config["n_device"],
+    # 3. Partition fine-tune data for devices & edges
+    devices_data, hierarchical_data, edge_groups = dirichlet_partition_for_devices_edges_non_iid(
+        X_finetune, y_finetune,  # ✅ use X_finetune & y_finetune
+        num_devices=config["n_device"],
         device_per_edge=config["device_per_edge"],
-        n_edges=config["n_edges"]
+        n_edges=config["n_edges"],
+        alpha=0.5,
+        seed=42
     )
-
     device_accs, edge_accs, global_accs = [], [], []
 
     # -----------------------------
@@ -580,12 +649,15 @@ if __name__ == "__main__":
     # Plot accuracy trends
     # -----------------------------
 
+    # --- Plot at the end ---
     plt.figure(figsize=(10, 6))
-    plt.plot(device_accs, label="Device-level Acc")
-    plt.plot(edge_accs, label="Edge-level Acc")
-    plt.plot(global_accs, label="Global Acc")
+    plt.plot(device_accs, label="Device-level Acc", marker='o')
+    plt.plot(edge_accs, label="Edge-level Acc", marker='s')
+    plt.plot(global_accs, label="Global Acc", marker='^')
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
     plt.title("Hierarchical PFL Accuracy Trends")
+    plt.ylim(0, 1)  # Optional: fix y-axis
     plt.legend()
+    plt.grid(True)
     plt.show()
