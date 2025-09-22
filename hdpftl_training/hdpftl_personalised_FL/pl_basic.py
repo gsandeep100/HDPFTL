@@ -15,6 +15,7 @@ Hierarchical PFL (HPFL) pipeline with Dirichlet partitioning
 import logging
 import os
 from typing import List, Tuple, Union
+from sklearn.datasets import load_digits
 
 import lightgbm as lgb
 import matplotlib.pyplot as plt
@@ -73,6 +74,9 @@ def safe_array(X: ArrayLike) -> np.ndarray:
 def compute_accuracy(y_true, y_pred):
     y_true_np = safe_array(y_true)
     y_pred_np = safe_array(y_pred)
+    print("DEBUG compute_accuracy:")
+    print("  y_true shape:", y_true_np.shape)
+    print("  y_pred shape:", y_pred_np.shape)
     return float(np.mean(y_true_np == y_pred_np))
 
 
@@ -240,8 +244,18 @@ def edge_layer_boosting(edge_groups, clients_data, residuals_clients, le, num_cl
 
 
 def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_calibration=True):
+    """
+    Aggregates device-level predictions to a global/gossip model.
+    Returns:
+        - global_residual: residuals for global level
+        - trace_summary: contains 'betas' and 'alpha' for global model
+        - global_acc: accuracy on combined dataset
+    """
     X_proc_list, y_proc_list = [], []
 
+    # -----------------------------
+    # Collect device predictions
+    # -----------------------------
     for client_idx, (X_dev, _, y_dev, _) in enumerate(clients_data):
         X_dev, y_dev = safe_array(X_dev), safe_array(y_dev)
         models_for_client = device_models[client_idx]
@@ -249,6 +263,9 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
 
         probs = predict_proba_fixed(model_for_client, X_dev, num_classes, le=le)
 
+        # -----------------------------
+        # Isotonic calibration
+        # -----------------------------
         if use_calibration:
             calibrated = np.zeros_like(probs)
             probs_safe = np.nan_to_num(probs, nan=1e-8)
@@ -269,7 +286,9 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
             row_sums[row_sums == 0] = 1.0
             probs = calibrated / row_sums
 
-        # variance prune
+        # -----------------------------
+        # Variance pruning
+        # -----------------------------
         if config["variance_prune"]:
             var = np.var(probs, axis=0)
             mask = var >= config["variance_threshold"]
@@ -278,9 +297,27 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
         X_proc_list.append(probs)
         y_proc_list.append(y_dev)
 
+    # -----------------------------
+    # Stack all client data
+    # -----------------------------
     X_proc = np.vstack(X_proc_list)
     y_global_enc = le.transform(np.hstack(y_proc_list))
 
+    # -----------------------------
+    # Ensure X_proc matches num_features
+    # -----------------------------
+    num_features_expected = clients_data[0][0].shape[1]
+    if X_proc.shape[1] != num_features_expected:
+        # Pad or truncate
+        if X_proc.shape[1] < num_features_expected:
+            pad_width = num_features_expected - X_proc.shape[1]
+            X_proc = np.hstack([X_proc, np.zeros((X_proc.shape[0], pad_width))])
+        else:
+            X_proc = X_proc[:, :num_features_expected]
+
+    # -----------------------------
+    # Bayesian / Logistic aggregation
+    # -----------------------------
     trace_summary = None
     try:
         with pm.Model() as gossip_model:
@@ -289,11 +326,17 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
             logits = pm.math.dot(X_proc, betas) + alpha
             p = pm.math.softmax(logits)
             y_obs = pm.Categorical("y_obs", p=p, observed=y_global_enc)
-            raw_trace = pm.sample(draws=config["bayes_n_samples"], tune=config["bayes_n_tune"],
-                                  chains=2, cores=min(config["max_cores"], os.cpu_count() or 1),
-                                  target_accept=0.9, progressbar=False, random_seed=config["random_seed"])
-            trace_summary = {"alpha": np.asarray(raw_trace["alpha"]).mean(axis=0),
-                             "betas": np.asarray(raw_trace["betas"]).mean(axis=0)}
+            raw_trace = pm.sample(draws=config["bayes_n_samples"],
+                                  tune=config["bayes_n_tune"],
+                                  chains=2,
+                                  cores=min(config["max_cores"], os.cpu_count() or 1),
+                                  target_accept=0.9,
+                                  progressbar=False,
+                                  random_seed=config["random_seed"])
+            trace_summary = {
+                "alpha": np.asarray(raw_trace["alpha"]).mean(axis=0),
+                "betas": np.asarray(raw_trace["betas"]).mean(axis=0)
+            }
     except Exception:
         try:
             sk_model = LogisticRegression(multi_class="multinomial", max_iter=1000)
@@ -303,13 +346,33 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
             trace_summary = {"betas": np.zeros((X_proc.shape[1], num_classes)),
                              "alpha": np.zeros(num_classes)}
 
-    global_preds = X_proc @ np.asarray(trace_summary["betas"]) + np.asarray(trace_summary["alpha"])
-    global_probs = sp_softmax(global_preds, axis=1)
+    # -----------------------------
+    # Ensure betas/alpha shapes
+    # -----------------------------
+    betas = np.asarray(trace_summary["betas"])
+    alpha = np.asarray(trace_summary["alpha"])
+    if betas.shape[0] != X_proc.shape[1]:
+        if betas.shape[1] == X_proc.shape[1]:
+            betas = betas.T
+        else:
+            raise ValueError(f"Cannot match betas shape {betas.shape} with X_proc {X_proc.shape}")
+    if alpha.ndim != 1 or alpha.shape[0] != betas.shape[1]:
+        alpha = alpha.flatten()
+        if alpha.shape[0] != betas.shape[1]:
+            raise ValueError(f"Cannot match alpha shape {alpha.shape} with betas {betas.shape}")
+    trace_summary["betas"], trace_summary["alpha"] = betas, alpha
+
+    # -----------------------------
+    # Global predictions and residuals
+    # -----------------------------
+    global_logits = X_proc @ betas + alpha
+    global_probs = sp_softmax(global_logits, axis=1)
     global_residual = np.zeros_like(global_probs)
     global_residual[np.arange(global_residual.shape[0]), y_global_enc] = 1.0
     global_residual -= global_probs
 
-    return global_residual, trace_summary, compute_accuracy(y_global_enc, global_probs.argmax(axis=1))
+    global_acc = compute_accuracy(y_global_enc, global_probs.argmax(axis=1))
+    return global_residual, trace_summary, global_acc
 
 
 # ============================================================
@@ -334,6 +397,9 @@ def evaluate_final_accuracy(clients_data, device_models, edge_groups, le, num_cl
     - Edge-level: aggregate devices per edge
     - Global/gossip-level: Bayesian aggregation if gossip_summary provided
     """
+    # -----------------------------
+    # Device-level accuracy
+    # -----------------------------
     device_acc_list = []
     for idx, (X_test, _, y_test, _) in enumerate(clients_data):
         X_test_np, y_test_np = safe_array(X_test), safe_array(y_test)
@@ -344,9 +410,13 @@ def evaluate_final_accuracy(clients_data, device_models, edge_groups, le, num_cl
         device_acc_list.append(compute_accuracy(y_test_np, device_preds))
     device_acc = np.mean(device_acc_list)
 
+    # -----------------------------
     # Edge-level accuracy
+    # -----------------------------
     edge_acc_list = []
     for edge_clients in edge_groups:
+        if not edge_clients:
+            continue
         X_edge = np.vstack([clients_data[i][0] for i in edge_clients])
         y_edge = np.hstack([clients_data[i][2] for i in edge_clients])
         edge_preds = np.zeros((X_edge.shape[0], num_classes))
@@ -355,14 +425,33 @@ def evaluate_final_accuracy(clients_data, device_models, edge_groups, le, num_cl
                 edge_preds += predict_proba_fixed(mdl, X_edge, num_classes, le)
         edge_preds = edge_preds.argmax(axis=1)
         edge_acc_list.append(compute_accuracy(y_edge, edge_preds))
-    edge_acc = np.mean(edge_acc_list)
+    edge_acc = np.mean(edge_acc_list) if edge_acc_list else 0.0
 
+    # -----------------------------
     # Global/gossip-level accuracy
+    # -----------------------------
     global_acc = None
     if gossip_summary is not None:
         X_global = np.vstack([safe_array(clients_data[i][0]) for i in range(len(clients_data))])
         y_global = np.hstack([safe_array(clients_data[i][2]) for i in range(len(clients_data))])
-        logits = X_global @ np.asarray(gossip_summary["betas"]) + np.asarray(gossip_summary["alpha"])
+
+        betas = np.asarray(gossip_summary["betas"])
+        alpha = np.asarray(gossip_summary["alpha"])
+
+        # Ensure betas has shape (num_features, num_classes)
+        if betas.shape[0] != X_global.shape[1]:
+            if betas.shape[1] == X_global.shape[1]:
+                betas = betas.T
+            else:
+                raise ValueError(f"Cannot match betas shape {betas.shape} with X_global {X_global.shape}")
+
+        # Ensure alpha is (num_classes,)
+        if alpha.ndim != 1 or alpha.shape[0] != betas.shape[1]:
+            alpha = alpha.flatten()
+            if alpha.shape[0] != betas.shape[1]:
+                raise ValueError(f"Cannot match alpha shape {alpha.shape} with betas {betas.shape}")
+
+        logits = X_global @ betas + alpha
         global_preds = sp_softmax(logits, axis=1).argmax(axis=1)
         global_acc = compute_accuracy(y_global, global_preds)
 
@@ -375,7 +464,6 @@ def evaluate_final_accuracy(clients_data, device_models, edge_groups, le, num_cl
 
 if __name__ == "__main__":
     # Example dataset
-    from sklearn.datasets import load_digits
 
     data = load_digits()
     X, y = data.data, data.target
@@ -396,7 +484,7 @@ if __name__ == "__main__":
             forward_pass(clients_data, edge_groups, le, num_classes)
 
         device_accs.append(np.mean(
-            [compute_accuracy(c[3], predict_proba_fixed(device_models[i][-1], c[0], num_classes, le).argmax(axis=1))
+            [compute_accuracy(c[3], predict_proba_fixed(device_models[i][-1], c[1], num_classes, le).argmax(axis=1))
              for i, c in enumerate(clients_data)]))
         edge_accs.append(edge_acc)
         global_accs.append(global_acc)
