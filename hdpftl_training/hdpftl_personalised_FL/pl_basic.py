@@ -14,6 +14,8 @@ Hierarchical PFL (HPFL) pipeline with Dirichlet partitioning
 
 import logging
 import os
+from datetime import datetime
+from multiprocessing import util
 from typing import List, Tuple, Union
 
 import lightgbm as lgb
@@ -26,6 +28,9 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+
+from hdpftl_training.hdpftl_data import preprocess
+from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
 
 # -------------------------------------------------------------
 # Safe preprocessing hook
@@ -515,19 +520,23 @@ def evaluate_final_accuracy(devices_data, device_models, edge_groups, le, num_cl
 # ============================================================
 
 if __name__ == "__main__":
-    from sklearn.datasets import load_digits
 
-    # -----------------------------
-    # Dataset
-    # -----------------------------
-    data = load_digits()
-    X, y = data.data, data.target
+    folder_path = "CIC_IoT_dataset_2023"
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
+    os.makedirs(log_path_str, exist_ok=True)
+
+    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = safe_preprocess_data(
+        log_path_str, folder_path
+    )
+
+
     le = LabelEncoder()
-    le.fit(y)
+    le.fit(y_pretrain)
     num_classes = len(le.classes_)
 
     devices_data, hierarchical_data, edge_groups = dirichlet_partition_for_devices_edges(
-        X, y, num_devices=config["n_device"],
+        X_finetune, y_finetune, num_devices=config["n_device"],
         device_per_edge=config["device_per_edge"],
         n_edges=config["n_edges"]
     )
