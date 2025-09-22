@@ -15,7 +15,6 @@ Hierarchical PFL (HPFL) pipeline with Dirichlet partitioning
 import logging
 import os
 from typing import List, Tuple, Union
-from sklearn.datasets import load_digits
 
 import lightgbm as lgb
 import matplotlib.pyplot as plt
@@ -38,12 +37,12 @@ from sklearn.preprocessing import LabelEncoder
 config = {
     "random_seed": 42,
     "n_edges": 10,
-    "n_clients": 20,
-    "device_per_client": 2,
-    "epoch": 5,
+    "n_device": 20,
+    "device_per_edge": 2,
+    "epoch": 20,
     "device_boosting_rounds": 3,
     "edge_boosting_rounds": 2,
-    "n_estimators": 1,
+    "n_estimators": 20,
     "variance_prune": True,
     "variance_threshold": 1e-4,
     "bayes_n_samples": 200,
@@ -58,7 +57,7 @@ rng = np.random.default_rng(config["random_seed"])
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 ArrayLike = Union[np.ndarray, pd.DataFrame, pd.Series]
-ClientData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
+DeviceData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 
 
 # ============================================================
@@ -75,13 +74,11 @@ def compute_accuracy(y_true, y_pred):
     y_true_np = safe_array(y_true)
     y_pred_np = safe_array(y_pred)
     print("DEBUG compute_accuracy:")
-    print("  y_true shape:", y_true_np.shape)
-    print("  y_pred shape:", y_pred_np.shape)
     return float(np.mean(y_true_np == y_pred_np))
 
 
-def make_edge_groups(n_clients: int, n_edges: int, random_state: int = 42) -> List[List[int]]:
-    idxs = np.arange(n_clients)
+def make_edge_groups(n_devices: int, n_edges: int, random_state: int = 42) -> List[List[int]]:
+    idxs = np.arange(n_devices)
     rng_local = np.random.default_rng(random_state)
     rng_local.shuffle(idxs)
     return [list(g) for g in np.array_split(idxs, n_edges)]
@@ -91,45 +88,45 @@ def make_edge_groups(n_clients: int, n_edges: int, random_state: int = 42) -> Li
 # Dirichlet Partitioning
 # ============================================================
 
-def dirichlet_partition(X, y, num_clients, alpha=0.3, seed=42):
+def dirichlet_partition(X, y, num_devices, alpha=0.3, seed=42):
     """Partition dataset indices using Dirichlet distribution."""
     y_np = y.values if hasattr(y, 'values') else y
     np.random.seed(seed)
     unique_classes = np.unique(y_np)
-    client_indices = [[] for _ in range(num_clients)]
+    device_indices = [[] for _ in range(num_devices)]
 
     for c in unique_classes:
         class_idx = np.where(y_np == c)[0]
         np.random.shuffle(class_idx)
-        proportions = np.random.dirichlet(alpha * np.ones(num_clients))
+        proportions = np.random.dirichlet(alpha * np.ones(num_devices))
         proportions = (proportions * len(class_idx)).astype(int)
         diff = len(class_idx) - proportions.sum()
         proportions[np.argmax(proportions)] += diff
         splits = np.split(class_idx, np.cumsum(proportions)[:-1])
-        for client_id, split in enumerate(splits):
-            client_indices[client_id].extend(split.tolist())
+        for device_id, split in enumerate(splits):
+            device_indices[device_id].extend(split.tolist())
 
     X_np = X.values if hasattr(X, 'values') else X
-    client_data_dict = {}
-    for i, idxs in enumerate(client_indices):
-        client_data_dict[i] = (X_np[idxs], y_np[idxs])
-    return client_data_dict
+    device_data_dict = {}
+    for i, idxs in enumerate(device_indices):
+        device_data_dict[i] = (X_np[idxs], y_np[idxs])
+    return device_data_dict
 
 
-def dirichlet_partition_for_devices_edges(X, y, num_clients, devices_per_client, n_edges):
-    """Return clients_data and hierarchical_data for devices and edges."""
-    client_data_dict = dirichlet_partition(X, y, num_clients)
-    clients_data = []
+def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_edges):
+    """Return device_data and hierarchical_data for devices and edges."""
+    device_data_dict = dirichlet_partition(X, y, num_devices)
+    devices_data = []
     hierarchical_data = {}
-    for cid, (X_c, y_c) in client_data_dict.items():
+    for cid, (X_c, y_c) in device_data_dict.items():
         n_samples = len(X_c)
-        device_idxs = np.array_split(np.arange(n_samples), devices_per_client)
+        device_idxs = np.array_split(np.arange(n_samples), device_per_edge)
         device_data = [(X_c[d], y_c[d]) for d in device_idxs]
         hierarchical_data[cid] = device_data
         X_train, X_test, y_train, y_test = train_test_split(X_c, y_c, test_size=0.2, random_state=config["random_seed"])
-        clients_data.append((X_train, X_test, y_train, y_test))
-    edge_groups = make_edge_groups(num_clients, n_edges)
-    return clients_data, hierarchical_data, edge_groups
+        devices_data.append((X_train, X_test, y_train, y_test))
+    edge_groups = make_edge_groups(num_devices, n_edges)
+    return devices_data, hierarchical_data, edge_groups
 
 
 # ============================================================
@@ -148,14 +145,27 @@ def train_lightgbm(X_train, y_train, num_classes=None, n_estimators=1, random_st
     return model
 
 
+# ============================================================
+# Predict probabilities safely, filling missing classes
+# ============================================================
+
 def predict_proba_fixed(model, X, num_classes, le=None):
+    """
+    Predict probabilities with shape (n_samples, num_classes)
+    even if some classes are missing in the model's training set.
+    """
     X_np = safe_array(X)
     pred = model.predict_proba(X_np)
     pred = np.atleast_2d(pred)
+
+    # If output already matches num_classes, return
     if pred.shape[1] == num_classes:
         return pred
+
+    # Otherwise, fill missing classes
     full = np.zeros((pred.shape[0], num_classes), dtype=float)
     model_classes = getattr(model, "classes_", np.arange(pred.shape[1]))
+
     if le is not None:
         class_pos = {cls: i for i, cls in enumerate(le.classes_)}
         for i, cls in enumerate(model_classes):
@@ -165,20 +175,30 @@ def predict_proba_fixed(model, X, num_classes, le=None):
     else:
         for i, cls in enumerate(model_classes):
             full[:, int(cls)] = pred[:, i]
+
+    # Ensure sum of probabilities > 0 to avoid NaNs in softmax downstream
+    row_sums = full.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    full /= row_sums
     return full
 
 
 # ============================================================
-# Device / Edge / Gossip Layers
+# Device Layer Boosting with missing-class safe probabilities
 # ============================================================
 
-def device_layer_boosting(clients_data, residuals_clients, device_models, le, num_classes):
-    for idx, (X_dev, _, y_dev, _) in enumerate(clients_data):
+def device_layer_boosting(devices_data, residuals_devices, device_models, le, num_classes):
+    """
+    Intra-device sequential boosting:
+    - Safe residual updates
+    - Automatically handles missing classes
+    """
+    for idx, (X_dev, _, y_dev, _) in enumerate(devices_data):
         X_dev, y_dev = safe_array(X_dev), safe_array(y_dev)
         y_enc = le.transform(y_dev)
         n_samples = X_dev.shape[0]
 
-        residual = residuals_clients[idx]
+        residual = residuals_devices[idx]
         if residual is None:
             residual = np.zeros((n_samples, num_classes), dtype=float)
             residual[np.arange(n_samples), y_enc] = 1.0
@@ -186,33 +206,39 @@ def device_layer_boosting(clients_data, residuals_clients, device_models, le, nu
         models_per_device = []
         for _ in range(config["device_boosting_rounds"]):
             y_pseudo = residual.argmax(axis=1)
-            model = train_lightgbm(X_dev, y_pseudo, num_classes=num_classes, n_estimators=config["n_estimators"])
+            model = train_lightgbm(
+                X_dev, y_pseudo, num_classes=num_classes, n_estimators=config["n_estimators"]
+            )
             pred_proba = predict_proba_fixed(model, X_dev, num_classes, le=le)
-            # variance prune
+
+            # Variance prune
             if config["variance_prune"]:
                 var = np.var(pred_proba, axis=0)
                 mask = var >= config["variance_threshold"]
                 pred_proba[:, ~mask] = 0.0
+
             residual -= pred_proba
             models_per_device.append(model)
-        residuals_clients[idx] = residual
+
+        residuals_devices[idx] = residual
         device_models[idx] = models_per_device
-    return residuals_clients, device_models
+
+    return residuals_devices, device_models
 
 
-def edge_layer_boosting(edge_groups, clients_data, residuals_clients, le, num_classes):
+def edge_layer_boosting(edge_groups, devices_data, residuals_devices, le, num_classes):
     edge_models = []
     residuals_edge_list = []
     edge_acc_list = []
-    for edge_clients in edge_groups:
-        if len(edge_clients) == 0:
+    for edge_devices in edge_groups:
+        if len(edge_devices) == 0:
             edge_models.append([])
             residuals_edge_list.append([])
             edge_acc_list.append(0.0)
             continue
-        X_edge = np.vstack([clients_data[i][0] for i in edge_clients])
-        residual_edge = np.vstack([residuals_clients[i] for i in edge_clients])
-        y_test_edge = np.hstack([clients_data[i][3] for i in edge_clients])
+        X_edge = np.vstack([devices_data[i][0] for i in edge_devices])
+        residual_edge = np.vstack([residuals_devices[i] for i in edge_devices])
+        y_test_edge = np.hstack([devices_data[i][3] for i in edge_devices])
 
         models_per_edge = []
         round_residuals = []
@@ -232,7 +258,7 @@ def edge_layer_boosting(edge_groups, clients_data, residuals_clients, le, num_cl
         residuals_edge_list.append(round_residuals)
 
         # Test-set accuracy for this edge
-        X_test_edge = np.vstack([clients_data[i][1] for i in edge_clients])  # X_test is index 1
+        X_test_edge = np.vstack([devices_data[i][1] for i in edge_devices])  # X_test is index 1
         edge_preds = np.zeros((X_test_edge.shape[0], num_classes), dtype=float)
 
         for mdl in models_per_edge:
@@ -243,7 +269,7 @@ def edge_layer_boosting(edge_groups, clients_data, residuals_clients, le, num_cl
     return edge_models, residuals_edge_list, np.mean(edge_acc_list)
 
 
-def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_calibration=True):
+def gossip_layer_aggregation(devices_data, device_models, le, num_classes, use_calibration=True):
     """
     Aggregates device-level predictions to a global/gossip model.
     Returns:
@@ -256,12 +282,12 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
     # -----------------------------
     # Collect device predictions
     # -----------------------------
-    for client_idx, (X_dev, _, y_dev, _) in enumerate(clients_data):
+    for device_idx, (X_dev, _, y_dev, _) in enumerate(devices_data):
         X_dev, y_dev = safe_array(X_dev), safe_array(y_dev)
-        models_for_client = device_models[client_idx]
-        model_for_client = models_for_client[-1] if models_for_client else train_lightgbm(X_dev, y_dev, num_classes, 1)
+        models_for_device = device_models[device_idx]
+        model_for_device = models_for_device[-1] if models_for_device else train_lightgbm(X_dev, y_dev, num_classes, 1)
 
-        probs = predict_proba_fixed(model_for_client, X_dev, num_classes, le=le)
+        probs = predict_proba_fixed(model_for_device, X_dev, num_classes, le=le)
 
         # -----------------------------
         # Isotonic calibration
@@ -298,7 +324,7 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
         y_proc_list.append(y_dev)
 
     # -----------------------------
-    # Stack all client data
+    # Stack all device data
     # -----------------------------
     X_proc = np.vstack(X_proc_list)
     y_global_enc = le.transform(np.hstack(y_proc_list))
@@ -306,7 +332,7 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
     # -----------------------------
     # Ensure X_proc matches num_features
     # -----------------------------
-    num_features_expected = clients_data[0][0].shape[1]
+    num_features_expected = devices_data[0][0].shape[1]
     if X_proc.shape[1] != num_features_expected:
         # Pad or truncate
         if X_proc.shape[1] < num_features_expected:
@@ -379,29 +405,61 @@ def gossip_layer_aggregation(clients_data, device_models, le, num_classes, use_c
 # Forward pass
 # ============================================================
 
-def forward_pass(clients_data, edge_groups, le, num_classes):
-    residuals_clients = [None] * len(clients_data)
-    device_models = [None] * len(clients_data)
-    residuals_clients, device_models = device_layer_boosting(clients_data, residuals_clients, device_models, le,
-                                                             num_classes)
-    edge_models, residuals_edges, edge_acc = edge_layer_boosting(edge_groups, clients_data, residuals_clients, le,
-                                                                 num_classes)
-    global_residual, global_trace, global_acc = gossip_layer_aggregation(clients_data, device_models, le, num_classes)
-    return device_models, edge_models, global_trace, residuals_clients, residuals_edges, edge_acc, global_acc
+# ============================================================
+# Forward pass with Device → Edge → Gossip
+# ============================================================
 
-
-def evaluate_final_accuracy(clients_data, device_models, edge_groups, le, num_classes, gossip_summary=None):
+def forward_pass(devices_data, edge_groups, le, num_classes):
     """
-    Evaluate final accuracy on the held-out test set:
-    - Device-level: average over all devices
-    - Edge-level: aggregate devices per edge
-    - Global/gossip-level: Bayesian aggregation if gossip_summary provided
+    Perform a single forward pass through:
+    - Device-level boosting
+    - Edge-level boosting
+    - Gossip/global aggregation
+    Returns models, residuals, accuracies
+    """
+    residuals_devices = [None] * len(devices_data)
+    device_models = [None] * len(devices_data)
+
+    # -----------------------------
+    # Device Layer
+    # -----------------------------
+    residuals_devices, device_models = device_layer_boosting(
+        devices_data, residuals_devices, device_models, le, num_classes
+    )
+
+    # -----------------------------
+    # Edge Layer
+    # -----------------------------
+    edge_models, residuals_edges, edge_acc = edge_layer_boosting(
+        edge_groups, devices_data, residuals_devices, le, num_classes
+    )
+
+    # -----------------------------
+    # Gossip / Global Layer
+    # -----------------------------
+    global_residual, gossip_summary, global_acc = gossip_layer_aggregation(
+        devices_data, device_models, le, num_classes
+    )
+
+    return device_models, edge_models, gossip_summary, residuals_devices, residuals_edges, edge_acc, global_acc
+
+
+# ============================================================
+# Evaluate final accuracy
+# ============================================================
+
+def evaluate_final_accuracy(devices_data, device_models, edge_groups, le, num_classes, gossip_summary=None):
+    """
+    Evaluate final accuracy at:
+    - Device-level
+    - Edge-level
+    - Global/Gossip-level (if gossip_summary provided)
     """
     # -----------------------------
-    # Device-level accuracy
+    # Device-level
     # -----------------------------
     device_acc_list = []
-    for idx, (X_test, _, y_test, _) in enumerate(clients_data):
+    for idx, (X_test, _, y_test, _) in enumerate(devices_data):
         X_test_np, y_test_np = safe_array(X_test), safe_array(y_test)
         device_preds = np.zeros((X_test_np.shape[0], num_classes))
         for mdl in device_models[idx]:
@@ -411,16 +469,16 @@ def evaluate_final_accuracy(clients_data, device_models, edge_groups, le, num_cl
     device_acc = np.mean(device_acc_list)
 
     # -----------------------------
-    # Edge-level accuracy
+    # Edge-level
     # -----------------------------
     edge_acc_list = []
-    for edge_clients in edge_groups:
-        if not edge_clients:
+    for edge_devices in edge_groups:
+        if len(edge_devices) == 0:
             continue
-        X_edge = np.vstack([clients_data[i][0] for i in edge_clients])
-        y_edge = np.hstack([clients_data[i][2] for i in edge_clients])
+        X_edge = np.vstack([safe_array(devices_data[i][0]) for i in edge_devices])
+        y_edge = np.hstack([safe_array(devices_data[i][2]) for i in edge_devices])
         edge_preds = np.zeros((X_edge.shape[0], num_classes))
-        for i in edge_clients:
+        for i in edge_devices:
             for mdl in device_models[i]:
                 edge_preds += predict_proba_fixed(mdl, X_edge, num_classes, le)
         edge_preds = edge_preds.argmax(axis=1)
@@ -428,29 +486,23 @@ def evaluate_final_accuracy(clients_data, device_models, edge_groups, le, num_cl
     edge_acc = np.mean(edge_acc_list) if edge_acc_list else 0.0
 
     # -----------------------------
-    # Global/gossip-level accuracy
+    # Global/Gossip-level
     # -----------------------------
     global_acc = None
     if gossip_summary is not None:
-        X_global = np.vstack([safe_array(clients_data[i][0]) for i in range(len(clients_data))])
-        y_global = np.hstack([safe_array(clients_data[i][2]) for i in range(len(clients_data))])
-
+        X_global = np.vstack([safe_array(devices_data[i][0]) for i in range(len(devices_data))])
+        y_global = np.hstack([safe_array(devices_data[i][2]) for i in range(len(devices_data))])
         betas = np.asarray(gossip_summary["betas"])
         alpha = np.asarray(gossip_summary["alpha"])
-
-        # Ensure betas has shape (num_features, num_classes)
         if betas.shape[0] != X_global.shape[1]:
-            if betas.shape[1] == X_global.shape[1]:
-                betas = betas.T
+            # Pad or truncate to match feature dimension
+            if betas.shape[0] < X_global.shape[1]:
+                pad_width = X_global.shape[1] - betas.shape[0]
+                betas = np.vstack([betas, np.zeros((pad_width, betas.shape[1]))])
             else:
-                raise ValueError(f"Cannot match betas shape {betas.shape} with X_global {X_global.shape}")
-
-        # Ensure alpha is (num_classes,)
+                betas = betas[:X_global.shape[1], :]
         if alpha.ndim != 1 or alpha.shape[0] != betas.shape[1]:
             alpha = alpha.flatten()
-            if alpha.shape[0] != betas.shape[1]:
-                raise ValueError(f"Cannot match alpha shape {alpha.shape} with betas {betas.shape}")
-
         logits = X_global @ betas + alpha
         global_preds = sp_softmax(logits, axis=1).argmax(axis=1)
         global_acc = compute_accuracy(y_global, global_preds)
@@ -459,44 +511,66 @@ def evaluate_final_accuracy(clients_data, device_models, edge_groups, le, num_cl
 
 
 # ============================================================
-# Example Training Loop with MNIST / sklearn
+# Training Loop Example
 # ============================================================
 
 if __name__ == "__main__":
-    # Example dataset
+    from sklearn.datasets import load_digits
 
+    # -----------------------------
+    # Dataset
+    # -----------------------------
     data = load_digits()
     X, y = data.data, data.target
     le = LabelEncoder()
     le.fit(y)
     num_classes = len(le.classes_)
 
-    clients_data, hierarchical_data, edge_groups = dirichlet_partition_for_devices_edges(
-        X, y, num_clients=config["n_clients"],
-        devices_per_client=config["device_per_client"],
+    devices_data, hierarchical_data, edge_groups = dirichlet_partition_for_devices_edges(
+        X, y, num_devices=config["n_device"],
+        device_per_edge=config["device_per_edge"],
         n_edges=config["n_edges"]
     )
 
     device_accs, edge_accs, global_accs = [], [], []
 
+    # -----------------------------
+    # Training epochs
+    # -----------------------------
     for epoch in range(config["epoch"]):
-        device_models, edge_models, global_trace, residuals_clients, residuals_edges, edge_acc, global_acc = \
-            forward_pass(clients_data, edge_groups, le, num_classes)
+        device_models, edge_models, gossip_summary, residuals_devices, residuals_edges, edge_acc, global_acc = \
+            forward_pass(devices_data, edge_groups, le, num_classes)
 
-        device_accs.append(np.mean(
-            [compute_accuracy(c[3], predict_proba_fixed(device_models[i][-1], c[1], num_classes, le).argmax(axis=1))
-             for i, c in enumerate(clients_data)]))
+        # Compute device-level accuracy
+        device_epoch_acc_list = []
+        for i, c in enumerate(devices_data):
+            X_test, _, y_test, _ = c
+            device_preds = np.zeros((safe_array(X_test).shape[0], num_classes))
+            for mdl in device_models[i]:
+                device_preds += predict_proba_fixed(mdl, X_test, num_classes, le)
+            device_preds = device_preds.argmax(axis=1)
+            device_epoch_acc_list.append(compute_accuracy(y_test, device_preds))
+        device_acc_epoch = np.mean(device_epoch_acc_list)
+
+        # Store accuracies
+        device_accs.append(device_acc_epoch)
         edge_accs.append(edge_acc)
         global_accs.append(global_acc)
-        print(
-            f"[Epoch {epoch + 1}] Device Acc: {device_accs[-1]:.4f}, Edge Acc: {edge_acc:.4f}, Global Acc: {global_acc:.4f}")
 
+        print(f"[Epoch {epoch + 1}] Device Acc: {device_acc_epoch:.4f}, "
+              f"Edge Acc: {edge_acc:.4f}, Global Acc: {global_acc:.4f}")
+
+        # Evaluate final accuracy (sanity check)
         device_acc, edge_acc, global_acc = evaluate_final_accuracy(
-            clients_data, device_models, edge_groups, le, num_classes, global_trace
+            devices_data, device_models, edge_groups, le, num_classes, gossip_summary
         )
-        logging.info(f"Final Test Accuracy - Device: {device_acc:.4f}, Edge: {edge_acc:.4f}, Global: {global_acc:.4f}")
+        logging.info(f"Final Test Accuracy - Device: {device_acc:.4f}, "
+                     f"Edge: {edge_acc:.4f}, Global: {global_acc:.4f}")
 
+    # -----------------------------
     # Plot accuracy trends
+    # -----------------------------
+
     plt.figure(figsize=(10, 6))
     plt.plot(device_accs, label="Device-level Acc")
     plt.plot(edge_accs, label="Edge-level Acc")
