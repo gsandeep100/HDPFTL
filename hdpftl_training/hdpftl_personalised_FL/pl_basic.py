@@ -31,6 +31,8 @@ from sklearn.preprocessing import LabelEncoder
 
 from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
 
+os.environ["OMP_NUM_THREADS"] = "4"
+
 # -------------------------------------------------------------
 # Config
 # -------------------------------------------------------------
@@ -39,7 +41,7 @@ config = {
     "n_edges": 10,
     "n_device": 50,
     "device_per_edge": 5,
-    "epoch": 50,
+    "epoch": 20,
     "device_boosting_rounds": 10,
     "edge_boosting_rounds": 10,
     "variance_prune": True,
@@ -51,10 +53,10 @@ config = {
     "isotonic_min_positives": 5,
     "max_cores": 2,
     "n_estimators": 100,
-    "num_leaves": 5,
+    "num_leaves": 31,
     "alpha": 1.0,
     "learning_rate": 0.05,
-    "max_depth": 5,
+    "max_depth": -1,
     "min_data_in_leaf": 20,
     "feature_fraction": 0.8
 }
@@ -163,7 +165,9 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
         learning_rate=config["learning_rate"],
         max_depth=config["max_depth"],
         min_data_in_leaf=config["min_data_in_leaf"],
-        feature_fraction=config["feature_fraction"]
+        feature_fraction=config["feature_fraction"],
+        device="gpu",
+        gpu_device_id=0
     )
     fit_kwargs = {}
     if X_valid is not None and y_valid is not None and early_stopping_rounds:
@@ -402,6 +406,7 @@ def gossip_layer_aggregation(devices_data, device_models, le, num_classes, X_fin
                                   cores=min(config["max_cores"], os.cpu_count() or 1),
                                   target_accept=0.9,
                                   progressbar=False,
+                                  nuts_sampler="numpyro",
                                   random_seed=config["random_seed"])
             trace_summary = {
                 "alpha": np.asarray(raw_trace["alpha"]).mean(axis=0),
