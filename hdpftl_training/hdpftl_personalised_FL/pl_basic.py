@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pymc as pm
+from lightgbm import early_stopping, log_evaluation
 from scipy.special import softmax as sp_softmax
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
@@ -41,7 +42,6 @@ config = {
     "epoch": 50,
     "device_boosting_rounds": 10,
     "edge_boosting_rounds": 10,
-    "n_estimators": 20,
     "variance_prune": True,
     "variance_threshold": 1e-4,
     "bayes_n_samples": 200,
@@ -50,8 +50,13 @@ config = {
     "results_path": "results",
     "isotonic_min_positives": 5,
     "max_cores": 2,
+    "n_estimators": 100,
+    "num_leaves": 5,
     "alpha": 1.0,
-
+    "learning_rate": 0.05,
+    "max_depth": 5,
+    "min_data_in_leaf": 20,
+    "feature_fraction": 0.8
 }
 
 rng = np.random.default_rng(config["random_seed"])
@@ -135,7 +140,7 @@ def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_
 # LightGBM Training
 # ============================================================
 
-def train_lightgbm(X_train, y_train, num_classes=None, n_estimators=1, random_state=42):
+def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_rounds=None, num_classes=None):
     """
     Train LightGBM classifier with safe NumPy arrays to avoid feature name warnings.
     Handles multiclass or binary classification.
@@ -152,10 +157,26 @@ def train_lightgbm(X_train, y_train, num_classes=None, n_estimators=1, random_st
     model = lgb.LGBMClassifier(
         objective=objective,
         num_class=num_class,
-        n_estimators=n_estimators,
-        random_state=random_state
+        n_estimators=config["n_estimators"],
+        random_state=config["random_seed"],
+        num_leaves=config["num_leaves"],
+        learning_rate=config["learning_rate"],
+        max_depth=config["max_depth"],
+        min_data_in_leaf=config["min_data_in_leaf"],
+        feature_fraction=config["feature_fraction"]
     )
-    model.fit(X_np, y_np)
+    fit_kwargs = {}
+    if X_valid is not None and y_valid is not None and early_stopping_rounds:
+        fit_kwargs.update({
+            "eval_set": [(safe_array(X_valid), safe_array(y_valid))],
+            "eval_metric": "multi_logloss" if num_classes > 2 else "logloss",
+            "callbacks": [
+                early_stopping(early_stopping_rounds),  # ✅ new API
+                log_evaluation(10)  # optional logging
+            ],
+        })
+
+    model.fit(X_np, y_np, **fit_kwargs)
     return model
 
 
@@ -202,7 +223,7 @@ def predict_proba_fixed(model, X, num_classes, le=None):
 # Device Layer Boosting with missing-class safe probabilities
 # ============================================================
 
-def device_layer_boosting(devices_data, residuals_devices, device_models, le, num_classes):
+def device_layer_boosting(devices_data, residuals_devices, device_models, le, num_classes, X_finetune, y_finetune):
     """
     Intra-device sequential boosting:
     - Safe residual updates
@@ -226,7 +247,7 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
             if len(np.unique(y_pseudo)) < 2:
                 continue
             model = train_lightgbm(
-                X_dev, y_pseudo, num_classes=num_classes, n_estimators=config["n_estimators"]
+                X_dev, y_pseudo, X_finetune, y_finetune, early_stopping_rounds=20, num_classes=num_classes
             )
             pred_proba = predict_proba_fixed(model, X_dev, num_classes, le=le)
 
@@ -245,7 +266,7 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
     return residuals_devices, device_models
 
 
-def edge_layer_boosting(edge_groups, devices_data, residuals_devices, le, num_classes):
+def edge_layer_boosting(edge_groups, devices_data, residuals_devices, le, num_classes, X_finetune, y_finetune):
     edge_models = []
     residuals_edge_list = []
     edge_acc_list = []
@@ -263,8 +284,8 @@ def edge_layer_boosting(edge_groups, devices_data, residuals_devices, le, num_cl
         round_residuals = []
         for _ in range(config["edge_boosting_rounds"]):
             y_pseudo = residual_edge.argmax(axis=1)
-            model_e = train_lightgbm(X_edge, y_pseudo, num_classes=num_classes,
-                                     n_estimators=config["n_estimators"])
+            model_e = train_lightgbm(X_edge, y_pseudo, X_finetune, y_finetune, early_stopping_rounds=20,
+                                     num_classes=num_classes)
             pred_proba = predict_proba_fixed(model_e, X_edge, num_classes, le=le)
             if config["variance_prune"]:
                 var = np.var(pred_proba, axis=0)
@@ -288,7 +309,8 @@ def edge_layer_boosting(edge_groups, devices_data, residuals_devices, le, num_cl
     return edge_models, residuals_edge_list, np.mean(edge_acc_list)
 
 
-def gossip_layer_aggregation(devices_data, device_models, le, num_classes, use_calibration=True):
+def gossip_layer_aggregation(devices_data, device_models, le, num_classes, X_finetune, y_finetune,
+                             use_calibration=True):
     """
     Aggregates device-level predictions to a global/gossip model.
     Returns:
@@ -304,7 +326,10 @@ def gossip_layer_aggregation(devices_data, device_models, le, num_classes, use_c
     for device_idx, (X_dev, _, y_dev, _) in enumerate(devices_data):
         X_dev, y_dev = safe_array(X_dev), safe_array(y_dev)
         models_for_device = device_models[device_idx]
-        model_for_device = models_for_device[-1] if models_for_device else train_lightgbm(X_dev, y_dev, num_classes, 1)
+        model_for_device = models_for_device[-1] if models_for_device else train_lightgbm(X_dev, y_dev, X_finetune,
+                                                                                          y_finetune,
+                                                                                          early_stopping_rounds=20,
+                                                                                          num_classes=num_classes)
 
         probs = predict_proba_fixed(model_for_device, X_dev, num_classes, le=le)
 
@@ -428,7 +453,7 @@ def gossip_layer_aggregation(devices_data, device_models, le, num_classes, use_c
 # Forward pass with Device → Edge → Gossip
 # ============================================================
 
-def forward_pass(devices_data, edge_groups, le, num_classes):
+def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finetune):
     """
     Perform a single forward pass through:
     - Device-level boosting
@@ -443,21 +468,21 @@ def forward_pass(devices_data, edge_groups, le, num_classes):
     # Device Layer
     # -----------------------------
     residuals_devices, device_models = device_layer_boosting(
-        devices_data, residuals_devices, device_models, le, num_classes
+        devices_data, residuals_devices, device_models, le, num_classes, X_finetune, y_finetune
     )
 
     # -----------------------------
     # Edge Layer
     # -----------------------------
     edge_models, residuals_edges, edge_acc = edge_layer_boosting(
-        edge_groups, devices_data, residuals_devices, le, num_classes
+        edge_groups, devices_data, residuals_devices, le, num_classes, X_finetune, y_finetune
     )
 
     # -----------------------------
     # Gossip / Global Layer
     # -----------------------------
     global_residual, gossip_summary, global_acc = gossip_layer_aggregation(
-        devices_data, device_models, le, num_classes
+        devices_data, device_models, le, num_classes, X_finetune, y_finetune
     )
 
     return device_models, edge_models, gossip_summary, residuals_devices, residuals_edges, edge_acc, global_acc
@@ -603,7 +628,7 @@ if __name__ == "__main__":
 
     # 3. Partition fine-tune data for devices & edges
     devices_data, hierarchical_data, edge_groups = dirichlet_partition_for_devices_edges_non_iid(
-        X_finetune, y_finetune,  # ✅ use X_finetune & y_finetune
+        X_pretrain, y_pretrain,  # ✅ use X_finetune & y_finetune
         num_devices=config["n_device"],
         device_per_edge=config["device_per_edge"],
         n_edges=config["n_edges"],
@@ -617,7 +642,7 @@ if __name__ == "__main__":
     # -----------------------------
     for epoch in range(config["epoch"]):
         device_models, edge_models, gossip_summary, residuals_devices, residuals_edges, edge_acc, global_acc = \
-            forward_pass(devices_data, edge_groups, le, num_classes)
+            forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finetune)
 
         # Compute device-level accuracy
         device_epoch_acc_list = []
