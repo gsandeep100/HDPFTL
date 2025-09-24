@@ -56,7 +56,7 @@ config = {
     "num_leaves": 31,
     "alpha": 1.0,
     "learning_rate": 0.05,
-    "max_depth": -1,
+    "max_depth": 5,
     "min_data_in_leaf": 20,
     "feature_fraction": 0.8
 }
@@ -167,12 +167,17 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
         min_data_in_leaf=config["min_data_in_leaf"],
         feature_fraction=config["feature_fraction"],
         device="gpu",
-        gpu_device_id=0
+        gpu_platform_id=0,
+        gpu_device_id= 0
     )
     fit_kwargs = {}
+    mask = np.isin(y_valid, np.unique(y_np))
+    X_valid_filtered = X_valid[mask]
+    y_valid_filtered = y_valid[mask]
+
     if X_valid is not None and y_valid is not None and early_stopping_rounds:
         fit_kwargs.update({
-            "eval_set": [(safe_array(X_valid), safe_array(y_valid))],
+            "eval_set": [(safe_array(X_valid_filtered), safe_array(y_valid_filtered))],
             "eval_metric": "multi_logloss" if num_classes > 2 else "logloss",
             "callbacks": [
                 early_stopping(early_stopping_rounds),  # ✅ new API
@@ -616,7 +621,7 @@ def dirichlet_partition_for_devices_edges_non_iid(X, y, num_devices, device_per_
 
 if __name__ == "__main__":
 
-    folder_path = "CIC_IoT_DIAD_2024"
+    folder_path = "CIC_IoT_dataset_2023"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
