@@ -31,6 +31,8 @@ from sklearn.preprocessing import LabelEncoder
 
 from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
 
+logging.basicConfig(level=logging.INFO)
+
 os.environ["OMP_NUM_THREADS"] = "4"
 
 # -------------------------------------------------------------
@@ -38,26 +40,26 @@ os.environ["OMP_NUM_THREADS"] = "4"
 # -------------------------------------------------------------
 config = {
     "random_seed": 42,
-    "n_edges": 10,
-    "n_device": 50,
-    "device_per_edge": 5,
-    "epoch": 20,
-    "device_boosting_rounds": 10,
-    "edge_boosting_rounds": 10,
+    "n_edges": 5,
+    "n_device": 20,
+    "device_per_edge": 4,
+    "epoch": 10,
+    "device_boosting_rounds": 5,
+    "edge_boosting_rounds": 5,
     "variance_prune": True,
     "variance_threshold": 1e-4,
-    "bayes_n_samples": 200,
-    "bayes_n_tune": 200,
+    "bayes_n_samples": 50,
+    "bayes_n_tune": 50,
     "save_results": True,
     "results_path": "results",
     "isotonic_min_positives": 5,
     "max_cores": 2,
-    "n_estimators": 100,
-    "num_leaves": 31,
+    "n_estimators": 50,
+    "num_leaves": 10,
     "alpha": 1.0,
     "learning_rate": 0.05,
     "max_depth": 5,
-    "min_data_in_leaf": 20,
+    "min_data_in_leaf": 10,
     "feature_fraction": 0.8
 }
 
@@ -168,7 +170,7 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
         feature_fraction=config["feature_fraction"],
         device="gpu",
         gpu_platform_id=0,
-        gpu_device_id= 0
+        gpu_device_id=0
     )
     fit_kwargs = {}
     mask = np.isin(y_valid, np.unique(y_np))
@@ -232,11 +234,15 @@ def predict_proba_fixed(model, X, num_classes, le=None):
 # Device Layer Boosting with missing-class safe probabilities
 # ============================================================
 
-def device_layer_boosting(devices_data, residuals_devices, device_models, le, num_classes, X_finetune, y_finetune):
+def device_layer_boosting(
+        devices_data, residuals_devices, device_models, le, num_classes, X_finetune, y_finetune
+):
     """
-    Intra-device sequential boosting:
-    - Safe residual updates
+    Intra-device sequential boosting.
+
+    - Safe residual updates with clipping
     - Automatically handles missing classes
+    - Logs unique pseudo-labels per round
     """
     for idx, (X_dev, _, y_dev, _) in enumerate(devices_data):
         X_dev, y_dev = safe_array(X_dev), safe_array(y_dev)
@@ -245,28 +251,40 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
 
         residual = residuals_devices[idx]
         if residual is None:
+            # Initialize residual as one-hot
             residual = np.zeros((n_samples, num_classes), dtype=float)
             residual[np.arange(n_samples), y_enc] = 1.0
 
         models_per_device = []
-        for _ in range(config["device_boosting_rounds"]):
+
+        for round_idx in range(config["device_boosting_rounds"]):
             y_pseudo = residual.argmax(axis=1)
-            print("unique y_pseudo: " + str(np.unique(y_pseudo)))  ##Sandeep
-            # Skip if only one unique class
-            if len(np.unique(y_pseudo)) < 2:
+            unique_classes = np.unique(y_pseudo)
+            logging.debug(f"Device {idx} Round {round_idx} - unique y_pseudo: {unique_classes}")
+
+            if len(unique_classes) < 2:
+                logging.debug(f"Skipping round {round_idx} for device {idx} (single class only).")
                 continue
+
+            # Train model on pseudo-labels
             model = train_lightgbm(
-                X_dev, y_pseudo, X_finetune, y_finetune, early_stopping_rounds=20, num_classes=num_classes
+                X_dev, y_pseudo, X_finetune, y_finetune,
+                early_stopping_rounds=20, num_classes=num_classes
             )
+
+            # Predict probabilities
             pred_proba = predict_proba_fixed(model, X_dev, num_classes, le=le)
 
-            # Variance prune
-            if config["variance_prune"]:
+            # Variance pruning
+            if config.get("variance_prune", False):
                 var = np.var(pred_proba, axis=0)
-                mask = var >= config["variance_threshold"]
+                mask = var >= config.get("variance_threshold", 0.0)
                 pred_proba[:, ~mask] = 0.0
 
+            # Update residual safely
             residual -= pred_proba
+            residual = np.clip(residual, 0.0, None)
+
             models_per_device.append(model)
 
         residuals_devices[idx] = residual
@@ -275,47 +293,82 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
     return residuals_devices, device_models
 
 
-def edge_layer_boosting(edge_groups, devices_data, residuals_devices, le, num_classes, X_finetune, y_finetune):
+def edge_layer_boosting(
+        edge_groups, devices_data, residuals_devices, le, num_classes, X_finetune, y_finetune
+):
+    """
+    Edge-level sequential boosting.
+
+    - Aggregates device residuals
+    - Handles empty edges
+    - Computes weighted edge accuracy
+    """
     edge_models = []
     residuals_edge_list = []
     edge_acc_list = []
-    for edge_devices in edge_groups:
+
+    for edge_idx, edge_devices in enumerate(edge_groups):
         if len(edge_devices) == 0:
             edge_models.append([])
             residuals_edge_list.append([])
             edge_acc_list.append(0.0)
             continue
+
+        # Aggregate device data
         X_edge = np.vstack([devices_data[i][0] for i in edge_devices])
         residual_edge = np.vstack([residuals_devices[i] for i in edge_devices])
         y_test_edge = np.hstack([devices_data[i][3] for i in edge_devices])
 
         models_per_edge = []
         round_residuals = []
-        for _ in range(config["edge_boosting_rounds"]):
+
+        for round_idx in range(config["edge_boosting_rounds"]):
             y_pseudo = residual_edge.argmax(axis=1)
-            model_e = train_lightgbm(X_edge, y_pseudo, X_finetune, y_finetune, early_stopping_rounds=20,
-                                     num_classes=num_classes)
+            unique_classes = np.unique(y_pseudo)
+
+            if len(unique_classes) < 2:
+                logging.debug(f"Skipping round {round_idx} for edge {edge_idx} (single class).")
+                continue
+
+            model_e = train_lightgbm(
+                X_edge, y_pseudo, X_finetune, y_finetune,
+                early_stopping_rounds=20, num_classes=num_classes
+            )
+
             pred_proba = predict_proba_fixed(model_e, X_edge, num_classes, le=le)
-            if config["variance_prune"]:
+
+            if config.get("variance_prune", False):
                 var = np.var(pred_proba, axis=0)
-                mask = var >= config["variance_threshold"]
+                mask = var >= config.get("variance_threshold", 0.0)
                 pred_proba[:, ~mask] = 0.0
+
+            # Update residual safely
             residual_edge -= pred_proba
+            residual_edge = np.clip(residual_edge, 0.0, None)
+
             models_per_edge.append(model_e)
             round_residuals.append(residual_edge.copy())
+
         edge_models.append(models_per_edge)
         residuals_edge_list.append(round_residuals)
 
-        # Test-set accuracy for this edge
-        X_test_edge = np.vstack([devices_data[i][1] for i in edge_devices])  # X_test is index 1
-        edge_preds = np.zeros((X_test_edge.shape[0], num_classes), dtype=float)
+        # Weighted edge accuracy
+        X_test_edge = np.vstack([devices_data[i][1] for i in edge_devices])
+        n_samples_test = X_test_edge.shape[0]
 
+        edge_preds = np.zeros((n_samples_test, num_classes), dtype=float)
         for mdl in models_per_edge:
             edge_preds += predict_proba_fixed(mdl, X_test_edge, num_classes, le=le)
-        edge_preds = edge_preds.argmax(axis=1)
-        edge_acc_list.append(compute_accuracy(y_test_edge, edge_preds))
 
-    return edge_models, residuals_edge_list, np.mean(edge_acc_list)
+        edge_preds = edge_preds.argmax(axis=1)
+        edge_acc = compute_accuracy(y_test_edge, edge_preds)
+        edge_acc_list.append((edge_acc, n_samples_test))
+
+    # Compute weighted mean accuracy
+    total_samples = sum(n for _, n in edge_acc_list)
+    weighted_acc = sum(acc * n for acc, n in edge_acc_list) / total_samples if total_samples > 0 else 0.0
+
+    return edge_models, residuals_edge_list, weighted_acc
 
 
 def gossip_layer_aggregation(devices_data, device_models, le, num_classes, X_finetune, y_finetune,
@@ -456,10 +509,6 @@ def gossip_layer_aggregation(devices_data, device_models, le, num_classes, X_fin
 
 
 # ============================================================
-# Forward pass
-# ============================================================
-
-# ============================================================
 # Forward pass with Device → Edge → Gossip
 # ============================================================
 
@@ -584,7 +633,8 @@ def dirichlet_partition_for_devices_edges_non_iid(X, y, num_devices, device_per_
         class_idx = np.where(y_np == c)[0]
         rng.shuffle(class_idx)
         proportions = rng.dirichlet(alpha * np.ones(num_devices))
-        proportions = np.maximum((proportions * len(class_idx)).astype(int), 1)
+        min_count = max(int(min(proportions) * len(class_idx)), 1)  # ensure at least 1
+        proportions = np.maximum((proportions * len(class_idx)).astype(int), min_count)
         diff = len(class_idx) - proportions.sum()
         proportions[np.argmax(proportions)] += diff
         splits = np.split(class_idx, np.cumsum(proportions)[:-1])
@@ -593,15 +643,14 @@ def dirichlet_partition_for_devices_edges_non_iid(X, y, num_devices, device_per_
 
     # Step 2: Build device-level data with local train/test
     devices_data = []
-    hierarchical_data = {}
     for device_id, idxs in enumerate(device_indices):
         X_dev, y_dev = X_np[idxs], y_np[idxs]
-        n_samples = len(X_dev)
+        #n_samples = len(X_dev)
 
         # Split each device into mini-devices if needed
-        mini_idxs = np.array_split(np.arange(n_samples), device_per_edge)
-        device_subdata = [(X_dev[i], y_dev[i]) for i in mini_idxs]
-        hierarchical_data[device_id] = device_subdata
+        #mini_idxs = np.array_split(np.arange(n_samples), device_per_edge)
+        #device_subdata = [(X_dev[i], y_dev[i]) for i in mini_idxs]
+        #hierarchical_data[device_id] = [(X_dev, y_dev)]
 
         # Local train/test split per device
         X_train, X_test_local, y_train, y_test_local = train_test_split(
@@ -612,7 +661,7 @@ def dirichlet_partition_for_devices_edges_non_iid(X, y, num_devices, device_per_
     # Step 3: Create edge groups
     edge_groups = make_edge_groups(num_devices, n_edges, random_state=seed)
 
-    return devices_data, hierarchical_data, edge_groups
+    return devices_data, edge_groups
 
 
 # ============================================================
@@ -621,7 +670,7 @@ def dirichlet_partition_for_devices_edges_non_iid(X, y, num_devices, device_per_
 
 if __name__ == "__main__":
 
-    folder_path = "CIC_IoT_dataset_2023"
+    folder_path = "CIC_IoT_DIAD_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
@@ -637,7 +686,7 @@ if __name__ == "__main__":
     num_classes = len(le.classes_)
 
     # 3. Partition fine-tune data for devices & edges
-    devices_data, hierarchical_data, edge_groups = dirichlet_partition_for_devices_edges_non_iid(
+    devices_data, edge_groups = dirichlet_partition_for_devices_edges_non_iid(
         X_pretrain, y_pretrain,  # ✅ use X_finetune & y_finetune
         num_devices=config["n_device"],
         device_per_edge=config["device_per_edge"],

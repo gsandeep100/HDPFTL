@@ -187,6 +187,39 @@ def safe_smote(X, y):
     return smote.fit_resample(X, y)
 
 
+import os
+import pandas as pd
+
+def assign_labels_numeric(df, filename):
+    """
+    Assign numeric multiclass labels (0–7) to df['Label']
+    based on keywords found in the filename.
+    """
+    multiclass_keywords = {
+        0: ["benign", "normal"],
+        1: ["dos", "denial"],
+        2: ["probe", "scan"],
+        3: ["r2l", "remote_login"],
+        4: ["u2r", "root_access"],
+        5: ["malware", "trojan"],
+        6: ["phishing", "spam"],
+        7: ["botnet", "ddos"]
+    }
+
+    filename_lower = os.path.basename(filename).lower()
+
+    # Search for a matching keyword
+    for numeric_label, keywords in multiclass_keywords.items():
+        if any(kw in filename_lower for kw in keywords):
+            df["Label"] = numeric_label
+            print(f"[INFO] Assigned numeric label {numeric_label} based on filename: {filename}")
+            return df
+
+    # Fallback if no keyword matches
+    df["Label"] = -1  # or choose a default like 0
+    print(f"[WARN] No keyword match for {filename} → assigned -1")
+    return df
+
 def assign_labels(
         df,
         filename,
@@ -196,63 +229,73 @@ def assign_labels(
         manual_label_map=None,
         content_label_column_candidates=None
 ):
+    """
+    Assign a label column to a dataframe based on:
+      1. Existing 'Label' column
+      2. 8-class filename keywords (multiclass_keywords)
+      3. Binary filename keywords (benign/attack)
+      4. Manual filename mapping
+      5. Content-based keyword search in columns
+      6. Fallback to benign (0)
+    """
     filename_lower = os.path.basename(filename).lower()
 
-    # --- Case 1: Use existing 'Label' column ---
+    # --- Case 1: Existing 'Label' column ---
     if 'Label' in df.columns:
         df['Label'] = df['Label'].astype(str).str.strip()
         label_encoder = LabelEncoder()
         df['Label'] = label_encoder.fit_transform(df['Label'])
-        # Optional: attach mapping for traceability
-        df.attrs['label_mapping'] = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
-
-        log_util.safe_log(f"Label mapping from existing column for {filename}")
+        df.attrs['label_mapping'] = dict(
+            zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_))
+        )
+        print(f"[INFO] Label mapping from existing column for {filename}")
         return df
 
-    # --- Case 2: Multiclass keywords from filename ---
+    # --- Case 2: 8-class filename keywords ---
     if multiclass_keywords:
         for label_value, keywords in multiclass_keywords.items():
             if any(kw.lower() in filename_lower for kw in keywords):
                 df['Label'] = label_value
-                log_util.safe_log(f"Multiclass label {label_value} assigned via filename for {filename}")
+                print(f"[INFO] Multiclass label {label_value} assigned via filename for {filename}")
                 return df
 
-    # --- Case 3: Binary keywords from filename ---
+    # --- Case 3: Binary filename keywords ---
     if benign_keywords and any(kw.lower() in filename_lower for kw in benign_keywords):
         df['Label'] = 0
-        log_util.safe_log(f"Binary label 0 assigned (benign) via filename for {filename}")
+        print(f"[INFO] Binary label 0 (benign) assigned via filename for {filename}")
         return df
     elif attack_keywords and any(kw.lower() in filename_lower for kw in attack_keywords):
         df['Label'] = 1
-        log_util.safe_log(f"Binary label 1 assigned (attack) via filename for {filename}")
+        print(f"[INFO] Binary label 1 (attack) assigned via filename for {filename}")
         return df
 
-    # --- Case 4: Manual mapping from filename ---
+    # --- Case 4: Manual filename mapping ---
     if manual_label_map:
         label = manual_label_map.get(filename_lower)
         if label is not None:
             df['Label'] = label
-            log_util.safe_log(f"Manual label {label} assigned via filename for {filename}")
+            print(f"[INFO] Manual label {label} assigned via filename for {filename}")
             return df
 
-    # --- ✅ NEW: Case 5 - Content-based keyword search ---
+    # --- Case 5: Content-based keyword search ---
     if content_label_column_candidates:
         for col in content_label_column_candidates:
             if col in df.columns:
                 col_values = df[col].astype(str).str.lower()
                 if benign_keywords and col_values.str.contains('|'.join(benign_keywords), na=False).any():
                     df['Label'] = 0
-                    log_util.safe_log(f"Content-based label 0 (benign) assigned using column '{col}' in {filename}")
+                    print(f"[INFO] Content-based label 0 (benign) assigned using column '{col}' in {filename}")
                     return df
                 if attack_keywords and col_values.str.contains('|'.join(attack_keywords), na=False).any():
                     df['Label'] = 1
-                    log_util.safe_log(f"Content-based label 1 (attack) assigned using column '{col}' in {filename}")
+                    print(f"[INFO] Content-based label 1 (attack) assigned using column '{col}' in {filename}")
                     return df
 
-    # --- Final fallback ---
-    df['Label'] = np.nan
-    log_util.safe_log(f"⚠️ Could not infer label for: {filename}")
+    # --- Fallback ---
+    df['Label'] = -1
+    print(f"[WARN] ⚠️ Could not infer label for: {filename} — defaulting to 0 (benign)")
     return df
+
 
 
 def get_cache_path(folder_path):
@@ -275,7 +318,7 @@ def process_single_file(file,
         return None
 
     df.columns = df.columns.str.strip()
-    df = assign_labels(df, file, benign_keywords, attack_keywords, multiclass_keywords, manual_label_map)
+    df = assign_labels_numeric(df, file)
 
     # 🔐 Convert label to numeric and drop invalids
     df['Label'] = pd.to_numeric(df['Label'], errors='coerce')
