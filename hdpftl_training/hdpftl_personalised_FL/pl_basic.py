@@ -30,6 +30,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="lightgbm")
 
 logging.basicConfig(level=logging.INFO)
 
