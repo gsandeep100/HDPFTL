@@ -28,10 +28,10 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-
-from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="lightgbm")
+
+from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
 
 logging.basicConfig(level=logging.INFO)
 
@@ -42,16 +42,16 @@ os.environ["OMP_NUM_THREADS"] = "4"
 # -------------------------------------------------------------
 config = {
     "random_seed": 42,
-    "n_edges": 5,
-    "n_device": 20,
-    "device_per_edge": 4,
-    "epoch": 10,
+    "n_edges": 20,
+    "n_device": 100,
+    "device_per_edge": 5,
+    "epoch": 20,
     "device_boosting_rounds": 5,
     "edge_boosting_rounds": 5,
     "variance_prune": True,
     "variance_threshold": 1e-4,
-    "bayes_n_samples": 50,
-    "bayes_n_tune": 50,
+    "bayes_n_samples": 500,
+    "bayes_n_tune": 500,
     "save_results": True,
     "results_path": "results",
     "isotonic_min_positives": 5,
@@ -169,6 +169,8 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
         learning_rate=config["learning_rate"],
         max_depth=config["max_depth"],
         min_data_in_leaf=config["min_data_in_leaf"],
+        min_child_samples=config["min_data_in_leaf"],
+
         feature_fraction=config["feature_fraction"],
         device="gpu",
         gpu_platform_id=0,
@@ -514,7 +516,8 @@ def gossip_layer_aggregation(devices_data, device_models, le, num_classes, X_fin
 # Forward pass with Device → Edge → Gossip
 # ============================================================
 
-def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finetune):
+def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finetune,
+                 residuals_devices=None, device_models=None):
     """
     Perform a single forward pass through:
     - Device-level boosting
@@ -522,9 +525,10 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
     - Gossip/global aggregation
     Returns models, residuals, accuracies
     """
-    residuals_devices = [None] * len(devices_data)
-    device_models = [None] * len(devices_data)
-
+    if residuals_devices is None:
+        residuals_devices = [None] * len(devices_data)
+    if device_models is None:
+        device_models = [None] * len(devices_data)
     # -----------------------------
     # Device Layer
     # -----------------------------
@@ -697,13 +701,19 @@ if __name__ == "__main__":
         seed=42
     )
     device_accs, edge_accs, global_accs = [], [], []
-
+    residuals_devices = [None] * len(devices_data)
+    device_models = [None] * len(devices_data)
+    residuals_edges = None
+    edge_models = None
+    gossip_summary = None
     # -----------------------------
     # Training epochs
     # -----------------------------
     for epoch in range(config["epoch"]):
         device_models, edge_models, gossip_summary, residuals_devices, residuals_edges, edge_acc, global_acc = \
-            forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finetune)
+            forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finetune,
+            residuals_devices=residuals_devices,  # pass in residuals
+            device_models=device_models)          # pass in previous models
 
         # Compute device-level accuracy
         device_epoch_acc_list = []
