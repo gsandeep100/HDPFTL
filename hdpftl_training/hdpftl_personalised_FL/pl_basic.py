@@ -73,75 +73,6 @@ ArrayLike = Union[np.ndarray, pd.DataFrame, pd.Series]
 DeviceData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 
 
-# ============================================================
-# Helper functions
-# ============================================================
-
-def safe_array(X):
-    """Convert input to NumPy array if it is a DataFrame or Series."""
-    if isinstance(X, (pd.DataFrame, pd.Series)):
-        return X.to_numpy()
-    return np.asarray(X)
-
-
-def compute_accuracy(y_true, y_pred):
-    y_true_np = safe_array(y_true)
-    y_pred_np = safe_array(y_pred)
-    print("DEBUG compute_accuracy:")
-    return float(np.mean(y_true_np == y_pred_np))
-
-
-def make_edge_groups(n_devices: int, n_edges: int, random_state: int = 42) -> List[List[int]]:
-    idxs = np.arange(n_devices)
-    rng_local = np.random.default_rng(random_state)
-    rng_local.shuffle(idxs)
-    return [list(g) for g in np.array_split(idxs, n_edges)]
-
-
-# ============================================================
-# Dirichlet Partitioning
-# ============================================================
-
-def dirichlet_partition(X, y, num_devices, alpha=0.3, seed=42):
-    """Partition dataset indices using Dirichlet distribution."""
-    y_np = y.values if hasattr(y, 'values') else y
-    np.random.seed(seed)
-    unique_classes = np.unique(y_np)
-    device_indices = [[] for _ in range(num_devices)]
-
-    for c in unique_classes:
-        class_idx = np.where(y_np == c)[0]
-        np.random.shuffle(class_idx)
-        proportions = np.random.dirichlet(alpha * np.ones(num_devices))
-        proportions = (proportions * len(class_idx)).astype(int)
-        diff = len(class_idx) - proportions.sum()
-        proportions[np.argmax(proportions)] += diff
-        splits = np.split(class_idx, np.cumsum(proportions)[:-1])
-        for device_id, split in enumerate(splits):
-            device_indices[device_id].extend(split.tolist())
-
-    X_np = X.values if hasattr(X, 'values') else X
-    device_data_dict = {}
-    for i, idxs in enumerate(device_indices):
-        device_data_dict[i] = (X_np[idxs], y_np[idxs])
-    return device_data_dict
-
-
-def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_edges):
-    """Return device_data and hierarchical_data for devices and edges."""
-    device_data_dict = dirichlet_partition(X, y, num_devices, config["alpha"], config["random_seed"])
-    devices_data = []
-    hierarchical_data = {}
-    for cid, (X_c, y_c) in device_data_dict.items():
-        n_samples = len(X_c)
-        device_idxs = np.array_split(np.arange(n_samples), device_per_edge)
-        device_data = [(X_c[d], y_c[d]) for d in device_idxs]
-        hierarchical_data[cid] = device_data
-        X_train, X_test, y_train, y_test = train_test_split(X_c, y_c, test_size=0.2, random_state=config["random_seed"])
-        devices_data.append((X_train, X_test, y_train, y_test))
-    edge_groups = make_edge_groups(num_devices, n_edges)
-    return devices_data, hierarchical_data, edge_groups
-
 
 # ============================================================
 # LightGBM Training
@@ -443,7 +374,9 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true, num
     """
     # Stack all edges' embeddings and outputs
     X_global = np.vstack(edge_embeddings)  # shape: (total_samples, embedding_dim)
-    H_global = np.vstack(edge_outputs)  # shape: (total_samples, num_classes)
+    H_global = np.vstack(safe_edge_output(edge_outputs, num_classes))
+
+    H_global = np.vstack(H_global)  # shape: (total_samples, num_classes)
 
     n_samples = X_global.shape[0]
 
@@ -637,6 +570,93 @@ def dirichlet_partition_for_devices_edges_non_iid(X, y, num_devices, device_per_
 
 
 # ============================================================
+# Helper functions
+# ============================================================
+
+def safe_array(X):
+    """Convert input to NumPy array if it is a DataFrame or Series."""
+    if isinstance(X, (pd.DataFrame, pd.Series)):
+        return X.to_numpy()
+    return np.asarray(X)
+
+def safe_edge_output(H_list, num_classes):
+    """
+    Ensure each edge output has shape (n_samples, num_classes) before stacking.
+    """
+    H_fixed = []
+    for H in H_list:
+        H = np.atleast_2d(H)
+        if H.shape[1] < num_classes:
+            # Pad missing columns with zeros
+            pad_width = num_classes - H.shape[1]
+            H = np.hstack([H, np.zeros((H.shape[0], pad_width))])
+        elif H.shape[1] > num_classes:
+            H = H[:, :num_classes]  # truncate extra columns
+        H_fixed.append(H)
+    return H_fixed
+
+
+def compute_accuracy(y_true, y_pred):
+    y_true_np = safe_array(y_true)
+    y_pred_np = safe_array(y_pred)
+    print("DEBUG compute_accuracy:")
+    return float(np.mean(y_true_np == y_pred_np))
+
+
+def make_edge_groups(n_devices: int, n_edges: int, random_state: int = 42) -> List[List[int]]:
+    idxs = np.arange(n_devices)
+    rng_local = np.random.default_rng(random_state)
+    rng_local.shuffle(idxs)
+    return [list(g) for g in np.array_split(idxs, n_edges)]
+
+
+# ============================================================
+# Dirichlet Partitioning
+# ============================================================
+
+def dirichlet_partition(X, y, num_devices, alpha=0.3, seed=42):
+    """Partition dataset indices using Dirichlet distribution."""
+    y_np = y.values if hasattr(y, 'values') else y
+    np.random.seed(seed)
+    unique_classes = np.unique(y_np)
+    device_indices = [[] for _ in range(num_devices)]
+
+    for c in unique_classes:
+        class_idx = np.where(y_np == c)[0]
+        np.random.shuffle(class_idx)
+        proportions = np.random.dirichlet(alpha * np.ones(num_devices))
+        proportions = (proportions * len(class_idx)).astype(int)
+        diff = len(class_idx) - proportions.sum()
+        proportions[np.argmax(proportions)] += diff
+        splits = np.split(class_idx, np.cumsum(proportions)[:-1])
+        for device_id, split in enumerate(splits):
+            device_indices[device_id].extend(split.tolist())
+
+    X_np = X.values if hasattr(X, 'values') else X
+    device_data_dict = {}
+    for i, idxs in enumerate(device_indices):
+        device_data_dict[i] = (X_np[idxs], y_np[idxs])
+    return device_data_dict
+
+
+def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_edges):
+    """Return device_data and hierarchical_data for devices and edges."""
+    device_data_dict = dirichlet_partition(X, y, num_devices, config["alpha"], config["random_seed"])
+    devices_data = []
+    hierarchical_data = {}
+    for cid, (X_c, y_c) in device_data_dict.items():
+        n_samples = len(X_c)
+        device_idxs = np.array_split(np.arange(n_samples), device_per_edge)
+        device_data = [(X_c[d], y_c[d]) for d in device_idxs]
+        hierarchical_data[cid] = device_data
+        X_train, X_test, y_train, y_test = train_test_split(X_c, y_c, test_size=0.2, random_state=config["random_seed"])
+        devices_data.append((X_train, X_test, y_train, y_test))
+    edge_groups = make_edge_groups(num_devices, n_edges)
+    return devices_data, hierarchical_data, edge_groups
+
+
+
+# ============================================================
 # Training Loop Example
 # ============================================================
 
@@ -723,3 +743,7 @@ if __name__ == "__main__":
     plt.legend()
     plt.grid(True)
     plt.show()
+
+
+
+
