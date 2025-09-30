@@ -20,7 +20,7 @@ from glob import glob
 
 import numpy as np
 import torch
-from imblearn.over_sampling import SMOTE, SVMSMOTE, KMeansSMOTE
+from imblearn.over_sampling import KMeansSMOTE, SMOTE, SVMSMOTE
 
 import config
 import hdpftl_utility.log as log_util

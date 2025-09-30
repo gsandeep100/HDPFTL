@@ -1,7 +1,7 @@
 import pyro
 import pyro.distributions as dist
 import torch
-from pyro.nn import PyroSample, PyroModule
+from pyro.nn import PyroModule, PyroSample
 from torch import nn
 
 

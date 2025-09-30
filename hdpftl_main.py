@@ -20,8 +20,7 @@ import tkinter as tk
 import traceback
 import warnings
 from multiprocessing import Process
-from tkinter import scrolledtext, messagebox, font
-from tkinter import ttk
+from tkinter import font, messagebox, scrolledtext, ttk
 
 import config
 

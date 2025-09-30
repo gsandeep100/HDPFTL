@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import accuracy_score
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 import hdpftl_utility.config as config
 import hdpftl_utility.log as log_util

@@ -29,7 +29,7 @@ from sklearn.preprocessing import LabelEncoder
 
 warnings.filterwarnings("ignore", category=UserWarning, module="lightgbm")
 
-from hdpftl_training.hdpftl_data.preprocess import safe_preprocess_data
+from hdpftl_training.hdpftl_data.preprocess import preprocess_data, preprocess_data_safe, safe_preprocess_data
 
 logging.basicConfig(level=logging.INFO)
 
@@ -73,7 +73,6 @@ ArrayLike = Union[np.ndarray, pd.DataFrame, pd.Series]
 DeviceData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 
 
-
 # ============================================================
 # LightGBM Training
 # ============================================================
@@ -104,9 +103,9 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
         min_child_samples=config["min_data_in_leaf"],
 
         feature_fraction=config["feature_fraction"],
-        device="gpu",
-        gpu_platform_id=0,
-        gpu_device_id=0
+        device="cpu",
+        # gpu_platform_id=0,
+        # gpu_device_id=0
     )
     fit_kwargs = {}
     mask = np.isin(y_valid, np.unique(y_np))
@@ -242,6 +241,7 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
             residual = np.clip(residual, 0.0, None)
 
             models_per_device.append(model)
+            print(model)
 
         residuals_devices[idx] = residual
         device_models[idx] = models_per_device
@@ -249,117 +249,130 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
         # Compute leaf embeddings (one-hot of leaf indices from all trees)
         # Here we assume `get_leaf_indices(model, X)` returns leaf indices per sample
         leaf_indices_list = [get_leaf_indices(mdl, X_train) for mdl in models_per_device]
-        leaf_indices_concat = np.hstack(leaf_indices_list)
-        leaf_embeddings = np.zeros((n_samples, np.max(leaf_indices_concat) + 1))
-        leaf_embeddings[np.arange(n_samples)[:, None], leaf_indices_concat] = 1.0
+        if leaf_indices_list:
+            leaf_indices_concat = np.hstack(leaf_indices_list)
+            leaf_embeddings = np.zeros((n_samples, np.max(leaf_indices_concat) + 1))
+            leaf_embeddings[np.arange(n_samples)[:, None], leaf_indices_concat] = 1.0
+        else:
+            # No models trained, return a zero embedding
+            leaf_embeddings = np.zeros((n_samples, 1))
         device_embeddings.append(leaf_embeddings)
 
     return residuals_devices, device_models, device_embeddings
 
 
-import numpy as np
-import logging
 
-
-def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, num_classes,
-                        X_finetune=None, y_finetune=None):
+def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, num_classes,X_finetune=None, y_finetune=None):
     """
     Edge-level sequential boosting.
 
-    Parameters
-    ----------
-    edge_groups : list of lists
-        Each sublist contains indices of devices in that edge.
-    device_embeddings : list of np.ndarray
-        Device-level one-hot leaf embeddings per device.
-    residuals_devices : list of np.ndarray
-        Device-level residuals.
-    le : LabelEncoder
-        For transforming labels.
-    num_classes : int
+    Args:
+        edge_groups: list of lists
+            Each element is a list of device indices belonging to that edge
+        device_embeddings: list of np.ndarray
+            Leaf embeddings from device-level boosting
+        residuals_devices: list of np.ndarray
+            Residuals from device-level boosting
+        le: LabelEncoder
+        num_classes: int
+        X_finetune, y_finetune: optional finetuning datasets
+        config: dict
+            Contains {"edge_boosting_rounds": int}
 
-    X_finetune, y_finetune : optional
-        Data for early stopping / fine-tuning.
-
-    Returns
-    -------
-    edge_models : list
-        Trained models per edge.
-    residuals_edges : list
-        Residuals after edge-level boosting per edge.
-    edge_embeddings : list of np.ndarray
-        One-hot leaf embeddings per edge (stacked from devices).
-    weighted_acc : float
-        Weighted accuracy across all edges.
+    Returns:
+        edge_outputs: list of np.ndarray
+            Predictions (n_samples_edge, num_classes) per edge
+        edge_models: list of list
+            Trained models per edge
+        residuals_edges: list of np.ndarray
+            Final residuals per edge
+        edge_embeddings: list of np.ndarray
+            One-hot leaf embeddings per edge
     """
+
     edge_models = []
     residuals_edges = []
-    edge_embeddings = []
-    edge_acc_list = []
+    edge_embeddings_list = []
+    edge_outputs = []
 
     for edge_idx, edge_devices in enumerate(edge_groups):
         if len(edge_devices) == 0:
             edge_models.append([])
-            residuals_edges.append([])
-            edge_embeddings.append(np.array([]))
-            edge_acc_list.append((0.0, 0))
+            residuals_edges.append(None)
+            edge_embeddings_list.append(None)
+            edge_outputs.append(None)
             continue
 
-        # Stack device embeddings and residuals
-        X_edge = np.vstack([device_embeddings[i] for i in edge_devices])
-        residual_edge = np.vstack([residuals_devices[i] for i in edge_devices])
-        edge_embeddings.append(X_edge.copy())  # save hot embeddings for global layer
+        # -----------------------------
+        # Stack device embeddings and residuals with padding
+        # -----------------------------
+        embeddings_list = [device_embeddings[i] for i in edge_devices]
+        residual_list = [residuals_devices[i] for i in edge_devices]
+
+        max_cols = max(e.shape[1] for e in embeddings_list)
+        padded_embeddings = [
+            np.pad(e, ((0, 0), (0, max_cols - e.shape[1])), mode="constant")
+            for e in embeddings_list
+        ]
+
+        X_edge = np.vstack(padded_embeddings)
+        residual_edge = np.vstack(residual_list)
 
         models_per_edge = []
 
-        for t in range(config["edge_boosting_rounds"]):
+        # Sequential boosting per edge
+        for t in range(config.get("edge_boosting_rounds", 1)):
             y_pseudo = residual_edge.argmax(axis=1)
+
+            # Stop if all pseudo-labels are the same
             if len(np.unique(y_pseudo)) < 2:
-                logging.debug(f"Edge {edge_idx}, round {t}: single class, skipping.")
                 break
 
-            # Train edge model
-            model_e = train_lightgbm(X_edge, y_pseudo, X_finetune, y_finetune,
-                                     early_stopping_rounds=20, num_classes=num_classes)
-            pred_proba = predict_proba_fixed(model_e, X_edge, num_classes, le=le)
+            # Train LightGBM on pseudo-labels
+            model = train_lightgbm(
+                X_edge, y_pseudo, X_finetune, y_finetune,
+                early_stopping_rounds=20, num_classes=num_classes
+            )
 
-            # Variance pruning if enabled
-            if config.get("variance_prune", False):
-                var = np.var(pred_proba, axis=0)
-                mask = var >= config.get("variance_threshold", 0.0)
-                pred_proba[:, ~mask] = 0.0
-                row_sums = pred_proba.sum(axis=1, keepdims=True)
-                row_sums[row_sums == 0] = 1.0
-                pred_proba /= row_sums
+            pred_proba = predict_proba_fixed(model, X_edge, num_classes, le=le)
 
-            # Update residuals
+            # Update residuals (sequential boosting)
             residual_edge -= pred_proba
             residual_edge = np.clip(residual_edge, 0.0, None)
 
-            models_per_edge.append(model_e)
+            models_per_edge.append(model)
 
+        # Store results
         edge_models.append(models_per_edge)
         residuals_edges.append(residual_edge)
+        edge_embeddings_list.append(X_edge)
 
-        # Optional: compute weighted edge accuracy
-        # (requires device test data, not included in this version)
+        # Compute edge outputs using embeddings, not raw features
+        if len(models_per_edge) > 0:
+            # Use ensemble of all models per edge or just the last one
+            y_preds = [m.predict_proba(X_edge) for m in models_per_edge]
+            y_pred_edge = np.mean(y_preds, axis=0)  # average predictions
+            edge_outputs.append(y_pred_edge)
+        else:
+            edge_outputs.append(None)
 
-    return edge_models, residuals_edges, edge_embeddings
+    return edge_outputs, edge_models, residuals_edges, edge_embeddings_list
 
 
-def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true, num_classes):
+
+def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_edge, num_classes):
     """
     Global (server) Bayesian aggregation using edge embeddings.
 
     Parameters
     ----------
-    edge_outputs : list of np.ndarray
+    edge_outputs : list of np.ndarray or None
         Final predictions from each edge after edge-level boosting.
         Each element: shape (n_samples_edge, num_classes)
-    edge_embeddings : list of np.ndarray
+    edge_embeddings : list of np.ndarray or None
         Leaf embeddings from each edge. Each element: shape (n_samples_edge, embedding_dim)
-    y_true : np.ndarray
-        True labels (integer indices or one-hot)
+    y_true_per_edge : list of np.ndarray
+        True labels for each edge (integer indices)
     num_classes : int
         Number of classes
 
@@ -372,11 +385,17 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true, num
     theta_global : dict
         Posterior parameters of the global Bayesian model
     """
-    # Stack all edges' embeddings and outputs
-    X_global = np.vstack(edge_embeddings)  # shape: (total_samples, embedding_dim)
-    H_global = np.vstack(safe_edge_output(edge_outputs, num_classes))
 
-    H_global = np.vstack(H_global)  # shape: (total_samples, num_classes)
+    # Filter out None edges
+    valid_edges = [
+        i for i, (out, emb) in enumerate(zip(edge_outputs, edge_embeddings))
+        if out is not None and emb is not None
+    ]
+
+    # Stack embeddings, outputs, and labels
+    X_global = np.vstack([edge_embeddings[i] for i in valid_edges])
+    H_global = np.vstack([edge_outputs[i] for i in valid_edges])
+    y_global = np.hstack([y_true_per_edge[i] for i in valid_edges])
 
     n_samples = X_global.shape[0]
 
@@ -385,23 +404,20 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true, num
     beta = np.ones((H_global.shape[1], num_classes))
 
     # Weighted sum of edge outputs
-    logits = alpha + H_global @ beta  # shape: (n_samples, num_classes)
+    logits = alpha + H_global @ beta
 
     # Softmax to get probabilities
     exp_logits = np.exp(logits - np.max(logits, axis=1, keepdims=True))
     y_global_pred = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
 
-    # Convert y_true to one-hot if needed
-    if y_true.ndim == 1:
-        y_onehot = np.zeros_like(y_global_pred)
-        y_onehot[np.arange(n_samples), y_true] = 1
-    else:
-        y_onehot = y_true
+    # Convert y_global (integer labels) to one-hot
+    y_onehot = np.zeros((n_samples, num_classes))
+    y_onehot[np.arange(n_samples), y_global] = 1
 
-    # Compute residuals for feedback
+    # Compute residuals
     global_residuals = y_onehot - y_global_pred
 
-    # Posterior update placeholder (mean-based)
+    # Posterior update (mean-based)
     theta_global = {
         "alpha": alpha + np.mean(H_global, axis=0),
         "beta": beta + np.mean(global_residuals, axis=0)
@@ -439,14 +455,17 @@ def forward_pass(devices_data, edge_groups, num_classes, X_finetune, y_finetune,
     # -----------------------------
     # Edge Layer
     # -----------------------------
-    edge_models, residuals_edges, edge_embeddings = edge_layer_boosting(
+    edge_outputs, edge_models, residuals_edges, edge_embeddings = edge_layer_boosting(
         edge_groups, device_embeddings, residuals_devices, le, num_classes, X_finetune, y_finetune)
 
     # -----------------------------
     # Gossip / Global Layer
     # -----------------------------
     global_residual, gossip_summary, global_acc = global_layer_bayesian_aggregation(
-        devices_data, edge_embeddings, le, num_classes
+        edge_outputs=edge_outputs,
+        edge_embeddings=edge_embeddings,
+        y_true_per_edge=y_finetune,  # true labels, not LabelEncoder
+        num_classes=num_classes
     )
 
     return device_models, edge_models, gossip_summary, residuals_devices, residuals_edges, edge_acc, global_acc
@@ -579,21 +598,44 @@ def safe_array(X):
         return X.to_numpy()
     return np.asarray(X)
 
-def safe_edge_output(H_list, num_classes):
+
+def safe_edge_output(edge_outputs, num_classes):
     """
-    Ensure each edge output has shape (n_samples, num_classes) before stacking.
+    Ensures each edge output is 2D with shape (n_samples, num_classes).
+    If outputs are missing columns, pad with zeros.
+    If outputs are 1D, convert to one-hot.
     """
-    H_fixed = []
-    for H in H_list:
-        H = np.atleast_2d(H)
-        if H.shape[1] < num_classes:
-            # Pad missing columns with zeros
-            pad_width = num_classes - H.shape[1]
-            H = np.hstack([H, np.zeros((H.shape[0], pad_width))])
-        elif H.shape[1] > num_classes:
-            H = H[:, :num_classes]  # truncate extra columns
-        H_fixed.append(H)
-    return H_fixed
+    safe_list = []
+    for i, H in enumerate(edge_outputs):
+        H = np.asarray(H)
+
+        # Case 1: 1D vector of labels -> convert to one-hot
+        if H.ndim == 1:
+            H_onehot = np.zeros((H.shape[0], num_classes))
+            H_onehot[np.arange(H.shape[0]), H.astype(int)] = 1
+            H = H_onehot
+
+        # Case 2: Single row (e.g. (num_classes,)) -> reshape
+        elif H.ndim == 1 and H.shape[0] == num_classes:
+            H = H.reshape(1, -1)
+
+        # Case 3: Already 2D but wrong num_classes -> pad or truncate
+        elif H.ndim == 2:
+            if H.shape[1] < num_classes:
+                # pad missing columns with zeros
+                pad_width = num_classes - H.shape[1]
+                H = np.pad(H, ((0, 0), (0, pad_width)), mode='constant')
+            elif H.shape[1] > num_classes:
+                # truncate extra columns
+                H = H[:, :num_classes]
+
+        else:
+            raise ValueError(f"[safe_edge_output] Unexpected shape {H.shape} for edge {i}")
+
+        safe_list.append(H)
+
+    return safe_list
+
 
 
 def compute_accuracy(y_true, y_pred):
@@ -655,27 +697,28 @@ def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_
     return devices_data, hierarchical_data, edge_groups
 
 
-
 # ============================================================
 # Training Loop Example
 # ============================================================
 
 if __name__ == "__main__":
 
-    folder_path = "CIC_IoT_DIAD_2024"
+    folder_path = "CIC_IoT_IDAD_Dataset_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
 
     # 1. Preprocess
-    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = safe_preprocess_data(
+    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data_safe(
         log_path_str, folder_path, scaler_type='minmax'
     )
 
     # 2. Encode labels
     le = LabelEncoder()
     le.fit(y_pretrain)
-    num_classes = len(le.classes_)
+    num_classes = len(np.unique(y_pretrain))
+
+
 
     # 3. Partition fine-tune data for devices & edges
     devices_data, edge_groups = dirichlet_partition_for_devices_edges_non_iid(
@@ -692,6 +735,7 @@ if __name__ == "__main__":
     residuals_edges = None
     edge_models = None
     gossip_summary = None
+
     # -----------------------------
     # Training epochs
     # -----------------------------
@@ -743,7 +787,3 @@ if __name__ == "__main__":
     plt.legend()
     plt.grid(True)
     plt.show()
-
-
-
-

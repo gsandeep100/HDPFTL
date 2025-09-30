@@ -4,7 +4,7 @@ import gc
 
 import torch
 import torch.nn as nn
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 import config  # your hdpftl_utility/config.py (import path as in your project)
 import hdpftl_utility.log as log_util

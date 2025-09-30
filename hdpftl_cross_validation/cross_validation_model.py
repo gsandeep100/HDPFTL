@@ -1,9 +1,8 @@
 import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import KFold
-from sklearn.model_selection import StratifiedKFold
-from torch.utils.data import TensorDataset, DataLoader
+from sklearn.model_selection import KFold, StratifiedKFold
+from torch.utils.data import DataLoader, TensorDataset
 
 import hdpftl_training.hdpftl_models.TabularNet as tabularnet
 import hdpftl_utility.log as log_util
