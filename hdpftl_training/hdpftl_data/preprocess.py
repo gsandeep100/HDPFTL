@@ -13,7 +13,6 @@
 import gc
 import glob
 import hashlib
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from glob import glob
 
@@ -42,7 +41,6 @@ from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import RandomUnderSampler
 from imblearn.pipeline import Pipeline
 from collections import Counter
-import pandas as pd
 import warnings
 
 
@@ -190,6 +188,7 @@ def safe_smote(X, y):
 import os
 import pandas as pd
 
+
 def assign_labels_numeric(df, filename):
     """
     Assign numeric multiclass labels (0–7) to df['Label']
@@ -219,6 +218,7 @@ def assign_labels_numeric(df, filename):
     df["Label"] = -1  # or choose a default like 0
     print(f"[WARN] No keyword match for {filename} → assigned -1")
     return df
+
 
 def assign_labels(
         df,
@@ -295,7 +295,6 @@ def assign_labels(
     df['Label'] = -1
     print(f"[WARN] ⚠️ Could not infer label for: {filename} — defaulting to 0 (benign)")
     return df
-
 
 
 def get_cache_path(folder_path):
