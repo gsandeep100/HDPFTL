@@ -103,9 +103,9 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
         min_child_samples=config["min_data_in_leaf"],
 
         feature_fraction=config["feature_fraction"],
-        device="cpu",
-        # gpu_platform_id=0,
-        # gpu_device_id=0
+        device="gpu",
+        gpu_platform_id=0,
+        gpu_device_id=0
     )
     fit_kwargs = {}
     mask = np.isin(y_valid, np.unique(y_np))
