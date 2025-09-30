@@ -374,9 +374,9 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true, num
     """
     # Stack all edges' embeddings and outputs
     X_global = np.vstack(edge_embeddings)  # shape: (total_samples, embedding_dim)
-    H_global = np.vstack(safe_edge_output(edge_outputs, num_classes))
-
-    H_global = np.vstack(H_global)  # shape: (total_samples, num_classes)
+    # Before stacking edge outputs
+    all_edge_outputs = fix_proba_shape(edge_outputs, num_classes)
+    H_global = np.stack(all_edge_outputs, axis=-1)  # shape: (n_samples, num_classes, n_edges)
 
     n_samples = X_global.shape[0]
 
@@ -579,22 +579,25 @@ def safe_array(X):
         return X.to_numpy()
     return np.asarray(X)
 
-def safe_edge_output(H_list, num_classes):
-    """
-    Ensure each edge output has shape (n_samples, num_classes) before stacking.
-    """
-    H_fixed = []
-    for H in H_list:
-        H = np.atleast_2d(H)
-        if H.shape[1] < num_classes:
-            # Pad missing columns with zeros
-            pad_width = num_classes - H.shape[1]
-            H = np.hstack([H, np.zeros((H.shape[0], pad_width))])
-        elif H.shape[1] > num_classes:
-            H = H[:, :num_classes]  # truncate extra columns
-        H_fixed.append(H)
-    return H_fixed
 
+def fix_proba_shape(H_list, num_classes):
+    """
+    Ensure each H in H_list has shape (n_samples, num_classes).
+    Pads missing columns with zeros or truncates extra columns.
+    """
+    fixed_list = []
+    for H in H_list:
+        H = np.atleast_2d(np.array(H))  # ensure 2D array
+        n_samples, n_cols = H.shape
+
+        if n_cols < num_classes:
+            pad_width = num_classes - n_cols
+            H = np.hstack([H, np.zeros((n_samples, pad_width))])
+        elif n_cols > num_classes:
+            H = H[:, :num_classes]
+
+        fixed_list.append(H)
+    return fixed_list
 
 def compute_accuracy(y_true, y_pred):
     y_true_np = safe_array(y_true)
