@@ -1,10 +1,10 @@
 import torch
 from torch import nn
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
-from hdpftl_utility.config import BATCH_SIZE
-from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device
+import hdpftl_utility.config as config
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
 
 
 def train_device_model(
@@ -19,20 +19,20 @@ def train_device_model(
         verbose=True
 ):
     global best_model_state
-    device = setup_device()
+    device = util.setup_device()
     model = model.to(device)
 
     train_data = train_data.to(device)
     train_labels = train_labels.to(device)
 
     train_dataset = TensorDataset(train_data, train_labels)
-    train_loader = DataLoader(train_dataset, BATCH_SIZE, shuffle=True, pin_memory=False)
+    train_loader = DataLoader(train_dataset, config.BATCH_SIZE, shuffle=True, pin_memory=False)
 
     if val_data is not None and val_labels is not None:
         val_data = val_data.to(device)
         val_labels = val_labels.to(device)
         val_dataset = TensorDataset(val_data, val_labels)
-        val_loader = DataLoader(val_dataset, BATCH_SIZE, shuffle=False, pin_memory=False)
+        val_loader = DataLoader(val_dataset, config.BATCH_SIZE, shuffle=False, pin_memory=False)
     else:
         val_loader = None
 
@@ -89,7 +89,7 @@ def train_device_model(
             else:
                 epochs_no_improve += 1
                 if verbose:
-                    safe_log(f"Early stopping at epoch {epoch + 1}", level="warning")
+                    log_util.safe_log(f"Early stopping at epoch {epoch + 1}", level="warning")
                 if best_model_state is not None:
                     model.load_state_dict(best_model_state)
                 break

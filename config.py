@@ -1,0 +1,11 @@
+BATCH_SIZE = 5
+BATCH_SIZE_TRAINING = 16
+NUM_CLIENTS = 10
+NUM_DEVICES_PER_CLIENT = 10
+NUM_EPOCHS_PRE_TRAIN = 10
+NUM_FEDERATED_ROUND = 10
+task = 'classification'
+num_clients = 3
+rounds = 5
+n_global_trees = 5
+n_local_trees = 5

@@ -12,10 +12,10 @@
 """
 import torch.nn as nn
 
-from hdpftl_utility.config import INPUT_DIM, NUM_CLASSES
+import hdpftl_utility.config as config
 
 
-def create_model_fn(input_dim=INPUT_DIM, num_classes=NUM_CLASSES):
+def create_model_fn(input_dim=config.INPUT_DIM, num_classes=config.NUM_CLASSES):
     return TabularNet(input_dim, num_classes)
 
 

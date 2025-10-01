@@ -188,3 +188,6 @@ cython_debug/
 .idea
 .vscode
 .venv
+*.iml
+*.xml
+*.joblib

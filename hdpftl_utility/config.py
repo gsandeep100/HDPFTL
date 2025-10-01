@@ -19,9 +19,7 @@
 import os
 from string import Template
 
-from bs4 import ResultSet
-
-from hdpftl_utility.utils import get_today_date
+import hdpftl_utility.utils as util
 
 # Main Code Flow Based on the Diagrams
 # 🔁 Level 1: Device-Level Training (Personalized Learning)
@@ -124,24 +122,23 @@ INPUT_DATASET_PATH_2023 = 'https://www.unb.ca/cic/datasets/iotdataset-2023.html'
 INPUT_DATASET_PATH_2024 = 'https://www.unb.ca/cic/datasets/iotdataset-2024.html'
 OUTPUT_DATASET_PATH_2023 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2023/"
 OUTPUT_DATASET_PATH_2024 = "./hdpftl_dataset/CIC_IoT_IDAD_Dataset_2024/"
-OUTPUT_DATASET_ALL_DATA = "./hdpftl_training/hdpftl_dataset/AllData/"
+OUTPUT_DATASET_ALL_DATA = "./hdpftl_training/hdpftl_dataset/"
+OUTPUT_DATASET_SELECTED_TEST_DATA = "./hdpftl_training/hdpftl_dataset/selected_test/"
 
-BATCH_SIZE = 5
+USE_UPLOADED_TEST_FILES = False
+BATCH_SIZE = 12
 BATCH_SIZE_TRAINING = 16
 NUM_CLIENTS = 10
-NUM_DEVICES_PER_CLIENT = 5
+NUM_DEVICES_PER_CLIENT = 10
 # CLIENTS_PER_AGGREGATOR = 5
 # NUM_ROUNDS = 10
-INPUT_DIM = 79  # Your feature size
-NUM_EPOCHS_PRE_TRAIN = 5  # or 50 or 100
-NUM_FEDERATED_ROUND = 5  # or 50 or 100
+NUM_EPOCHS_PRE_TRAIN = 10
+NUM_FEDERATED_ROUND = 10
 # NUM_TRAIN_ON_DEVICE = 10  # or 50 or 100
+INPUT_DIM = 79  # Your feature size
 NUM_CLASSES = 2  # Suppose you pretrained with 5 classes
 GLOBAL_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/global_model.pth")
-X_Y_TEST_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
-PARTITIONED_DATA_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
-RESULTS_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
-PREDICTIONS_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
+TRAINED_MODEL_FOLDER_PATH = Template("./hdpftl_trained_models/${n}/")
 
 FINETUNE_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/fine_tuned_tabular_model.pth")
 PRE_MODEL_FOLDER_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/")
@@ -150,10 +147,38 @@ EPOCH_DIR_TEMPLATE = Template("./hdpftl_trained_models/${n}/epochs")
 TRAINED_MODEL_DIR = "./hdpftl_trained_models/"
 LOGS_DIR_TEMPLATE = Template("./hdpftl_logs/${dataset}/${date}/")
 # Substitute to get the string path
-EPOCH_DIR = EPOCH_DIR_TEMPLATE.substitute(n=get_today_date())
+EPOCH_DIR = EPOCH_DIR_TEMPLATE.substitute(n=util.get_today_date())
 
 EPOCH_FILE_FINE = os.path.join(EPOCH_DIR, "fine_tune_epoch_losses.npy")
 EPOCH_FILE_PRE = os.path.join(EPOCH_DIR, "pre_epoch_losses.npy")
 
 PLOT_PATH = "./hdpftl_plot_outputs/"
-#PERSONALISED_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/personalized_model_client_${n}.pth")
+# PERSONALISED_MODEL_PATH_TEMPLATE = Template("./hdpftl_trained_models/${n}/personalized_model_client_${n}.pth")
+
+# Remove directories
+dirs_to_remove = [
+    "./hdpftl_logs/",
+    "./hdpftl_trained_models/",
+    "./runs/",
+]
+
+saved_config_params = {
+    "BATCH_SIZE": 5,
+    "BATCH_SIZE_TRAINING": 16,
+    "NUM_CLIENTS": 10,
+    "NUM_DEVICES_PER_CLIENT": 5,
+    "NUM_EPOCHS_PRE_TRAIN": 5,
+    "NUM_FEDERATED_ROUND": 5,
+    "USE_UPLOADED_TEST_FILES": False
+}
+TEST_CSV_PATHS = (
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/wednesday_plus.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/wednesday.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/tuesday_plus.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/tuesday.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/thursday_plus.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/thursday.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/monday_plus.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/monday.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/friday_plus.csv',
+    '/Users/sandeepghosh/Documents/PHD/Code/HDPFTL/hdpftl_training/hdpftl_dataset/CICIDS_2017/friday.csv')

@@ -1,5 +1,5 @@
 from models.BayesianTabularNet import BayesianTabularNet
-from pyro.infer import Trace_ELBO, SVI
+from pyro.infer import SVI, Trace_ELBO
 from pyro.infer.autoguide import AutoDiagonalNormal
 from torch.optim import Adam
 

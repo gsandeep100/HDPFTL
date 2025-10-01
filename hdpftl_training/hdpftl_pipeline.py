@@ -1,16 +1,14 @@
 import copy
 import gc
 
-import numpy as np
-import torch
-from torch.utils.data import TensorDataset, DataLoader
+from sklearn.model_selection import train_test_split
 
-from hdpftl_evaluation.evaluate_global_model import evaluate_global_model
-from hdpftl_training.hdpftl_aggregation.hdpftl_fedavg import aggregate_models
-from hdpftl_training.save_model import save
-from hdpftl_utility.config import NUM_DEVICES_PER_CLIENT, NUM_FEDERATED_ROUND, BATCH_SIZE_TRAINING
-from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import named_timer, setup_device, clear_memory
+import hdpftl_evaluation.evaluate_global_model as evaluate_global_model
+import hdpftl_training.hdpftl_aggregation.hdpftl_fedavg as hdpftl_fedavg
+import hdpftl_training.save_model as save
+import hdpftl_utility.config as config
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
 
 
 def split_among_devices(X_client, y_client, seed=42):
@@ -23,12 +21,12 @@ def split_among_devices(X_client, y_client, seed=42):
     np.random.shuffle(indices)
 
     device_data = []
-    size = len(y_client) // NUM_DEVICES_PER_CLIENT
+    size = len(y_client) // config.NUM_DEVICES_PER_CLIENT
 
-    for i in range(NUM_DEVICES_PER_CLIENT):
+    for i in range(config.NUM_DEVICES_PER_CLIENT):
         start = i * size
         # Last device takes remainder
-        end = (i + 1) * size if i < NUM_DEVICES_PER_CLIENT - 1 else len(y_client)
+        end = (i + 1) * size if i < config.NUM_DEVICES_PER_CLIENT - 1 else len(y_client)
         device_indices = indices[start:end]
 
         X_device = X_client[device_indices]
@@ -38,7 +36,7 @@ def split_among_devices(X_client, y_client, seed=42):
     return device_data
 
 
-def dirichlet_partition(X, y, alpha, num_clients, seed=42):
+def dirichlet_partition(X, y, num_clients, seed=42, alpha=0.5):
     """
     Partition dataset indices using Dirichlet distribution to simulate non-IID data.
 
@@ -129,6 +127,56 @@ def dirichlet_partition_with_devices(X, y, alpha=0.3, num_clients=5, num_devices
     return client_data_dict, hierarchical_data
 
 
+def dirichlet_partition_for_edges_clients(X, y, edges_groups, seed=42, alpha=0.5, min_samples_per_client=5):
+    """
+    Partition dataset among clients based on edges_groups.
+    Each edge group defines which clients belong together.
+
+    Returns:
+        clients_data: list of tuples (X_train, X_test, y_train, y_test) for each client
+        hierarchical_data: dict of client_id -> list of device datasets [(X_device, y_device), ...]
+    """
+    client_data_dict = dirichlet_partition(X, y, num_clients=len(edges_groups), seed=seed, alpha=alpha)
+
+    hierarchical_data = {}
+    clients_data = []
+
+    for i, (client_id, (X_c, y_c)) in enumerate(client_data_dict.items()):
+        num_samples = len(X_c)
+        if num_samples < min_samples_per_client:
+            print(f"[WARN] Client {client_id} has too few samples ({num_samples}), skipping.")
+            continue
+
+        # Split into devices according to the edge group size
+        num_devices = max(len(edges_groups[i]), 1)
+        device_indices = np.array_split(np.arange(num_samples), num_devices)
+
+        device_data = []
+        for d_idx in device_indices:
+            X_device = torch.tensor(X_c[d_idx]).float()
+            y_device = torch.tensor(y_c[d_idx]).long()
+            device_data.append((X_device, y_device))
+
+            # free temporary tensors
+            del X_device, y_device
+            gc.collect()
+
+        hierarchical_data[client_id] = device_data
+
+        # --- train/test split for hierarchical_pfl ---
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_c, y_c, test_size=0.2, random_state=seed
+        )
+
+        clients_data.append((X_train, X_test, y_train, y_test))
+
+        # free memory
+        del X_c, y_c, device_indices, device_data
+        gc.collect()
+
+    return clients_data, hierarchical_data
+
+
 def safe_split(tensor, proportions, dim=0):
     """
     Safely splits a tensor along any dimension using proportions that sum to 1.0.
@@ -180,7 +228,7 @@ def train_on_device(model, device_data, epochs=1, lr=0.01):
     Returns:
         dict: Trained model's state_dict.
     """
-    device = setup_device()
+    device = util.setup_device()
     model = model.to(device)
     model.train()
 
@@ -198,7 +246,7 @@ def train_on_device(model, device_data, epochs=1, lr=0.01):
         y_tensor = y_data.long().to(device)
 
     dataset = TensorDataset(X_tensor, y_tensor)
-    loader = DataLoader(dataset, batch_size=BATCH_SIZE_TRAINING, shuffle=True, pin_memory=False)
+    loader = DataLoader(dataset, batch_size=config.BATCH_SIZE_TRAINING, shuffle=True, pin_memory=False)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=lr)
     criterion = torch.nn.CrossEntropyLoss()
@@ -237,16 +285,16 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
         :param total_steps:
         :param current_step:
     """
-    device = setup_device()
+    device = util.setup_device()
     client_state_dicts = []
 
     for client_id, devices_data in hierarchical_data.items():
         device_state_dicts = []
-        safe_log(f"Training client {client_id} on {len(devices_data)} devices...")
+        log_util.safe_log(f"Training client {client_id} on {len(devices_data)} devices...")
 
         for device_data in devices_data:
             if device_data[0].size(0) == 0:  # no samples on this device
-                safe_log(f"Skipping empty device for client {client_id}")
+                log_util.safe_log(f"Skipping empty device for client {client_id}")
                 continue
 
             local_model = copy.deepcopy(global_model).to(device)
@@ -254,19 +302,20 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
             device_state_dicts.append(local_state_dict)
 
         if not device_state_dicts:
-            safe_log(f"No devices trained for client {client_id}, skipping client aggregation.", level="warning")
+            log_util.safe_log(f"No devices trained for client {client_id}, skipping client aggregation.",
+                              level="warning")
             continue
 
         # Aggregate devices per client
-        client_agg_state_dict = aggregate_models(device_state_dicts, base_model_fn)
+        client_agg_state_dict = hdpftl_fedavg.aggregate_models(device_state_dicts, base_model_fn)
         client_state_dicts.append(client_agg_state_dict)
 
     if not client_state_dicts:
-        safe_log("No clients trained in this round, returning previous global model.", level="warning")
+        log_util.safe_log("No clients trained in this round, returning previous global model.", level="warning")
         return global_model
 
     # Aggregate all clients into new global model
-    new_global_state_dict = aggregate_models(client_state_dicts, base_model_fn)
+    new_global_state_dict = hdpftl_fedavg.aggregate_models(client_state_dicts, base_model_fn)
     global_model.load_state_dict(new_global_state_dict)
     return global_model
 
@@ -288,25 +337,25 @@ def federated_round(base_model_fn, global_model, hierarchical_data, epochs=1):
 
 # --- Main HDPFTL pipeline ---
 def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test, writer=None):
-    device = setup_device()
-    safe_log("\n🚀 Starting HDPFTL pipeline...\n")
+    device = util.setup_device()
+    log_util.safe_log("\n🚀 Starting HDPFTL pipeline...\n")
 
     # Instantiate global model properly
     # global_model = base_model_fn().to(device)
     global_model = copy.deepcopy(base_model_fn()).to(device)
 
     # Federated training rounds
-    for round_num in range(NUM_FEDERATED_ROUND):
+    for round_num in range(config.NUM_FEDERATED_ROUND):
         # safe_log(f"\n🔁 Federated Round {round_num + 1}/{NUM_FEDERATED_ROUND}")
-        with named_timer(f"federated_round_{round_num + 1}", writer, tag="federated_round"):
+        with util.named_timer(f"federated_round_{round_num + 1}", writer, tag="federated_round"):
             global_model = federated_round(base_model_fn, global_model, hierarchical_data)
             acc = evaluate_global_model(global_model, X_test, y_test)
-            safe_log(f"🌍 Global Accuracy after round {round_num + 1}: {acc:.4f}")
+            log_util.safe_log(f"🌍 Global Accuracy after round {round_num + 1}: {acc:.4f}")
 
     # Personalized fine-tuning per client
     personalized_models = {}
     for client_id, devices_data in hierarchical_data.items():
-        safe_log(f"🔧 Personalizing model for client {client_id}")
+        log_util.safe_log(f"🔧 Personalizing model for client {client_id}")
 
         # Combine device data for the client
         X_client = np.concatenate([d[0] for d in devices_data])
@@ -324,6 +373,94 @@ def hdpftl_pipeline(base_model_fn, hierarchical_data, X_test, y_test, writer=Non
         personalized_models[client_id] = trained_model
 
     save(global_model, personalized_models)
-    safe_log("\n✅ HDPFTL complete. Returning global and personalized models.\n")
-    clear_memory()
+    log_util.safe_log("\n✅ HDPFTL complete. Returning global and personalized models.\n")
+    util.clear_memory()
+    return global_model, personalized_models
+
+
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
+import numpy as np
+
+
+def run_pfl(base_model_fn, client_data_dict, X_test, y_test, num_rounds=10, local_epochs=2):
+    """
+    Personalized Federated Learning (FedPer-style).
+    - Shared backbone is trained globally (via FedAvg).
+    - Each client has a personalized classifier head.
+    """
+    device = util.setup_device()
+    global_model = base_model_fn().to(device)
+
+    # Extract backbone (everything except final classifier)
+    global_backbone = nn.Sequential(*list(global_model.children())[:-1]).to(device)
+
+    # Infer backbone output dimension dynamically
+    # (Assumes final layer before classifier is Linear)
+    input_dim = None
+    for layer in reversed(list(global_backbone.children())):
+        if isinstance(layer, nn.Linear):
+            input_dim = layer.out_features
+            break
+    if input_dim is None:
+        raise ValueError("Could not infer backbone output dimension. Check base_model_fn structure.")
+
+    num_classes = len(np.unique(y_test))
+
+    personalized_models = {}
+
+    for rnd in range(num_rounds):
+        log_util.safe_log(f"--- PFL Round {rnd + 1}/{num_rounds} ---")
+
+        client_backbones = []
+        client_sample_counts = {}
+
+        # Train each client locally
+        for client_id, (X_client, y_client) in client_data_dict.items():
+            model = base_model_fn().to(device)
+
+            # Copy shared backbone
+            model.load_state_dict(global_model.state_dict(), strict=False)
+
+            # Replace classifier with personalized head (dynamic size)
+            model.classifier = nn.Linear(input_dim, num_classes).to(device)
+
+            # Local training
+            optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+            criterion = nn.CrossEntropyLoss()
+
+            dataset = TensorDataset(torch.tensor(X_client, dtype=torch.float32),
+                                    torch.tensor(y_client, dtype=torch.long))
+            loader = DataLoader(dataset, batch_size=config.BATCH_SIZE_TRAINING, shuffle=True)
+
+            model.train()
+            for _ in range(local_epochs):
+                for xb, yb in loader:
+                    xb, yb = xb.to(device), yb.to(device)
+                    optimizer.zero_grad()
+                    out = model(xb)
+                    loss = criterion(out, yb)
+                    loss.backward()
+                    optimizer.step()
+
+            # Save personalized model
+            personalized_models[client_id] = model
+            client_backbones.append(model.state_dict())
+            client_sample_counts[client_id] = len(y_client)
+
+        # Federated aggregation (FedAvg)
+        global_state = global_model.state_dict()
+        total_samples = sum(client_sample_counts.values())
+
+        for k in global_state.keys():
+            if "classifier" not in k:  # only update backbone
+                weighted_sum = 0
+                for (client_id, _), sd in zip(client_data_dict.items(), client_backbones):
+                    client_weight = client_sample_counts[client_id] / total_samples
+                    weighted_sum += client_weight * sd[k].float()
+                global_state[k] = weighted_sum
+
+        global_model.load_state_dict(global_state, strict=False)
+
     return global_model, personalized_models

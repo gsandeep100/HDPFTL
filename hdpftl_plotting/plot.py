@@ -2,14 +2,11 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay, f1_score
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader, TensorDataset
 
 from hdpftl_training.hdpftl_models.TabularNet import create_model_fn
-from hdpftl_utility.config import PLOT_PATH
-from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device, get_today_date, is_folder_exist
 
 
 # ✅ 1. Global vs Personalized Accuracy per Client
@@ -231,7 +228,6 @@ def plot_client_accuracies(accs, global_acc=None, title="Per-Client Accuracy", s
 
     # Add global accuracy reference line if provided
     if global_acc is not None:
-
         plt.axhline(global_acc, color='red', linestyle='--', linewidth=2,
                     label=f'Global Accuracy: {global_acc:.2f}')
         plt.legend()

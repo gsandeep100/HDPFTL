@@ -14,7 +14,7 @@ import os
 
 import requests
 
-from hdpftl_utility.log import safe_log
+import hdpftl_utility.log as log_util
 
 
 def download_dataset(input_dir, output_dir):
@@ -29,9 +29,9 @@ def download_dataset(input_dir, output_dir):
         # Save the content to a local file
         with open('CIC_IoT_Dataset_2023.html', 'wb') as file:
             file.write(response.content)
-        safe_log('File downloaded successfully.')
+        log_util.safe_log('File downloaded successfully.')
     else:
-        safe_log(f'Failed to download file. Status code: {response.status_code}', level="error")
+        log_util.safe_log(f'Failed to download file. Status code: {response.status_code}', level="error")
 
 # def download_dataset():
 #     if not os.path.exists(DATASET_PATH_2023):

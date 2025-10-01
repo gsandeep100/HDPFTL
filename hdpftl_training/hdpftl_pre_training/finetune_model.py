@@ -10,6 +10,7 @@
    Python3 Version:   3.12.8
 -------------------------------------------------
 """
+import gc
 import os
 
 import numpy as np
@@ -18,11 +19,10 @@ import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 
+import hdpftl_utility.config as config
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
 from hdpftl_training.hdpftl_models.TabularNet import TabularNet
-from hdpftl_utility.config import BATCH_SIZE, EPOCH_DIR, EPOCH_FILE_FINE, \
-    NUM_EPOCHS_PRE_TRAIN, FINETUNE_MODEL_PATH_TEMPLATE, PRE_MODEL_PATH_TEMPLATE
-from hdpftl_utility.log import safe_log
-from hdpftl_utility.utils import setup_device, get_today_date
 
 """
 2. Fine-tuning phase
@@ -33,8 +33,8 @@ Fine-tune pretrained model for your specific task.
 
 
 def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
-    safe_log("\n=== Fine-tuning Phase ===")
-    device = setup_device()
+    log_util.safe_log("\n=== Fine-tuning Phase ===")
+    device = util.setup_device()
 
     # Convert to tensors
     def to_tensor(data, dtype):
@@ -55,22 +55,28 @@ def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
         target_features, finetune_labels, test_size=0.2, random_state=42
     )
 
-    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=config.BATCH_SIZE_TRAINING, shuffle=True,
+                              pin_memory=False)
+    val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=config.BATCH_SIZE_TRAINING, shuffle=False,
+                            pin_memory=False)
 
     # Load model and pretrained weights
     transfer_model = TabularNet(input_dim, target_classes).to(device)
 
     try:
-        state_dict = torch.load(PRE_MODEL_PATH_TEMPLATE.substitute(n=get_today_date()))
+        state_dict = torch.load(config.PRE_MODEL_PATH_TEMPLATE.substitute(n=util.get_today_date()))
         missing, unexpected = transfer_model.load_state_dict(state_dict, strict=False)
-        safe_log("FineTuning model (strict=False)")
+        log_util.safe_log("FineTuning model (strict=False)")
         if missing:
-            safe_log(f"⚠️ Missing keys: {missing}", level="warning")
+            log_util.safe_log(f"⚠️ Missing keys: {missing}", level="warning")
         if unexpected:
-            safe_log(f"⚠️ Unexpected keys: {unexpected}", level="error")
+            log_util.safe_log(f"⚠️ Unexpected keys: {unexpected}", level="error")
     except Exception as e:
-        safe_log(f"❌Could not load pretrained model Error: {e}", level="error")
+        log_util.safe_log(f"❌Could not load pretrained model Error: {e}", level="error")
+        del transfer_model
+        torch.cuda.empty_cache()
+        gc.collect()
+        return None
 
     # Replace classifier head
     transfer_model.classifier = nn.Linear(64, target_classes).to(device)  # Assumes last shared layer has 64 units
@@ -84,9 +90,9 @@ def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
 
     best_val_acc = 0.0
     epoch_losses = []
-    os.makedirs(EPOCH_DIR, exist_ok=True)
+    os.makedirs(config.EPOCH_DIR, exist_ok=True)
 
-    for epoch in range(NUM_EPOCHS_PRE_TRAIN):
+    for epoch in range(config.NUM_EPOCHS_PRE_TRAIN):
         transfer_model.train()
         running_loss, correct, total = 0.0, 0, 0
 
@@ -120,16 +126,29 @@ def finetune_model(X_finetune, y_finetune, input_dim, target_classes):
         val_acc = 100 * val_correct / val_total
         epoch_losses.append(avg_loss)
 
-        safe_log(
-            f"Epoch [{epoch + 1}/{NUM_EPOCHS_PRE_TRAIN}] - "
+        log_util.safe_log(
+            f"Epoch [{epoch + 1}/{config.NUM_EPOCHS_PRE_TRAIN}] - "
             f"Loss: {avg_loss:.4f} - Train Acc: {train_acc:.2f}% - Val Acc: {val_acc:.2f}%"
         )
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(transfer_model.state_dict(), FINETUNE_MODEL_PATH_TEMPLATE.substitute(n=get_today_date()))
-            safe_log(f"💾 Best model saved at epoch {epoch + 1} with Val Acc: {val_acc:.2f}%")
+            torch.save(transfer_model.state_dict(),
+                       config.FINETUNE_MODEL_PATH_TEMPLATE.substitute(n=util.get_today_date()))
+            log_util.safe_log(f"💾 Best model saved at epoch {epoch + 1} with Val Acc: {val_acc:.2f}%")
 
-        np.save(EPOCH_FILE_FINE, np.array(epoch_losses))
+        np.save(config.EPOCH_FILE_FINE, np.array(epoch_losses))
+
+    # === CLEANUP ===
+    del optimizer, criterion, train_loader, val_loader
+    del X_train, X_val, y_train, y_val, target_features, finetune_labels
+    torch.cuda.empty_cache()
+    gc.collect()
 
     return transfer_model
+
+
+def init_model(input_dim, target_classes):
+    """Return a fresh untrained model for PFL or FL."""
+    model = TabularNet(input_dim, target_classes)
+    return model

@@ -1,6 +1,6 @@
 import torch
 
-from hdpftl_utility.utils import setup_device
+import hdpftl_utility.utils as utils
 
 
 def load_global_model(base_model_fn, path):
@@ -14,7 +14,7 @@ def load_global_model(base_model_fn, path):
     Returns:
         nn.Module: The loaded model in eval mode on the correct device.
     """
-    device = setup_device()
+    device = utils.setup_device()
 
     # Instantiate the model
     global_model = base_model_fn().to(device)
@@ -45,7 +45,7 @@ def load_personalized_model(base_model_fn, path):
     Returns:
         nn.Module: The loaded model in eval mode.
     """
-    device = setup_device()
+    device = utils.setup_device()
     model = base_model_fn().to(device)
     model.load_state_dict(torch.load(path, map_location=device), weights_only=False)
     model.eval()
