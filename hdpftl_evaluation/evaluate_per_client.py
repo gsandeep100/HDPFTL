@@ -1,0 +1,170 @@
+"""
+To evaluate a trained model's accuracy on each client's local hdpftl_data.
+This helps in understanding client-specific performance,
+especially when hdpftl_data is non-IID (not identically distributed across clients).
+"""
+
+import os
+
+import numpy as np
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+
+import hdpftl_training.hdpftl_models.TabularNet as tabularnet
+import hdpftl_utility.config as config
+import hdpftl_utility.log as log_util
+import hdpftl_utility.utils as util
+
+
+def load_personalized_models_fromfile():
+    """
+    Loads personalized models for each client from disk.
+
+    Returns:
+        Dict[int, nn.Module]: Mapping from client_id to their loaded model (in eval mode).
+    """
+    personalized_models = {}
+    device = util.setup_device()
+
+    for cid in range(config.NUM_CLIENTS):
+        model = tabularnet.create_model_fn().to(device)  # New model for each client
+        # model_path = PERSONALISED_MODEL_PATH_TEMPLATE.substitute(n=cid)
+        model_path = os.path.join(config.TRAINED_MODEL_DIR + util.get_today_date() + "/",
+                                  f"personalized_model_client_{cid}.pth")
+
+        if os.path.exists(model_path):
+            try:
+                state_dict = torch.load(model_path, map_location=device)
+
+                if isinstance(state_dict, dict):
+                    model.load_state_dict(state_dict)
+                    model.eval()
+                    personalized_models[cid] = model
+                    log_util.safe_log(f"✅ Loaded model for client {cid} from {model_path}")
+                else:
+                    log_util.safe_log(f"⚠️ Unexpected format in model {cid}: state_dict not found.", level="error")
+            except Exception as e:
+                log_util.safe_log(f"❌ Error loading model for client {cid}: {e}", level="error")
+        else:
+            log_util.safe_log(f"❌ Model file not found for client {cid}: {model_path}", level="error")
+
+    return personalized_models
+
+
+# evaluate_personalized_models function! This version works for evaluate personalized models per client
+def evaluate_personalized_models_per_client(personalized_models, client_data_dict_test):
+    accs = {}
+    device = util.setup_device()
+
+    for client_id, client_data in client_data_dict_test.items():
+        if not client_data or len(client_data) != 2:
+            log_util.safe_log(f"Client '{client_id}' has invalid test data. Assigning accuracy 0.0.", level="warning")
+            accs[client_id] = 0.0
+            continue
+
+        x_client_np, y_client_np = client_data
+
+        if len(x_client_np) == 0:
+            log_util.safe_log(f"Client '{client_id}' has no actual data. Assigning accuracy 0.0.", level="warning")
+            accs[client_id] = 0.0
+            continue
+
+        if client_id not in personalized_models:
+            log_util.safe_log(f"No model found for client '{client_id}'. Skipping.", level="error")
+            accs[client_id] = 0.0
+            continue
+
+        log_util.safe_log(f"Evaluating client: '{client_id}'")
+
+        if isinstance(personalized_models[client_id], dict):
+            num_classes = len(np.unique(y_client_np))
+            model = tabularnet.create_model_fn(x_client_np.shape[1], num_classes).to(device)
+
+            checkpoint = personalized_models[client_id]
+            model_dict = model.state_dict()
+
+            # Filter out classifier weights to avoid size mismatch
+            filtered_checkpoint = {k: v for k, v in checkpoint.items() if not k.startswith('classifier.')}
+
+            # Update model dict with filtered weights and load
+            model_dict.update(filtered_checkpoint)
+            model.load_state_dict(model_dict)
+        else:
+            model = personalized_models[client_id].to(device)
+
+        model.eval()
+
+        x_tensor = torch.tensor(x_client_np).float().to(device)
+        y_tensor = torch.tensor(y_client_np).long().to(device)
+
+        loader = DataLoader(TensorDataset(x_tensor, y_tensor), batch_size=config.BATCH_SIZE, pin_memory=False)
+
+        correct, total = 0, 0
+        with torch.no_grad():
+            for xb, yb in loader:
+                output = model(xb)
+                _, pred = torch.max(output, 1)
+                correct += (pred == yb).sum().item()
+                total += yb.size(0)
+
+        accs[client_id] = correct / total if total > 0 else 0.0
+        log_util.safe_log(f"  Accuracy for client '{client_id}': {accs[client_id]:.4f}")
+
+    return accs
+
+
+# evaluate_per_client function! This version works for evaluating a shared (global) model across all clients
+# accs = evaluate_per_client(global_model, X_train, y_train, client_partitions)
+"""
+    Evaluate the global model on each client's test data.
+"""
+
+
+# Client accuracy for Global model
+def evaluate_per_client(global_model, client_partitions_test):
+    """
+    Evaluates a global model's performance on per-client test datasets.
+
+    Args:
+        global_model (torch.nn.Module): The model to evaluate.
+        client_partitions_test (dict): client_id -> (X_client, y_client) as numpy arrays or tensors.
+
+    Returns:
+        dict: client_id -> accuracy
+    """
+    accs = {}
+    device = util.setup_device()
+    model = global_model.to(device)
+    model.eval()
+
+    for cid, client_data in client_partitions_test.items():
+        if not isinstance(client_data, (tuple, list)) or len(client_data) != 2:
+            log_util.safe_log(f"Client '{cid}' has invalid test data. Assigning accuracy 0.0.", level="warning")
+            accs[cid] = 0.0
+            continue
+
+        X_client, y_client = client_data
+
+        if len(X_client) == 0:
+            log_util.safe_log(f"Client '{cid}' has no data. Skipping.", level="warning")
+            accs[cid] = 0.0
+            continue
+
+        # Convert to torch tensors if not already
+        X_tensor = torch.tensor(X_client, dtype=torch.float32).to(device)
+        y_tensor = torch.tensor(y_client, dtype=torch.long).to(device)
+
+        loader = DataLoader(TensorDataset(X_tensor, y_tensor), batch_size=config.BATCH_SIZE, pin_memory=False)
+
+        correct, total = 0, 0
+        with torch.no_grad():
+            for xb, yb in loader:
+                output = model(xb)
+                pred = output.argmax(dim=1)
+                correct += (pred == yb).sum().item()
+                total += yb.size(0)
+
+        accs[cid] = correct / total if total > 0 else 0.0
+        log_util.safe_log(f"✅ Client {cid} accuracy: {accs[cid]:.4f}")
+
+    return accs
