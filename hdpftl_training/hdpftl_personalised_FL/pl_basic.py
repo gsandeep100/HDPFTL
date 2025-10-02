@@ -40,6 +40,7 @@ os.environ["OMP_NUM_THREADS"] = "4"
 # Config
 # -------------------------------------------------------------
 config = {
+    "boosting": "gbdt",
     "random_seed": 42,
     "n_edges": 5,
     "n_device": 5,
@@ -47,8 +48,8 @@ config = {
     "epoch": 5,
     "device_boosting_rounds": 5,
     "edge_boosting_rounds": 5,
-    "num_iterations_device": 1000,
-    "num_iterations_edge": 1000,
+    "num_iterations_device": 10,
+    "num_iterations_edge": 10,
     "variance_prune": True,
     "variance_threshold": 1e-4,
     "bayes_n_samples": 500,
@@ -60,7 +61,7 @@ config = {
     "n_estimators": 50,
     "num_leaves": 64,
     "alpha": 1.0,
-    "min_child_samples": 500,
+    "min_child_samples": 10,
     "learning_rate_device": 0.01,
     "learning_rate_edge": 0.1,
     "learning_rate_backward": 0.1,
@@ -86,41 +87,49 @@ DeviceData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 # LightGBM Training
 # ============================================================
 
-def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_rounds=None, learning_rate=None,
-                   num_iteration = None, num_classes=None):
+def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_rounds=None,
+                   learning_rate=None, num_iteration=None, num_classes=None, init_model=None):
     """
-        Train a LightGBM classifier safely with both training and validation monitoring.
+    Train a LightGBM classifier safely with both training and validation monitoring.
+    Supports continuing from a previous model via `init_model`.
 
-        Args:
-            X_train (array-like): Training features.
-            y_train (array-like): Training labels.
-            X_valid (array-like, optional): Validation features (default: None).
-            y_valid (array-like, optional): Validation labels (default: None).
-            early_stopping_rounds (int, optional): Stop if validation score does not improve
-                after this many rounds (default: None).
-            learning_rate (float, optional): Learning rate for boosting (default: 0.01).
-            num_iterations (int, optional): Maximum number of boosting rounds (default: 5000).
-            num_classes (int, optional): Number of target classes. If None, inferred from labels.
-            Note:- Compare multi_logloss for train vs. valid:
+    Args:
+        X_train (array-like): Training features.
+        y_train (array-like): Training labels.
+        X_valid (array-like, optional): Validation features (default: None).
+        y_valid (array-like, optional): Validation labels (default: None).
+        early_stopping_rounds (int, optional): Stop if validation score does not improve
+            after this many rounds (default: None).
+        learning_rate (float, optional): Learning rate for boosting (default: 0.01).
+        num_iteration (int, optional): Maximum number of boosting rounds (default: 5000).
+        num_classes (int, optional): Number of target classes. If None, inferred from labels.
+        init_model (LGBMClassifier, optional): Previous model to continue training from.
 
-                    If train logloss keeps going down but valid stops improving → overfitting.
+        Note:- Compare multi_logloss for train vs. valid:
 
-                    If neither improves much → weak features or wrong parameters.
+        If train logloss keeps going down but valid stops improving → overfitting.
 
-                    OR in other Words
+        If neither improves much → weak features or wrong parameters.
 
-                    If train ↓ and valid ↑ → overfitting (trees too complex, regularize more).
+        OR in other Words
 
-                    If train flat + valid flat → weak features (model can’t learn).
+        If train ↓ and valid ↑ → overfitting (trees too complex, regularize more).
 
-                    If train ↓ and valid ↓ together → good learning.
-            Returns:
-                model (lightgbm.LGBMClassifier): Trained LightGBM model.
-        """
+        If train flat + valid flat → weak features (model can’t learn).
+
+        If train ↓ and valid ↓ together → good learning.
+
+    Returns:
+        model (lightgbm.LGBMClassifier): Trained LightGBM model.
+    """
+
     fit_kwargs = {}
 
+    # Convert inputs to NumPy arrays
     X_np = safe_array(X_train)
     y_np = safe_array(y_train)
+    X_valid_np = safe_array(X_valid) if X_valid is not None else None
+    y_valid_np = safe_array(y_valid) if y_valid is not None else None
 
     if num_classes is None:
         num_classes = len(np.unique(y_np))
@@ -129,8 +138,8 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
     num_class = num_classes if num_classes > 2 else None
 
     model = lgb.LGBMClassifier(
-
         # Objective & classes
+        boosting = config["boosting"],
         objective=objective,
         num_class=num_class,
 
@@ -146,34 +155,26 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
         # Data constraints & regularization
         min_child_samples=config["min_child_samples"],
         class_weight=config["class_weight"],
-        lambda_l1=config["lambda_l1"],
-        lambda_l2=config["lambda_l2"],
+        lambda_l1=config["lambda_l1"] * 2 ,
+        lambda_l2=config["lambda_l2"] * 2,
         feature_fraction=config["feature_fraction"],
 
         random_state=config["random_seed"],
         device="cpu",
-        verbose = -1
-        # gpu_platform_id=0,
-        # gpu_device_id=0
+        verbose=-1
     )
 
-    if X_valid is not None and y_valid is not None and early_stopping_rounds:
-        X_valid_np = np.array(X_valid)
-        y_valid_np = np.array(y_valid)
-
-        # Only filter if there are truly unseen classes
+    if X_valid_np is not None and y_valid_np is not None and early_stopping_rounds:
+        # Filter validation set to match training classes
         mask = np.isin(y_valid_np, np.unique(y_np))
-        if mask.sum() < 10:  # too few after filtering, keep all
+        if mask.sum() < 10:  # avoid too few samples after filtering
             mask = np.ones_like(y_valid_np, dtype=bool)
 
         X_valid_filtered = X_valid_np[mask]
         y_valid_filtered = y_valid_np[mask]
 
         fit_kwargs.update({
-            "eval_set": [
-                (X_np, y_np),  # training set for logging
-                (X_valid_filtered, y_valid_filtered)  # validation set
-            ],
+            "eval_set": [(X_np, y_np), (X_valid_filtered, y_valid_filtered)],
             "eval_metric": "multi_logloss" if num_classes > 2 else "logloss",
             "eval_names": ["train", "valid"],
             "callbacks": [
@@ -182,8 +183,13 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
             ],
         })
 
-    # Train with both train + validation monitoring
+    # Pass previous model to continue boosting
+    if init_model is not None:
+        fit_kwargs["init_model"] = init_model
+
+    # Train the model
     model.fit(safe_array(X_np), safe_array(y_np), **fit_kwargs)
+
     return model
 
 
@@ -252,23 +258,13 @@ def get_leaf_indices(model, X):
 def device_layer_boosting(devices_data, residuals_devices, device_models, le, num_classes, X_finetune=None,
                           y_finetune=None):
     """
-    Device-level sequential boosting (classification version).
-
+    Device-level sequential boosting (classification version) with safe incremental boosting.
     Returns:
-        residuals_devices: list of np.ndarray
-            Final residuals per device
-        device_models: list
-            Trained device models per device
-        device_embeddings: list of np.ndarray
-            One-hot leaf embeddings per device
+        residuals_devices: list of np.ndarray, final residuals per device
+        device_models: list of lists, trained models per device
+        device_embeddings: list of np.ndarray, one-hot leaf embeddings per device
+        y_true_devices: list of np.ndarray, y_finetune per device
     """
-
-    if not isinstance(config, dict):
-        raise TypeError(f"Expected `config` to be a dict, got {type(config)}. "
-                        f"Make sure you pass the full config dictionary, not a single value.")
-
-    if "device_boosting_rounds" not in config:
-        raise KeyError("`config` must contain key 'device_boosting_rounds'")
 
     device_embeddings = []
 
@@ -288,14 +284,24 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
         # Sequential boosting per device
         for t in range(config["device_boosting_rounds"]):
             y_pseudo = residual.argmax(axis=1)
+
             if len(np.unique(y_pseudo)) < 2:
                 logging.debug(f"Device {idx}, round {t}: single class, skipping.")
                 break
 
+            # Only pass previous model if features match
+            init_model = models_per_device[-1] if models_per_device else None
 
-            model = train_lightgbm(X_train, y_pseudo, X_finetune, y_finetune,
-                                   config["early_stopping_rounds_device"], config["learning_rate_device"],
-                                   config["num_iterations_device"],num_classes=num_classes)
+            model = train_lightgbm(
+                X_train, y_pseudo,
+                X_valid=X_finetune[:, :X_train.shape[1]] if X_finetune is not None else None,
+                y_valid=y_finetune,
+                early_stopping_rounds=config["early_stopping_rounds_device"],
+                learning_rate=config["learning_rate_device"],
+                num_iteration=config["num_iterations_device"],
+                num_classes=num_classes,
+                init_model=init_model
+            )
 
             pred_proba = predict_proba_fixed(model, X_train, num_classes, le=le)
 
@@ -304,55 +310,41 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
             residual = np.clip(residual, 0.0, None)
 
             models_per_device.append(model)
-            print(model)
 
         residuals_devices[idx] = residual
         device_models[idx] = models_per_device
 
-        # Compute leaf embeddings (one-hot of leaf indices from all trees)
-        # Here we assume `get_leaf_indices(model, X)` returns leaf indices per sample
+        # Compute leaf embeddings for all trained models
         leaf_indices_list = [get_leaf_indices(mdl, X_train) for mdl in models_per_device]
         if leaf_indices_list:
             leaf_indices_concat = np.hstack(leaf_indices_list)
             leaf_embeddings = np.zeros((n_samples, np.max(leaf_indices_concat) + 1))
             leaf_embeddings[np.arange(n_samples)[:, None], leaf_indices_concat] = 1.0
         else:
-            # No models trained, return a zero embedding
             leaf_embeddings = np.zeros((n_samples, 1))
         device_embeddings.append(leaf_embeddings)
 
-        y_true_devices = [np.array(y_finetune[d]) for d in range(len(devices_data))]
-
-
+    # y_true_devices: just convert y_finetune to list of arrays per device
+    y_true_devices = [np.array(y_finetune[d]) for d in range(len(devices_data))]
 
     return residuals_devices, device_models, device_embeddings, y_true_devices
-
 
 def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, num_classes,
                         X_finetune=None, y_finetune=None):
     """
-    Edge-level sequential boosting with robust padding and averaging.
+    Edge-level sequential boosting with fully safe incremental boosting.
 
-    Args:
-        edge_groups: list of lists
-            Each element is a list of device indices belonging to that edge
-        device_embeddings: list of np.ndarray
-            Leaf embeddings from device-level boosting
-        residuals_devices: list of np.ndarray
-            Residuals from device-level boosting
-        le: LabelEncoder
-        num_classes: int
-        X_finetune, y_finetune: optional finetuning datasets
+    Handles:
+    - Missing classes in pseudo-labels
+    - Feature mismatches for init_model
+    - Safe validation handling
+    - Robust averaging of predictions
 
     Returns:
-        edge_outputs: list of np.ndarray
-            Predictions (n_samples_edge, num_classes) per edge
-        edge_models: list of list
-            Trained models per edge
-        residuals_edges: list of np.ndarray
-            Final residuals per edge
-        edge_embeddings: list of np.ndarray
-            Leaf embeddings per edge
+        edge_outputs: list of np.ndarray, predictions per edge
+        edge_models: list of list, trained models per edge
+        residuals_edges: list of np.ndarray, final residuals per edge
+        edge_embeddings_list: list of np.ndarray, padded leaf embeddings per edge
     """
 
     edge_models = []
@@ -389,20 +381,40 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, n
         for t in range(config.get("edge_boosting_rounds", 1)):
             y_pseudo = residual_edge.argmax(axis=1)
 
-            # Stop if all pseudo-labels are the same
-            if len(np.unique(y_pseudo)) < 2:
+            unique_classes = np.unique(y_pseudo)
+            # Stop if less than 2 classes
+            if len(unique_classes) < 2:
+                print(f"Edge {edge_idx}, round {t}: only {len(unique_classes)} class(es), skipping boosting.")
                 break
 
-            # Train LightGBM on pseudo-labels
+            # Only use init_model if feature shapes match and all classes exist
+            if models_per_edge:
+                prev_model = models_per_edge[-1]
+                if prev_model.n_features_in_ == X_edge.shape[1] and len(unique_classes) == num_classes:
+                    init_model = prev_model
+                else:
+                    init_model = None
+            else:
+                init_model = None
+
+            # Slice validation features to match X_edge if necessary
+            X_valid_slice = X_finetune[:, :X_edge.shape[1]] if X_finetune is not None else None
+
+            # Train LightGBM safely
             model = train_lightgbm(
-                X_edge, y_pseudo, X_finetune, y_finetune,
-                config["early_stopping_rounds_edge"], config["learning_rate_edge"], config["num_iterations_edge"],
-                num_classes=num_classes
+                X_edge, y_pseudo,
+                X_valid=X_valid_slice,
+                y_valid=y_finetune,
+                early_stopping_rounds=config["early_stopping_rounds_edge"],
+                learning_rate=config["learning_rate_edge"],
+                num_iteration=config["num_iterations_edge"],
+                num_classes=num_classes,
+                init_model=init_model
             )
 
             pred_proba = predict_proba_fixed(model, X_edge, num_classes, le=le)
 
-            # Update residuals (sequential boosting)
+            # Update residuals safely
             residual_edge -= pred_proba
             residual_edge = np.clip(residual_edge, 0.0, None)
 
@@ -413,18 +425,9 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, n
         residuals_edges.append(residual_edge)
         edge_embeddings_list.append(X_edge)
 
-        # -----------------------------
         # Compute edge outputs robustly
-        # -----------------------------
-        if len(models_per_edge) > 0:
-            # Collect predictions from all models
-            model_preds = []
-            for m in models_per_edge:
-                pred = m.predict_proba(X_edge)
-                pred = np.atleast_2d(pred)  # ensure 2D
-                model_preds.append(pred)
-
-            # Safely average predictions with padding
+        if models_per_edge:
+            model_preds = [np.atleast_2d(m.predict_proba(X_edge)) for m in models_per_edge]
             edge_pred_avg = average_predictions(
                 model_preds,
                 num_samples=X_edge.shape[0],
@@ -850,11 +853,12 @@ def average_predictions(pred_list, num_samples=None, num_classes=None):
 
 
 def safe_array(X):
-    """Convert input to NumPy float32 array if it is DataFrame, Series, or list."""
+    """Convert input to numeric NumPy array for LightGBM."""
+    if X is None:
+        return None
     if isinstance(X, (pd.DataFrame, pd.Series)):
         return X.to_numpy(dtype=np.float32)
     return np.asarray(X, dtype=np.float32)
-
 
 
 def safe_edge_output(edge_outputs, num_classes):
