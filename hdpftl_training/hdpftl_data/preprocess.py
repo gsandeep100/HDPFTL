@@ -99,17 +99,47 @@ def fast_safe_smote(X, y, k_neighbors=5):
         return result[0], result[1]
     return result
 
+def hybrid_balance(X, y, reduce_dim=True, n_components=50, k_neighbors=5):
+    """
+    Fast SMOTE-based balancing for large datasets.
+    - Optional dimensionality reduction with PCA to speed up nearest neighbor search.
+    - Keeps SMOTE-only logic (no undersampling).
+    - Falls back gracefully if SMOTE fails.
 
-# 🌀 Step 3: Hybrid
-def hybrid_balance(X, y):
-    log_util.safe_log("\n🌀 Applying modified hybrid balancing (no undersampling, SMOTE only)")
+    Args:
+        X (pd.DataFrame or np.ndarray): Feature matrix
+        y (pd.Series or np.ndarray): Target labels
+        reduce_dim (bool): Apply PCA to reduce feature dimension
+        n_components (int): Number of PCA components if reduce_dim=True
+        k_neighbors (int): Number of neighbors for SMOTE
+
+    Returns:
+        X_res, y_res: Balanced feature matrix and labels
+    """
+    log_util.safe_log("\n🌀 Applying modified hybrid balancing (fast SMOTE)")
+
     try:
-        sm = SMOTE(k_neighbors=5, random_state=42)
-        X_res, y_res = sm.fit_resample(X, y)
+        X_orig = X.copy()
+        if reduce_dim and X.shape[1] > n_components:
+            # Reduce dimensionality for faster SMOTE
+            pca = PCA(n_components=n_components, random_state=42)
+            X_reduced = pca.fit_transform(X)
+        else:
+            X_reduced = X.values if hasattr(X, "values") else X
+
+        # Remove n_jobs here; SMOTE doesn't accept it
+        sm = SMOTE(k_neighbors=k_neighbors, random_state=42)
+        X_res, y_res = sm.fit_resample(X_reduced, y)
+
+        # If PCA was used, map back to original space approximately
+        if reduce_dim and X.shape[1] > n_components:
+            X_res = pca.inverse_transform(X_res)
+
         return X_res, y_res
+
     except Exception as e:
-        warnings.warn(f"SMOTE failed in hybrid balance: {e}")
-        return X, y
+        warnings.warn(f"SMOTE failed in hybrid_balance: {e}")
+        return X_orig, y
 
 
 """AI is creating summary for 
@@ -376,64 +406,117 @@ def plot_skewed_features_log_transform(df, features_per_fig=10):
 
 
 
-
-def log_transform_skewed_features(df, skew_threshold=2.0, clip_threshold=1e6, scale_method='standard',
-                                       verbose=True):
+def log_transform_skewed_features(
+    df,
+    target_col='label',
+    skew_threshold=2.0,
+    extreme_skew_threshold=1000,
+    clip_threshold=1e6,
+    top_n=None,
+    scale_method='standard',
+    drop_extreme_skew=True,
+    remove_constant=True,
+    constant_threshold=1e-6,
+    verbose=True,
+    report_top_n=10
+):
     """
-    Vectorized log-transform for highly skewed numeric features, followed by clipping and scaling
-    to prevent overflow/divide by zero warnings in downstream computations.
+    Fully vectorized log-transform for highly skewed numeric features.
+    Automatically excludes target column from transformation to avoid issues in classification.
 
     Args:
-        df (pd.DataFrame): Input dataframe.
-        skew_threshold (float): Features with skew > this will be log-transformed.
-        clip_threshold (float): Maximum absolute value for clipping after log-transform.
-        scale_method (str): 'standard' (zero mean, unit variance) or 'minmax' (0–1) scaling.
-        verbose (bool): Print transformed and scaled features.
+        df (pd.DataFrame): Input dataframe
+        target_col (str or None): Target column to exclude from transformation
+        skew_threshold (float): |skew| above which log1p is applied
+        extreme_skew_threshold (float): |skew| above which columns may be dropped
+        clip_threshold (float): Clip numeric values to ±clip_threshold
+        top_n (int or None): Only transform top N skewed positive features
+        scale_method (str): 'standard', 'minmax', or None
+        drop_extreme_skew (bool): Drop extreme-skew columns
+        remove_constant (bool): Drop near-constant features
+        constant_threshold (float): Variance threshold for near-constant features
+        verbose (bool): Print debug info
+        report_top_n (int): Number of top skewed features to report
 
     Returns:
-        pd.DataFrame: Safe dataframe with log-transformed, clipped, and scaled numeric features.
+        pd.DataFrame: Transformed dataframe
     """
-
     df_safe = df.copy()
 
-    # 1️⃣ Identify numeric columns
-    numeric_cols = df_safe.select_dtypes(include=[np.number]).columns
+    # 1️⃣ Identify numeric columns, exclude target
+    numeric_cols = df_safe.select_dtypes(include=[np.number]).columns.tolist()
+    if target_col in numeric_cols:
+        numeric_cols.remove(target_col)
 
-    # 2️⃣ Compute skew in one go
+    # 2️⃣ Drop extreme-skew features
     skews = df_safe[numeric_cols].skew()
-    high_skew_cols = skews[skews > skew_threshold].index.tolist()
+    if drop_extreme_skew:
+        extreme_cols = skews[abs(skews) > extreme_skew_threshold].index.tolist()
+        if extreme_cols:
+            df_safe.drop(columns=extreme_cols, inplace=True)
+            numeric_cols = [c for c in numeric_cols if c not in extreme_cols]
+            if verbose:
+                print(f"❌ Dropped extreme-skew features: {extreme_cols}")
 
-    # Keep only columns without negative values
-    high_skew_cols = [c for c in high_skew_cols if (df_safe[c] >= 0).all()]
+    # Ensure numeric_cols exist after dropping
+    numeric_cols = [c for c in numeric_cols if c in df_safe.columns]
 
-    # 3️⃣ Log-transform
+    # 3️⃣ Report top skewed features before
+    skew_before = df_safe[numeric_cols].skew().abs().sort_values(ascending=False)
+    if verbose:
+        print(f"\nTop {report_top_n} skewed features BEFORE log-transform:")
+        print(skew_before.head(report_top_n))
+
+    # 4️⃣ Select high-skew, positive columns for log1p
+    skewed_cols = skew_before[skew_before > skew_threshold].index.tolist()
+    positive_cols = [c for c in skewed_cols if (df_safe[c] >= 0).all()]
+    high_skew_cols = positive_cols[:top_n] if top_n is not None else positive_cols
+
+    # 5️⃣ Apply log1p transform
     if high_skew_cols:
         df_safe[high_skew_cols] = np.log1p(df_safe[high_skew_cols])
         if verbose:
-            print("🔄 Log-transformed highly skewed features:")
+            print("\n🔄 Log-transformed highly skewed features:")
             for c in high_skew_cols:
-                print(f"  • {c} (skew={skews[c]:.2f})")
+                print(f"  • {c} (skew={skew_before[c]:.2f})")
     elif verbose:
         print("✅ No numeric features exceeded skew threshold.")
 
-    # 4️⃣ Clip extreme values
+    # 6️⃣ Clip numeric values safely
     if clip_threshold is not None:
+        numeric_cols = [c for c in numeric_cols if c in df_safe.columns]
         df_safe[numeric_cols] = df_safe[numeric_cols].clip(lower=-clip_threshold, upper=clip_threshold)
 
-    # 5️⃣ Scale numeric features
-    if scale_method == 'standard':
-        scaler = StandardScaler()
-    elif scale_method == 'minmax':
-        scaler = MinMaxScaler()
-    else:
-        raise ValueError("scale_method must be 'standard' or 'minmax'")
+    # 7️⃣ Scale numeric features safely
+    numeric_cols = [c for c in numeric_cols if c in df_safe.columns]
+    if scale_method in ('standard', 'minmax') and numeric_cols:
+        if scale_method == 'standard':
+            df_safe[numeric_cols] = StandardScaler().fit_transform(df_safe[numeric_cols])
+        else:
+            df_safe[numeric_cols] = MinMaxScaler().fit_transform(df_safe[numeric_cols])
+        if verbose:
+            print(f"\n✅ Applied {scale_method} scaling to numeric features.")
+    elif scale_method is not None and scale_method not in ('standard', 'minmax'):
+        raise ValueError("scale_method must be 'standard', 'minmax', or None")
 
-    df_safe[numeric_cols] = scaler.fit_transform(df_safe[numeric_cols])
+    # 8️⃣ Remove near-constant features safely
+    if remove_constant:
+        numeric_cols = [c for c in numeric_cols if c in df_safe.columns]
+        constant_features = df_safe[numeric_cols].columns[df_safe[numeric_cols].var() < constant_threshold].tolist()
+        if constant_features:
+            df_safe.drop(columns=constant_features, inplace=True)
+            if verbose:
+                print(f"🗑 Removed near-constant features: {constant_features}")
 
+    # 9️⃣ Report top skewed features after
+    numeric_cols = [c for c in numeric_cols if c in df_safe.columns]
+    skew_after = df_safe[numeric_cols].skew().abs().sort_values(ascending=False)
     if verbose:
-        print(f"✅ Clipped numeric values to ±{clip_threshold} and applied {scale_method} scaling.")
+        print(f"\nTop {report_top_n} skewed features AFTER log-transform:")
+        print(skew_after.head(report_top_n))
 
     return df_safe
+
 
 
 """
@@ -603,9 +686,23 @@ def load_and_label_all_parallel(
     # -----------------------------
     # 1️⃣ Log-transform highly skewed numeric features using modular function
     # -----------------------------
-    final_df = log_transform_skewed_features(final_df, skew_threshold=skew_threshold,
-                                             clip_threshold=1e6,scale_method='standard', verbose=True)
-    plot_skewed_features_log_transform(final_df)
+    target = "Label"
+
+    final_df = log_transform_skewed_features(
+        final_df,
+        target_col=target,
+        skew_threshold=2.0,
+        extreme_skew_threshold=1000,
+        clip_threshold=1e6,
+        top_n=20,
+        scale_method='standard',
+        drop_extreme_skew=True,
+        remove_constant=True,
+        report_top_n=10
+    )
+
+    y = df[target].values  # keep target untouched
+    #plot_skewed_features_log_transform(final_df)
     # -----------------------------
     # 2️⃣ Protocol as categorical
     # -----------------------------
