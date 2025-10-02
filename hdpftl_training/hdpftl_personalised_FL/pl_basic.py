@@ -17,13 +17,13 @@ import os
 import warnings
 from datetime import datetime
 from typing import List, Tuple, Union
-
+import numpy as np
+from lightgbm import LGBMRegressor, LGBMClassifier
 import lightgbm as lgb
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 from lightgbm import early_stopping, log_evaluation
 from scipy.special import softmax as sp_softmax
 from sklearn.model_selection import train_test_split
@@ -268,6 +268,7 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
         y_true_devices = [np.array(y_finetune[d]) for d in range(len(devices_data))]
 
 
+
     return residuals_devices, device_models, device_embeddings, y_true_devices
 
 
@@ -380,43 +381,50 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, n
 
 
 def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_edge,
-                                      residuals_edges=None, num_classes=2, verbose=True,
-                                      device='cpu'):
+                                         device_embeddings, residuals_edges=None,
+                                         num_classes=2, verbose=True):
     """
     Global (server) Bayesian aggregation using edge embeddings,
     weighting edges by their residual errors, with explicit alpha/beta calculation.
-    Returns torch tensors on specified device for backward pass.
+    Returns NumPy arrays only, no PyTorch.
 
     Args:
         edge_outputs: list of np.ndarray, outputs from edge models
         edge_embeddings: list of np.ndarray, embeddings per edge
         y_true_per_edge: list of np.ndarray, true labels per edge
+        device_embeddings: list of np.ndarray, for slicing
         residuals_edges: list of np.ndarray, optional residuals for weighting
-        num_classes: int, number of classes
+        num_classes: int
         verbose: bool
-        device: 'cpu' or 'cuda'
 
     Returns:
-        y_global_pred: torch.Tensor, global predictions (softmax)
-        global_residuals: torch.Tensor, residuals for backward pass
+        y_global_pred: np.ndarray, global predictions (softmax)
+        global_residuals: np.ndarray, residuals for backward pass
         theta_global: dict with 'alpha' and 'beta'
         edge_sample_slices: list of tuples (start_idx, end_idx) per edge
+        device_sample_slices: list of slice per device
     """
 
+    # -----------------------------
     # Step 1: Filter valid edges
+    # -----------------------------
     valid_edges = [i for i, (out, emb) in enumerate(zip(edge_outputs, edge_embeddings))
                    if out is not None and emb is not None]
     if not valid_edges:
         raise ValueError("No valid edges found!")
 
-    # Step 2: Collect edge_outputs and y_true_per_edge
-    edge_preds_list, y_global_list, edge_sample_slices = [], [], []
+    # -----------------------------
+    # Step 2: Collect edge predictions and labels
+    # -----------------------------
+    edge_preds_list = []
+    y_global_list = []
+    edge_sample_slices = []
     start_idx = 0
     for i in valid_edges:
         out = edge_outputs[i]
         n_samples = out.shape[0]
 
-        # Pad number of classes if needed
+        # Pad classes if necessary
         if out.shape[1] < num_classes:
             out = np.pad(out, ((0, 0), (0, num_classes - out.shape[1])), mode='constant')
         edge_preds_list.append(out)
@@ -429,56 +437,63 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_
             labels = labels[:n_samples]
         y_global_list.append(labels)
 
-        # Record slice
+        # Slice for this edge
         edge_sample_slices.append((start_idx, start_idx + n_samples))
         start_idx += n_samples
 
+    # -----------------------------
     # Step 3: Stack predictions and labels
-    H_global_np = np.vstack(edge_preds_list)
-    y_global_np = np.hstack(y_global_list)
-    n_samples = H_global_np.shape[0]
+    # -----------------------------
+    H_global = np.vstack(edge_preds_list)  # (n_samples_total, num_classes)
+    y_global = np.hstack(y_global_list)
+    n_samples = H_global.shape[0]
 
+    # -----------------------------
     # Step 4: Compute edge weights
+    # -----------------------------
     if residuals_edges is not None:
         weights_list = [1.0 / (np.mean(residuals_edges[i] ** 2, axis=1) + 1e-6)
                         for i in valid_edges]
-        edge_weights_np = np.hstack(weights_list)
+        edge_weights = np.hstack(weights_list)
     else:
-        edge_weights_np = np.ones(n_samples)
-    edge_weights_norm_np = edge_weights_np / np.sum(edge_weights_np)
+        edge_weights = np.ones(n_samples)
+    edge_weights /= np.sum(edge_weights)  # normalize
+
     if verbose:
-        print("Normalized edge weights:", edge_weights_norm_np)
+        print("Normalized edge weights:", edge_weights)
 
+    # -----------------------------
     # Step 5: Alpha and beta
-    alpha = np.sum(H_global_np * edge_weights_norm_np[:, None], axis=0)
+    # -----------------------------
+    alpha = np.sum(H_global * edge_weights[:, None], axis=0)
 
-    # One-hot labels
-    y_onehot_np = np.zeros((n_samples, num_classes))
-    y_onehot_np[np.arange(n_samples), y_global_np] = 1
+    # One-hot true labels
+    y_onehot = np.zeros((n_samples, num_classes))
+    y_onehot[np.arange(n_samples), y_global] = 1
 
     # Residuals and beta
-    global_residuals_np = y_onehot_np - H_global_np
-    beta = np.sum(global_residuals_np * edge_weights_norm_np[:, None], axis=0)
+    global_residuals = y_onehot - H_global
+    beta = np.sum(global_residuals * edge_weights[:, None], axis=0)
 
-    # Step 6: Global predictions (softmax)
-    logits_np = H_global_np + beta
-    exp_logits = np.exp(logits_np - np.max(logits_np, axis=1, keepdims=True))
-    y_global_pred_np = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
+    # -----------------------------
+    # Step 6: Compute softmax global predictions
+    # -----------------------------
+    logits = H_global + beta
+    exp_logits = np.exp(logits - np.max(logits, axis=1, keepdims=True))
+    y_global_pred = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
 
-    # Step 7: Convert to torch tensors on device
-    y_global_pred = torch.tensor(y_global_pred_np, dtype=torch.float32, device=device)
-    global_residuals = torch.tensor(global_residuals_np, dtype=torch.float32, device=device)
-
-    theta_global = {"alpha": alpha, "beta": beta}
-
-    # Step 8: Generate device_sample_slices
+    # -----------------------------
+    # Step 7: Generate device sample slices
+    # -----------------------------
     device_sample_slices = []
     for edge_idx, edge_devices in enumerate(edge_groups):
-        start_idx_edge = edge_sample_slices[edge_idx][0]  # tuple: first element is start
+        start_idx_edge = edge_sample_slices[edge_idx][0]
         for d in edge_devices:
             n_samples_device = device_embeddings[d].shape[0]
             device_sample_slices.append(slice(start_idx_edge, start_idx_edge + n_samples_device))
             start_idx_edge += n_samples_device
+
+    theta_global = {"alpha": alpha, "beta": beta}
 
     return y_global_pred, global_residuals, theta_global, edge_sample_slices, device_sample_slices
 
@@ -566,6 +581,7 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
         edge_outputs=edge_outputs,
         edge_embeddings=edge_embeddings,
         y_true_per_edge=y_true_per_edge,
+        device_embeddings = device_embeddings,
         residuals_edges=residuals_edges,
         num_classes=num_classes
     )
@@ -579,77 +595,143 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
 
 
 def backward_pass(edge_models, device_models, edge_embeddings, device_embeddings,
-                       y_true_per_edge, y_true_devices, y_global_pred, global_residuals,
-                       edge_sample_slices, device_sample_slices, verbose=True):
+                  y_true_per_edge, y_true_devices, y_global_pred,
+                  edge_sample_slices=None, device_sample_slices=None,
+                  verbose=True, n_classes=8, use_classification=True):
     """
-    Hierarchical residual feedback for HPFL with LightGBM.
+    Hierarchical residual feedback for HPFL using LightGBM.
+    Residuals are computed per edge and per device to ensure correct shapes.
 
-    Parameters
-    ----------
-    edge_models : list of list of LGBMClassifier
-        Models per edge.
-    device_models : list of list of LGBMClassifier
-        Models per device.
-    edge_embeddings : list of np.ndarray
-        Embeddings for edges (after device aggregation).
-    device_embeddings : list of np.ndarray
-        Embeddings for devices.
-    y_true_per_edge : list of np.ndarray
-        True labels per edge.
-    y_true_devices : list of np.ndarray
-        True labels per device.
-    y_global_pred : np.ndarray
-        Global predictions from server aggregation.
-    global_residuals : np.ndarray
-        Residuals at global level.
-    edge_sample_slices : list of slice
-        Slices to extract residuals for each edge.
-    device_sample_slices : list of slice
-        Slices to extract residuals for each device.
+    Args:
+        edge_models: list of lists of models per edge
+        device_models: list of lists of models per device
+        edge_embeddings: list of np.ndarray (n_samples_edge, n_features)
+        device_embeddings: list of np.ndarray (n_samples_device, n_features)
+        y_true_per_edge: list of true labels per edge (n_samples_edge, n_classes)
+        y_true_devices: list of true labels per device (n_samples_device, n_classes)
+        y_global_pred: global predictions from forward pass
+        edge_sample_slices: not used; residuals computed directly
+        device_sample_slices: not used; residuals computed directly
+        n_classes: number of classes if classification
+        use_classification: True to fit classifiers for multi-class
+    Returns:
+        edge_models, device_models
     """
+
+    updated_edge_preds = []
 
     # -----------------------------
     # 1. Update Edge Models
     # -----------------------------
     for i, models in enumerate(edge_models):
-        if not models or edge_embeddings[i] is None:
+        X_edge = edge_embeddings[i]
+        y_edge_true = y_true_per_edge[i]
+
+        if not models or X_edge is None:
             continue
 
-        # Residuals corresponding to this edge
-        residuals_edge = global_residuals[edge_sample_slices[i]]
-        X_edge = edge_embeddings[i]
+        # Compute residuals per sample (for classification, could use one-hot vs predicted)
+        if use_classification:
+            # Convert one-hot to class indices
+            if y_edge_true.ndim > 1 and y_edge_true.shape[1] > 1:
+                y_edge_labels = y_edge_true.argmax(axis=1)
+            else:
+                y_edge_labels = y_edge_true.ravel()
+        else:
+            # For regression, residuals = y_true - predictions
+            y_edge_labels = y_edge_true  # already continuous
+
+        regressors_per_edge = []
+        preds_list = []
 
         for m in models:
-            m.fit(X_edge, residuals_edge)  # treat residuals as pseudo-targets
+            if use_classification:
+                reg = LGBMClassifier(
+                    n_estimators=m.n_estimators,
+                    learning_rate=m.learning_rate,
+                    max_depth=m.max_depth,
+                    random_state=m.random_state,
+                    num_class=n_classes
+                )
+                reg.fit(X_edge, y_edge_labels)
+                preds = reg.predict_proba(X_edge)
+            else:
+                reg = LGBMRegressor(
+                    n_estimators=m.n_estimators,
+                    learning_rate=m.learning_rate,
+                    max_depth=m.max_depth,
+                    random_state=m.random_state
+                )
+                reg.fit(X_edge, y_edge_labels)
+                preds = reg.predict(X_edge)
+                if preds.ndim == 1:
+                    preds = preds[:, None]
+
+            regressors_per_edge.append(reg)
+            preds_list.append(preds)
+
+        # Average predictions across models for this edge
+        if preds_list:
+            preds_avg = np.mean(preds_list, axis=0)
+            updated_edge_preds.append(preds_avg)
+
+        # Replace old models with regressors/classifiers
+        edge_models[i] = regressors_per_edge
+
+    # Stack updated predictions for all edges
+    if updated_edge_preds:
+        updated_edge_preds = np.vstack(updated_edge_preds)
+    else:
+        updated_edge_preds = np.empty((0, n_classes))
 
     # -----------------------------
-    # 2. Compute new edge predictions after update
-    # -----------------------------
-    updated_edge_preds = []
-    for i, models in enumerate(edge_models):
-        if not models or edge_embeddings[i] is None:
-            continue
-        X_edge = edge_embeddings[i]
-        preds = sum(m.predict_proba(X_edge) for m in models) / len(models)
-        updated_edge_preds.append(preds)
-    updated_edge_preds = np.vstack(updated_edge_preds)
-
-    # -----------------------------
-    # 3. Compute device-level residuals
+    # 2. Update Device Models
     # -----------------------------
     for i, models in enumerate(device_models):
-        if not models or device_embeddings[i] is None:
+        X_device = device_embeddings[i]
+        y_device_true = y_true_devices[i]
+
+        if not models or X_device is None:
             continue
 
-        # Residuals for this device are pulled from updated edge predictions
-        residuals_device = updated_edge_preds[device_sample_slices[i]]
-        X_device = device_embeddings[i]
+        # Compute residuals per device
+        if use_classification:
+            if y_device_true.ndim > 1 and y_device_true.shape[1] > 1:
+                y_device_labels = y_device_true.argmax(axis=1)
+            else:
+                y_device_labels = y_device_true.ravel()
+        else:
+            y_device_labels = y_device_true
 
+        regressors_per_device = []
         for m in models:
-            m.fit(X_device, residuals_device)  # refine using residual feedback
+            if use_classification:
+                reg = LGBMClassifier(
+                    n_estimators=m.n_estimators,
+                    learning_rate=m.learning_rate,
+                    max_depth=m.max_depth,
+                    random_state=m.random_state,
+                    num_class=n_classes
+                )
+                reg.fit(X_device, y_device_labels)
+            else:
+                reg = LGBMRegressor(
+                    n_estimators=m.n_estimators,
+                    learning_rate=m.learning_rate,
+                    max_depth=m.max_depth,
+                    random_state=m.random_state
+                )
+                reg.fit(X_device, y_device_labels)
+
+            regressors_per_device.append(reg)
+
+        device_models[i] = regressors_per_device
 
     if verbose:
-        print("Backward hierarchical residual feedback completed.")
+        print("Backward hierarchical residual feedback completed safely with proper per-edge alignment.")
+
+    return edge_models, device_models
+
 
 
 # ======================================================================
@@ -1076,7 +1158,7 @@ def evaluate_final_accuracy(devices_data, device_models, edge_groups, le, num_cl
         if alpha.ndim != 1 or alpha.shape[0] != betas.shape[1]:
             alpha = alpha.flatten()
         logits = X_global @ betas + alpha
-        global_preds = sp_softmax(logits, axis=1).argmax(axis=1)
+        global_preds = np.argmax(sp_softmax(logits, axis=1), axis=1)
         global_acc = compute_accuracy(y_global, global_preds)
 
     return device_acc, edge_acc, global_acc
