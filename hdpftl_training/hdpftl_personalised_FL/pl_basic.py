@@ -17,7 +17,6 @@ import os
 import warnings
 from datetime import datetime
 from typing import List, Tuple, Union
-import numpy as np
 from lightgbm import LGBMRegressor, LGBMClassifier
 import lightgbm as lgb
 import matplotlib.pyplot as plt
@@ -48,6 +47,8 @@ config = {
     "epoch": 5,
     "device_boosting_rounds": 5,
     "edge_boosting_rounds": 5,
+    "num_iterations_device": 1000,
+    "num_iterations_edge": 1000,
     "variance_prune": True,
     "variance_threshold": 1e-4,
     "bayes_n_samples": 500,
@@ -57,17 +58,20 @@ config = {
     "isotonic_min_positives": 5,
     "max_cores": 2,
     "n_estimators": 50,
-    "num_leaves": 10,
+    "num_leaves": 64,
     "alpha": 1.0,
-    "learning_rate_device": 0.05,
+    "min_child_samples": 500,
+    "learning_rate_device": 0.01,
     "learning_rate_edge": 0.1,
     "learning_rate_backward": 0.1,
-    "max_depth": 5,
-    "min_data_in_leaf": 5,
+    "max_depth": -1,
     "feature_fraction": 0.8,
-    "early_stopping_rounds_device": 20,
+    "early_stopping_rounds_device": 100,
     "early_stopping_rounds_edge": 20,
-    "early_stopping_rounds_backward": 10
+    "early_stopping_rounds_backward": 10,
+    "class_weight": "balanced",
+    "lambda_l1": 1.0,
+    "lambda_l2": 1.0
 
 }
 
@@ -83,11 +87,38 @@ DeviceData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 # ============================================================
 
 def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_rounds=None, learning_rate=None,
-                   num_classes=None):
+                   num_iteration = None, num_classes=None):
     """
-    Train LightGBM classifier with safe NumPy arrays to avoid feature name warnings.
-    Handles multiclass or binary classification.
-    """
+        Train a LightGBM classifier safely with both training and validation monitoring.
+
+        Args:
+            X_train (array-like): Training features.
+            y_train (array-like): Training labels.
+            X_valid (array-like, optional): Validation features (default: None).
+            y_valid (array-like, optional): Validation labels (default: None).
+            early_stopping_rounds (int, optional): Stop if validation score does not improve
+                after this many rounds (default: None).
+            learning_rate (float, optional): Learning rate for boosting (default: 0.01).
+            num_iterations (int, optional): Maximum number of boosting rounds (default: 5000).
+            num_classes (int, optional): Number of target classes. If None, inferred from labels.
+            Note:- Compare multi_logloss for train vs. valid:
+
+                    If train logloss keeps going down but valid stops improving → overfitting.
+
+                    If neither improves much → weak features or wrong parameters.
+
+                    OR in other Words
+
+                    If train ↓ and valid ↑ → overfitting (trees too complex, regularize more).
+
+                    If train flat + valid flat → weak features (model can’t learn).
+
+                    If train ↓ and valid ↓ together → good learning.
+            Returns:
+                model (lightgbm.LGBMClassifier): Trained LightGBM model.
+        """
+    fit_kwargs = {}
+
     X_np = safe_array(X_train)
     y_np = safe_array(y_train)
 
@@ -98,37 +129,61 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
     num_class = num_classes if num_classes > 2 else None
 
     model = lgb.LGBMClassifier(
+
+        # Objective & classes
         objective=objective,
         num_class=num_class,
-        n_estimators=config["n_estimators"],
-        random_state=config["random_seed"],
-        num_leaves=config["num_leaves"],
-        learning_rate=learning_rate,
-        max_depth=config["max_depth"],
-        min_data_in_leaf=config["min_data_in_leaf"],
-        min_child_samples=config["min_data_in_leaf"],
 
+        # Boosting setup
+        n_estimators=config["n_estimators"],
+        learning_rate=learning_rate,
+        num_iterations=num_iteration,
+
+        # Tree complexity
+        num_leaves=config["num_leaves"],
+        max_depth=config["max_depth"],
+
+        # Data constraints & regularization
+        min_child_samples=config["min_child_samples"],
+        class_weight=config["class_weight"],
+        lambda_l1=config["lambda_l1"],
+        lambda_l2=config["lambda_l2"],
         feature_fraction=config["feature_fraction"],
+
+        random_state=config["random_seed"],
         device="cpu",
+        verbose = -1
         # gpu_platform_id=0,
         # gpu_device_id=0
     )
-    fit_kwargs = {}
-    mask = np.isin(y_valid, np.unique(y_np))
-    X_valid_filtered = X_valid[mask]
-    y_valid_filtered = y_valid[mask]
 
     if X_valid is not None and y_valid is not None and early_stopping_rounds:
+        X_valid_np = np.array(X_valid)
+        y_valid_np = np.array(y_valid)
+
+        # Only filter if there are truly unseen classes
+        mask = np.isin(y_valid_np, np.unique(y_np))
+        if mask.sum() < 10:  # too few after filtering, keep all
+            mask = np.ones_like(y_valid_np, dtype=bool)
+
+        X_valid_filtered = X_valid_np[mask]
+        y_valid_filtered = y_valid_np[mask]
+
         fit_kwargs.update({
-            "eval_set": [(safe_array(X_valid_filtered), safe_array(y_valid_filtered))],
+            "eval_set": [
+                (X_np, y_np),  # training set for logging
+                (X_valid_filtered, y_valid_filtered)  # validation set
+            ],
             "eval_metric": "multi_logloss" if num_classes > 2 else "logloss",
+            "eval_names": ["train", "valid"],
             "callbacks": [
-                early_stopping(early_stopping_rounds),  # ✅ new API
-                log_evaluation(10)  # optional logging
+                early_stopping(early_stopping_rounds),
+                log_evaluation(10)
             ],
         })
 
-    model.fit(X_np, y_np, **fit_kwargs)
+    # Train with both train + validation monitoring
+    model.fit(safe_array(X_np), safe_array(y_np), **fit_kwargs)
     return model
 
 
@@ -237,9 +292,10 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
                 logging.debug(f"Device {idx}, round {t}: single class, skipping.")
                 break
 
+
             model = train_lightgbm(X_train, y_pseudo, X_finetune, y_finetune,
                                    config["early_stopping_rounds_device"], config["learning_rate_device"],
-                                   num_classes=num_classes)
+                                   config["num_iterations_device"],num_classes=num_classes)
 
             pred_proba = predict_proba_fixed(model, X_train, num_classes, le=le)
 
@@ -340,7 +396,8 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, n
             # Train LightGBM on pseudo-labels
             model = train_lightgbm(
                 X_edge, y_pseudo, X_finetune, y_finetune,
-                config["early_stopping_rounds_edge"], config["learning_rate_edge"], num_classes=num_classes
+                config["early_stopping_rounds_edge"], config["learning_rate_edge"], config["num_iterations_edge"],
+                num_classes=num_classes
             )
 
             pred_proba = predict_proba_fixed(model, X_edge, num_classes, le=le)
@@ -595,27 +652,15 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
 
 
 def backward_pass(edge_models, device_models, edge_embeddings, device_embeddings,
-                  y_true_per_edge, y_true_devices, y_global_pred,
-                  edge_sample_slices=None, device_sample_slices=None,
-                  verbose=True, n_classes=8, use_classification=True):
+                  y_true_per_edge, y_true_devices, y_global_pred=None,
+                  n_classes=8, use_classification=True, verbose=True):
     """
     Hierarchical residual feedback for HPFL using LightGBM.
-    Residuals are computed per edge and per device to ensure correct shapes.
 
-    Args:
-        edge_models: list of lists of models per edge
-        device_models: list of lists of models per device
-        edge_embeddings: list of np.ndarray (n_samples_edge, n_features)
-        device_embeddings: list of np.ndarray (n_samples_device, n_features)
-        y_true_per_edge: list of true labels per edge (n_samples_edge, n_classes)
-        y_true_devices: list of true labels per device (n_samples_device, n_classes)
-        y_global_pred: global predictions from forward pass
-        edge_sample_slices: not used; residuals computed directly
-        device_sample_slices: not used; residuals computed directly
-        n_classes: number of classes if classification
-        use_classification: True to fit classifiers for multi-class
-    Returns:
-        edge_models, device_models
+    - use_classification=True : fit LGBMClassifier on integer labels
+    - use_classification=False: fit LGBMRegressor on residuals (continuous)
+
+    Returns updated edge_models and device_models.
     """
 
     updated_edge_preds = []
@@ -630,31 +675,34 @@ def backward_pass(edge_models, device_models, edge_embeddings, device_embeddings
         if not models or X_edge is None:
             continue
 
-        # Compute residuals per sample (for classification, could use one-hot vs predicted)
+        # Convert classification labels if needed
         if use_classification:
-            # Convert one-hot to class indices
-            if y_edge_true.ndim > 1 and y_edge_true.shape[1] > 1:
-                y_edge_labels = y_edge_true.argmax(axis=1)
-            else:
-                y_edge_labels = y_edge_true.ravel()
+            y_edge_labels = (
+                y_edge_true.argmax(axis=1).astype(int) if y_edge_true.ndim > 1 else y_edge_true.ravel().astype(int)
+            )
         else:
-            # For regression, residuals = y_true - predictions
-            y_edge_labels = y_edge_true  # already continuous
+            # Use continuous residuals (2D)
+            if y_global_pred is not None:
+                # Ensure shapes match
+                residuals_edge = y_edge_true - y_global_pred[i][:y_edge_true.shape[0]]
+            else:
+                residuals_edge = y_edge_true
+            y_edge_labels = np.atleast_2d(residuals_edge).astype(np.float32)
 
         regressors_per_edge = []
         preds_list = []
 
         for m in models:
             if use_classification:
-                reg = LGBMClassifier(
+                clf = LGBMClassifier(
                     n_estimators=m.n_estimators,
                     learning_rate=m.learning_rate,
                     max_depth=m.max_depth,
                     random_state=m.random_state,
                     num_class=n_classes
                 )
-                reg.fit(X_edge, y_edge_labels)
-                preds = reg.predict_proba(X_edge)
+                clf.fit(X_edge, y_edge_labels)
+                preds = clf.predict_proba(X_edge)
             else:
                 reg = LGBMRegressor(
                     n_estimators=m.n_estimators,
@@ -664,25 +712,20 @@ def backward_pass(edge_models, device_models, edge_embeddings, device_embeddings
                 )
                 reg.fit(X_edge, y_edge_labels)
                 preds = reg.predict(X_edge)
-                if preds.ndim == 1:
-                    preds = preds[:, None]
+                preds = np.atleast_2d(preds).reshape(X_edge.shape[0], -1)
 
-            regressors_per_edge.append(reg)
+            regressors_per_edge.append(reg if not use_classification else clf)
             preds_list.append(preds)
 
-        # Average predictions across models for this edge
+        # Average predictions for this edge
         if preds_list:
             preds_avg = np.mean(preds_list, axis=0)
             updated_edge_preds.append(preds_avg)
 
-        # Replace old models with regressors/classifiers
         edge_models[i] = regressors_per_edge
 
-    # Stack updated predictions for all edges
-    if updated_edge_preds:
-        updated_edge_preds = np.vstack(updated_edge_preds)
-    else:
-        updated_edge_preds = np.empty((0, n_classes))
+    # Stack all edge predictions (num_samples_total, n_classes or 1)
+    updated_edge_preds = np.vstack(updated_edge_preds) if updated_edge_preds else np.empty((0, n_classes))
 
     # -----------------------------
     # 2. Update Device Models
@@ -694,26 +737,33 @@ def backward_pass(edge_models, device_models, edge_embeddings, device_embeddings
         if not models or X_device is None:
             continue
 
-        # Compute residuals per device
         if use_classification:
-            if y_device_true.ndim > 1 and y_device_true.shape[1] > 1:
-                y_device_labels = y_device_true.argmax(axis=1)
-            else:
-                y_device_labels = y_device_true.ravel()
+            y_device_labels = (
+                y_device_true.argmax(axis=1).astype(int) if y_device_true.ndim > 1 else y_device_true.ravel().astype(
+                    int)
+            )
         else:
-            y_device_labels = y_device_true
+            # Compute residuals for device using edge predictions
+            # If shapes match, subtract corresponding edge predictions
+            if updated_edge_preds.shape[0] >= y_device_true.shape[0]:
+                residuals_device = y_device_true - updated_edge_preds[:y_device_true.shape[0], :]
+            else:
+                residuals_device = y_device_true
+            y_device_labels = np.atleast_2d(residuals_device).astype(np.float32)
 
         regressors_per_device = []
+
         for m in models:
             if use_classification:
-                reg = LGBMClassifier(
+                clf = LGBMClassifier(
                     n_estimators=m.n_estimators,
                     learning_rate=m.learning_rate,
                     max_depth=m.max_depth,
                     random_state=m.random_state,
                     num_class=n_classes
                 )
-                reg.fit(X_device, y_device_labels)
+                clf.fit(X_device, y_device_labels)
+                regressors_per_device.append(clf)
             else:
                 reg = LGBMRegressor(
                     n_estimators=m.n_estimators,
@@ -722,16 +772,14 @@ def backward_pass(edge_models, device_models, edge_embeddings, device_embeddings
                     random_state=m.random_state
                 )
                 reg.fit(X_device, y_device_labels)
-
-            regressors_per_device.append(reg)
+                regressors_per_device.append(reg)
 
         device_models[i] = regressors_per_device
 
     if verbose:
-        print("Backward hierarchical residual feedback completed safely with proper per-edge alignment.")
+        print("Backward hierarchical feedback completed safely.")
 
     return edge_models, device_models
-
 
 
 # ======================================================================
@@ -802,10 +850,11 @@ def average_predictions(pred_list, num_samples=None, num_classes=None):
 
 
 def safe_array(X):
-    """Convert input to NumPy array if it is a DataFrame or Series."""
+    """Convert input to NumPy float32 array if it is DataFrame, Series, or list."""
     if isinstance(X, (pd.DataFrame, pd.Series)):
-        return X.to_numpy()
-    return np.asarray(X)
+        return X.to_numpy(dtype=np.float32)
+    return np.asarray(X, dtype=np.float32)
+
 
 
 def safe_edge_output(edge_outputs, num_classes):
@@ -915,7 +964,7 @@ def dirichlet_partition(X, y, num_devices, alpha=0.3, seed=42):
 # -----------------------------
 # Step 2: Hierarchical Dirichlet Partition
 # -----------------------------
-def dirichlet_partition_for_devices_edges_non_iid(X, y, num_devices, device_per_edge, n_edges, alpha=0.5, seed=42):
+def dirichlet_partition_for_devices_edges_non_iid(X, y, num_devices, n_edges, alpha=0.5, seed=42):
     """
     Hierarchical non-IID partition.
     Each device gets its own local train/test split for device-level training.
@@ -1043,15 +1092,18 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         # -----------------------------
         # 3. Backward Pass using global residuals
         # -----------------------------
-        backward_pass(edge_models, device_models, edge_embeddings, device_embeddings, y_true_per_edge,y_true_devices,
-                      y_global_pred=y_global_pred,
-                      global_residuals=global_residuals_torch,
-                      edge_sample_slices=edge_sample_slices,
-                      device_sample_slices = device_sample_slices,
-                      verbose=verbose)
-
-
-        # -----------------------------
+        edge_models, device_models = backward_pass(
+            edge_models=edge_models,
+            device_models=device_models,
+            edge_embeddings=edge_embeddings,
+            device_embeddings=device_embeddings,
+            y_true_per_edge=y_true_per_edge,
+            y_true_devices=y_true_devices,
+            y_global_pred=y_global_pred,  # can be None if you don’t have global predictions
+            n_classes=8,
+            use_classification=True,
+            verbose=True
+        )        # -----------------------------
         # 4. Compute Device-Level Accuracy
         # -----------------------------
         device_acc_epoch = []
@@ -1186,12 +1238,11 @@ if __name__ == "__main__":
 
     # 3. Partition fine-tune data for devices & edges (non-IID)
     devices_data, edge_groups = dirichlet_partition_for_devices_edges_non_iid(
-        X_finetune, y_finetune,  # use fine-tune data
+        X_pretrain, y_pretrain,  # use fine-tune data
         num_devices=config["n_device"],
-        device_per_edge=config["device_per_edge"],
         n_edges=config["n_edges"],
-        alpha=0.5,
-        seed=42
+        alpha=config["alpha"],
+        seed=config["random_seed"]
     )
 
     # 4. Train HPFL model with accuracy tracking
