@@ -14,30 +14,27 @@ import gc
 import glob
 import hashlib
 import os
+import warnings
+from collections import Counter
 from concurrent.futures import as_completed, ThreadPoolExecutor
+from contextlib import nullcontext
 from glob import glob
-
 import numpy as np
 import pandas as pd
-from imblearn.over_sampling import SVMSMOTE
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
+from imblearn.over_sampling import SMOTE, SVMSMOTE
+from imblearn.pipeline import Pipeline
+from imblearn.under_sampling import RandomUnderSampler
+from matplotlib import pyplot as plt
+from sklearn.decomposition import PCA
+from sklearn.model_selection import StratifiedShuffleSplit, train_test_split
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 import hdpftl_training.hdpftl_data.sampling as sampling
 import hdpftl_utility.config as config
 import hdpftl_utility.log as log_util
 import hdpftl_utility.utils as util
-
-from sklearn.model_selection import StratifiedShuffleSplit
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
-
-from sklearn.decomposition import PCA
-from imblearn.over_sampling import SMOTE
-from imblearn.under_sampling import RandomUnderSampler
-from imblearn.pipeline import Pipeline
-from collections import Counter
-import warnings
-from contextlib import nullcontext
 
 
 def calculate_imbalance_ratio(counts):
@@ -105,23 +102,14 @@ def fast_safe_smote(X, y, k_neighbors=5):
 
 # 🌀 Step 3: Hybrid
 def hybrid_balance(X, y):
-    log_util.safe_log("\n🌀 Applying hybrid balancing (undersample + SMOTE)")
-    under = RandomUnderSampler(sampling_strategy='auto', random_state=42)
-    over = SMOTE(k_neighbors=5, random_state=42)
-    pipeline = Pipeline([('under', under), ('over', over)])
+    log_util.safe_log("\n🌀 Applying modified hybrid balancing (no undersampling, SMOTE only)")
     try:
-        result = pipeline.fit_resample(X, y)
-        if result is None:
-            warnings.warn("Pipeline fit_resample returned None.")
-            return X, y
-        X_res, y_res = result
+        sm = SMOTE(k_neighbors=5, random_state=42)
+        X_res, y_res = sm.fit_resample(X, y)
         return X_res, y_res
     except Exception as e:
-        warnings.warn(f"Hybrid balancing failed: {e}")
+        warnings.warn(f"SMOTE failed in hybrid balance: {e}")
         return X, y
-
-    # 🎯 Master Function
-    # 🎯 Master function with pre-sampling
 
 
 """AI is creating summary for 
@@ -193,7 +181,7 @@ def assign_labels_numeric(df, filename):
         3: ["spoof", "fake", "MITM", "DNS"],  # Spoofing
         4: ["dos", "denial"],  # DoS
         5: ["recon", "scan"],  # Recon
-        6: ["web", "http","Uploading_Attack.pcap_Flow", "XSS.pcap_Flow", "SqlInjection.pcap_Flow"],  # Web-based
+        6: ["web", "http", "Uploading_Attack.pcap_Flow", "XSS.pcap_Flow", "SqlInjection.pcap_Flow"],  # Web-based
         7: ["mirai", "malware"]  # Mirai
     }
 
@@ -297,10 +285,6 @@ def get_cache_path(folder_path):
 
 
 def process_single_file(file,
-                        benign_keywords=None,
-                        attack_keywords=None,
-                        multiclass_keywords=None,
-                        manual_label_map=None,
                         drop_columns=None):
     try:
         df = pd.read_csv(file)
@@ -338,6 +322,121 @@ def process_single_file(file,
     return df
 
 
+def plot_skewed_features_log_transform(df, features_per_fig=10):
+    """
+    Plot original and log1p-transformed distributions of highly skewed features in chunks.
+
+    Args:
+        df (pd.DataFrame): Input dataframe containing the features.
+        features_per_fig (int, optional): Number of features per figure/page. Default is 10.
+    """
+    # Your full list of skewed features
+    skewed_features = [
+        "Total Fwd Packet", "Total Bwd packets", "Total Length of Fwd Packet",
+        "Total Length of Bwd Packet", "Fwd Packet Length Max", "Fwd Packet Length Min",
+        "Fwd Packet Length Mean", "Fwd Packet Length Std", "Bwd Packet Length Max",
+        "Bwd Packet Length Min", "Bwd Packet Length Mean", "Bwd Packet Length Std",
+        "Flow IAT Std", "Fwd IAT Mean", "Fwd IAT Std", "Fwd IAT Max",
+        "Bwd IAT Std", "Bwd IAT Max", "Fwd PSH Flags", "Fwd Header Length",
+        "Bwd Header Length", "Fwd Packets/s", "Bwd Packets/s", "Packet Length Min",
+        "Packet Length Max", "Packet Length Mean", "Packet Length Std",
+        "Packet Length Variance", "FIN Flag Count", "PSH Flag Count", "ACK Flag Count",
+        "CWR Flag Count", "ECE Flag Count", "Down/Up Ratio", "Average Packet Size",
+        "Fwd Segment Size Avg", "Bwd Segment Size Avg", "Bwd Bytes/Bulk Avg",
+        "Bwd Packet/Bulk Avg", "Bwd Bulk Rate Avg", "Subflow Fwd Packets",
+        "Subflow Fwd Bytes", "Subflow Bwd Packets", "Subflow Bwd Bytes",
+        "FWD Init Win Bytes", "Bwd Init Win Bytes", "Fwd Act Data Pkts",
+        "Active Mean", "Active Std", "Active Max", "Active Min",
+        "Idle Mean", "Idle Std", "Idle Max", "Idle Min"
+    ]
+    for i in range(0, len(skewed_features), features_per_fig):
+        chunk = skewed_features[i:i+features_per_fig]
+        n_features = len(chunk)
+
+        plt.figure(figsize=(12, n_features*2))
+
+        for j, feature in enumerate(chunk, 1):
+            original = df[feature].fillna(0)
+            log_transformed = np.log1p(original)
+
+            # Original feature
+            plt.subplot(n_features, 2, 2*j-1)
+            sns.histplot(original, bins=50, kde=True, color='skyblue')
+            plt.title(f"{feature} (Original) - skew={original.skew():.2f}")
+            plt.xlabel("")
+
+            # Log-transformed feature
+            plt.subplot(n_features, 2, 2*j)
+            sns.histplot(log_transformed, bins=50, kde=True, color='salmon')
+            plt.title(f"{feature} (Log1p) - skew={log_transformed.skew():.2f}")
+            plt.xlabel("")
+
+        plt.tight_layout()
+        plt.show()
+
+
+
+
+def log_transform_skewed_features(df, skew_threshold=2.0, clip_threshold=1e6, scale_method='standard',
+                                       verbose=True):
+    """
+    Vectorized log-transform for highly skewed numeric features, followed by clipping and scaling
+    to prevent overflow/divide by zero warnings in downstream computations.
+
+    Args:
+        df (pd.DataFrame): Input dataframe.
+        skew_threshold (float): Features with skew > this will be log-transformed.
+        clip_threshold (float): Maximum absolute value for clipping after log-transform.
+        scale_method (str): 'standard' (zero mean, unit variance) or 'minmax' (0–1) scaling.
+        verbose (bool): Print transformed and scaled features.
+
+    Returns:
+        pd.DataFrame: Safe dataframe with log-transformed, clipped, and scaled numeric features.
+    """
+
+    df_safe = df.copy()
+
+    # 1️⃣ Identify numeric columns
+    numeric_cols = df_safe.select_dtypes(include=[np.number]).columns
+
+    # 2️⃣ Compute skew in one go
+    skews = df_safe[numeric_cols].skew()
+    high_skew_cols = skews[skews > skew_threshold].index.tolist()
+
+    # Keep only columns without negative values
+    high_skew_cols = [c for c in high_skew_cols if (df_safe[c] >= 0).all()]
+
+    # 3️⃣ Log-transform
+    if high_skew_cols:
+        df_safe[high_skew_cols] = np.log1p(df_safe[high_skew_cols])
+        if verbose:
+            print("🔄 Log-transformed highly skewed features:")
+            for c in high_skew_cols:
+                print(f"  • {c} (skew={skews[c]:.2f})")
+    elif verbose:
+        print("✅ No numeric features exceeded skew threshold.")
+
+    # 4️⃣ Clip extreme values
+    if clip_threshold is not None:
+        df_safe[numeric_cols] = df_safe[numeric_cols].clip(lower=-clip_threshold, upper=clip_threshold)
+
+    # 5️⃣ Scale numeric features
+    if scale_method == 'standard':
+        scaler = StandardScaler()
+    elif scale_method == 'minmax':
+        scaler = MinMaxScaler()
+    else:
+        raise ValueError("scale_method must be 'standard' or 'minmax'")
+
+    df_safe[numeric_cols] = scaler.fit_transform(df_safe[numeric_cols])
+
+    if verbose:
+        print(f"✅ Clipped numeric values to ±{clip_threshold} and applied {scale_method} scaling.")
+
+    return df_safe
+
+
+"""
 def load_and_label_all_parallel(log_path_str, folder_path,
                                 benign_keywords=None,
                                 attack_keywords=None,
@@ -346,9 +445,17 @@ def load_and_label_all_parallel(log_path_str, folder_path,
                                 drop_columns=None,
                                 max_workers=4,
                                 cache_parquet=True,
-                                parquet_file="__cached_preprocessed.parquet"):
+                                parquet_file="cached_preprocessed.parquet",
+                                skew_threshold=2.0):
     if drop_columns is None:
-        drop_columns = ['Flow ID', 'Source IP', 'Destination IP', 'Timestamp']
+        drop_columns = [
+            'Flow ID',
+            'Src IP',
+            'Dst IP',
+            'Timestamp',
+            'Src Port',
+            'Dst Port'
+        ]
 
     csv_files = glob(os.path.join(folder_path, "*.csv")) + glob(os.path.join(folder_path, "*.CSV"))
     if not csv_files:
@@ -386,20 +493,143 @@ def load_and_label_all_parallel(log_path_str, folder_path,
         raise ValueError("❌ No usable labeled data found in any CSV files.")
 
     final_df = pd.concat(all_data, ignore_index=True)
+
+    # -----------------------------
+    # Preprocessing to reduce overfitting
+    # -----------------------------
+
+    # 1️⃣ Log-transform skewed numeric features (Flow Duration included)
+    numeric_cols = final_df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        skewness = final_df[col].skew()
+        if skewness > skew_threshold:
+            final_df[col] = np.log1p(final_df[col])
+            log_util.safe_log(f"🔄 Log-transformed '{col}' (skew={skewness:.2f})")
+
+    # 2️⃣ Protocol as categorical
+    if 'Protocol' in final_df.columns:
+        final_df['Protocol'] = final_df['Protocol'].astype('category')
+
+    # 3️⃣ Convert any remaining object columns to string
+    object_cols = final_df.select_dtypes(include='object').columns
+    for col in object_cols:
+        try:
+            final_df[col] = final_df[col].astype(str)
+        except Exception as e:
+            log_util.safe_log(f"❌ Could not convert column '{col}': {e}")
+
     log_util.safe_log("✅✅ All file processing completed.")
     log_util.safe_log(f"✅ Final shape: ({int(final_df.shape[0])}, {int(final_df.shape[1])})")
 
-    # 🔍 Detect object columns
-    object_cols = final_df.select_dtypes(include='object').columns
-    if len(object_cols) > 0:
-        log_util.safe_log(f"⚠️ Object-type columns detected: {list(object_cols)}")
-        # 🧹 Convert any non-string object values to string
-        for col in object_cols:
+    # 4️⃣ Cache to parquet
+    if cache_parquet:
+        try:
+            # final_df.to_parquet(parquet_path, index=False, engine="fastparquet", compression='BROTLI')
+            log_util.safe_log(f"📝 Cached to parquet: {parquet_path}")
+        except Exception as e:
+            log_util.safe_log(f"❌ Failed to cache to parquet: {e}")
+
+    return final_df
+
+
+
+
+
+"""
+def load_and_label_all_parallel(
+        log_path_str,
+        folder_path,
+        drop_columns=None,
+        max_workers=4,
+        cache_parquet=True,
+        parquet_file="cached_preprocessed.parquet",
+        skew_threshold=2.0
+):
+    """
+    Load multiple CSVs in parallel, label them, drop unsafe columns,
+    normalize skewed numeric features (via log_transform_skewed_features),
+    convert Protocol to categorical, and cache to parquet.
+    """
+
+    if drop_columns is None:
+        drop_columns = [
+            'Flow ID',
+            'Src IP',
+            'Dst IP',
+            'Timestamp',
+            'Src Port',
+            'Dst Port'
+        ]
+
+    csv_files = glob(os.path.join(folder_path, "*.csv")) + glob(os.path.join(folder_path, "*.CSV"))
+    if not csv_files:
+        raise FileNotFoundError(f"No CSV files found in: {os.path.abspath(folder_path)}")
+
+    parquet_path = os.path.join(log_path_str, parquet_file)
+    if cache_parquet and os.path.exists(parquet_path):
+        log_util.safe_log(f"📦 Using cached parquet file: {parquet_path}")
+        return pd.read_parquet(parquet_path)
+
+    log_util.safe_log(f"🧵 Loading {len(csv_files)} CSVs with ThreadPoolExecutor...")
+
+    all_data = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                process_single_file,
+                file,
+                drop_columns
+            ): file
+            for file in csv_files
+        }
+
+        for i, future in enumerate(as_completed(futures), 1):
+            file = futures[future]
             try:
-                final_df[col] = final_df[col].astype(str)
-                log_util.safe_log(f"🔄 Column '{col}' converted to string")
+                df = future.result()
+                if df is not None:
+                    all_data.append(df)
+                    log_util.safe_log(f"[{i}/{len(csv_files)}] ✅ Processed: {file}")
+                else:
+                    log_util.safe_log(f"[{i}/{len(csv_files)}] ⚠️ Skipped: {file}")
             except Exception as e:
-                log_util.safe_log(f"❌ Could not convert column '{col}': {e}")
+                log_util.safe_log(f"[{i}/{len(csv_files)}] ❌ Exception for {file}: {e}")
+
+    if not all_data:
+        raise ValueError("❌ No usable labeled data found in any CSV files.")
+
+    final_df = pd.concat(all_data, ignore_index=True)
+
+    # -----------------------------
+    # 1️⃣ Log-transform highly skewed numeric features using modular function
+    # -----------------------------
+    final_df = log_transform_skewed_features(final_df, skew_threshold=skew_threshold,
+                                             clip_threshold=1e6,scale_method='standard', verbose=True)
+    plot_skewed_features_log_transform(final_df)
+    # -----------------------------
+    # 2️⃣ Protocol as categorical
+    # -----------------------------
+    if 'Protocol' in final_df.columns:
+        final_df['Protocol'] = final_df['Protocol'].astype('category')
+        log_util.safe_log("🔄 Converted 'Protocol' to categorical")
+
+    # -----------------------------
+    # 3️⃣ Convert any remaining object columns to string
+    # -----------------------------
+    object_cols = final_df.select_dtypes(include='object').columns
+    for col in object_cols:
+        try:
+            final_df[col] = final_df[col].astype(str)
+            log_util.safe_log(f"🔄 Converted '{col}' to string")
+        except Exception as e:
+            log_util.safe_log(f"❌ Could not convert column '{col}': {e}")
+
+    log_util.safe_log("✅ All file processing completed.")
+    log_util.safe_log(f"✅ Final shape: ({int(final_df.shape[0])}, {int(final_df.shape[1])})")
+
+    # -----------------------------
+    # 4️⃣ Cache to parquet
+    # -----------------------------
     if cache_parquet:
         try:
             # final_df.to_parquet(parquet_path, index=False, engine="fastparquet", compression='BROTLI')
@@ -472,7 +702,6 @@ def safe_preprocess_data(log_path_str, folder_path, scaler_type='minmax'):
         min_len = min(X_np.shape[0], y_np.shape[0])
         return X_np[:min_len], y_np[:min_len]
 
-
     X_pretrain, y_pretrain = align_xy(X_pretrain, y_pretrain)
     X_finetune, y_finetune = align_xy(X_finetune, y_finetune)
     X_test, y_test = align_xy(X_test, y_test)
@@ -529,9 +758,6 @@ def preprocess_data(log_path_str, selected_folder, writer=None, scaler_type='min
                 raise ValueError(f"Unsupported scaler_type: {scaler_type}")
 
     return X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test
-
-
-
 
 
 #####################################################################
@@ -646,8 +872,8 @@ def preprocess_data_safe(log_path_str, selected_folder, writer=None, scaler_type
     # --- Verify all classes preserved ---
     expected_classes = set(counts.keys())
     for name, labels in zip(
-        ["y_final", "y_pretrain", "y_finetune", "y_test"],
-        [y_final, y_pretrain, y_finetune, y_test]
+            ["y_final", "y_pretrain", "y_finetune", "y_test"],
+            [y_final, y_pretrain, y_finetune, y_test]
     ):
         present_classes = set(np.unique(labels))
         missing = expected_classes - present_classes
@@ -700,6 +926,7 @@ def fast_safe_smote_class_safe(X, y, k_neighbors=5):
 
     return X_res, y_res
 
+
 def hybrid_balance_class_safe(X, y, k_neighbors=5):
     """
     Hybrid balancing: undersample majority classes + SMOTE oversampling,
@@ -731,8 +958,3 @@ def hybrid_balance_class_safe(X, y, k_neighbors=5):
     except Exception as e:
         warnings.warn(f"Hybrid balancing failed: {e}")
         return X, y
-
-
-
-
-

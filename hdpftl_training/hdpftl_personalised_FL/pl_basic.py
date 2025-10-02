@@ -17,13 +17,13 @@ import os
 import warnings
 from datetime import datetime
 from typing import List, Tuple, Union
-from lightgbm import LGBMRegressor, LGBMClassifier
+
 import lightgbm as lgb
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from lightgbm import early_stopping, log_evaluation
+from lightgbm import early_stopping, LGBMClassifier, LGBMRegressor, log_evaluation
 from scipy.special import softmax as sp_softmax
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
@@ -48,8 +48,8 @@ config = {
     "epoch": 5,
     "device_boosting_rounds": 5,
     "edge_boosting_rounds": 5,
-    "num_iterations_device": 10,
-    "num_iterations_edge": 10,
+    "num_iterations_device": 100,
+    "num_iterations_edge": 100,
     "variance_prune": True,
     "variance_threshold": 1e-4,
     "bayes_n_samples": 500,
@@ -67,7 +67,7 @@ config = {
     "learning_rate_backward": 0.1,
     "max_depth": -1,
     "feature_fraction": 0.8,
-    "early_stopping_rounds_device": 100,
+    "early_stopping_rounds_device": 20,
     "early_stopping_rounds_edge": 20,
     "early_stopping_rounds_backward": 10,
     "class_weight": "balanced",
@@ -139,7 +139,7 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
 
     model = lgb.LGBMClassifier(
         # Objective & classes
-        boosting = config["boosting"],
+        boosting=config["boosting"],
         objective=objective,
         num_class=num_class,
 
@@ -155,7 +155,7 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
         # Data constraints & regularization
         min_child_samples=config["min_child_samples"],
         class_weight=config["class_weight"],
-        lambda_l1=config["lambda_l1"] * 2 ,
+        lambda_l1=config["lambda_l1"] * 2,
         lambda_l2=config["lambda_l2"] * 2,
         feature_fraction=config["feature_fraction"],
 
@@ -329,6 +329,7 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
 
     return residuals_devices, device_models, device_embeddings, y_true_devices
 
+
 def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, num_classes,
                         X_finetune=None, y_finetune=None):
     """
@@ -441,8 +442,8 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, n
 
 
 def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_edge,
-                                         device_embeddings, residuals_edges=None,
-                                         num_classes=2, verbose=True):
+                                      device_embeddings, residuals_edges=None,
+                                      num_classes=2, verbose=True):
     """
     Global (server) Bayesian aggregation using edge embeddings,
     weighting edges by their residual errors, with explicit alpha/beta calculation.
@@ -641,7 +642,7 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
         edge_outputs=edge_outputs,
         edge_embeddings=edge_embeddings,
         y_true_per_edge=y_true_per_edge,
-        device_embeddings = device_embeddings,
+        device_embeddings=device_embeddings,
         residuals_edges=residuals_edges,
         num_classes=num_classes
     )
@@ -650,7 +651,8 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
     # global_acc = compute_accuracy(y_global_true, y_global_pred.argmax(axis=1))
 
     return (device_models, edge_models, edge_outputs, theta_global, residuals_devices, residuals_edges, \
-        y_global_pred, device_embeddings, edge_embeddings, y_global_true, y_true_per_edge, global_residuals, edge_sample_slices,
+            y_global_pred, device_embeddings, edge_embeddings, y_global_true, y_true_per_edge, global_residuals,
+            edge_sample_slices,
             y_true_devices, device_sample_slices)
 
 
@@ -1082,7 +1084,7 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         device_models, edge_models, edge_outputs, theta_global, \
             residuals_devices, residuals_edges, y_global_pred, \
             device_embeddings, edge_embeddings, y_global_true, \
-            y_true_per_edge, global_residuals, edge_sample_slices,\
+            y_true_per_edge, global_residuals, edge_sample_slices, \
             y_true_devices, device_sample_slices = forward_pass(
             devices_data, edge_groups, le, num_classes,
             X_finetune, y_finetune,
@@ -1107,7 +1109,7 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
             n_classes=8,
             use_classification=True,
             verbose=True
-        )        # -----------------------------
+        )  # -----------------------------
         # 4. Compute Device-Level Accuracy
         # -----------------------------
         device_acc_epoch = []
