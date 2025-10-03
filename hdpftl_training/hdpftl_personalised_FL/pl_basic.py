@@ -72,7 +72,8 @@ config = {
     "early_stopping_rounds_backward": 10,
     "class_weight": "balanced",
     "lambda_l1": 1.0,
-    "lambda_l2": 1.0
+    "lambda_l2": 1.0,
+    "device": "cpu"
 
 }
 
@@ -160,7 +161,7 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
         feature_fraction=config["feature_fraction"],
 
         random_state=config["random_seed"],
-        device="gpu",
+        device=config["device"],
         gpu_platform_id=0,
         gpu_device_id=0,
         verbose=-1
@@ -1046,7 +1047,7 @@ def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_
 # ============================================================
 
 def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
-                             X_finetune, y_finetune, verbose=True, device='gpu'):
+                             X_finetune, y_finetune, verbose=True):
     """
     HPFL training loop with forward/backward passes and accuracy tracking.
 
@@ -1095,7 +1096,7 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         )
 
         # Move residuals to device for backward pass
-        global_residuals_torch = torch.tensor(global_residuals, dtype=torch.float32, device=device)
+        global_residuals_torch = torch.tensor(global_residuals, dtype=torch.float32, device=config["device"])
 
         # -----------------------------
         # 3. Backward Pass using global residuals

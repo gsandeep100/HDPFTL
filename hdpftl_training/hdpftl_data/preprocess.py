@@ -938,7 +938,7 @@ def preprocess_data_safe(log_path_str, selected_folder, writer=None, scaler_type
     y_temp, y_test = y_final[train_idx], y_final[test_idx]
 
     # --- Stratified split: pretrain / finetune 10% of train ---
-    sss_fine = StratifiedShuffleSplit(n_splits=1, test_size=0.30, random_state=42)
+    sss_fine = StratifiedShuffleSplit(n_splits=1, test_size=0.10, random_state=42)
     pre_idx, fine_idx = next(sss_fine.split(X_temp, y_temp))
     X_pretrain, X_finetune = X_temp[pre_idx], X_temp[fine_idx]
     y_pretrain, y_finetune = y_temp[pre_idx], y_temp[fine_idx]
