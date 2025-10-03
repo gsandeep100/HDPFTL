@@ -160,7 +160,9 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
         feature_fraction=config["feature_fraction"],
 
         random_state=config["random_seed"],
-        device="cpu",
+        device="gpu",
+        gpu_platform_id=0,
+        gpu_device_id=0,
         verbose=-1
     )
 
@@ -1044,7 +1046,7 @@ def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_
 # ============================================================
 
 def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
-                             X_finetune, y_finetune, verbose=True, device='cpu'):
+                             X_finetune, y_finetune, verbose=True, device='gpu'):
     """
     HPFL training loop with forward/backward passes and accuracy tracking.
 
@@ -1098,6 +1100,7 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         # -----------------------------
         # 3. Backward Pass using global residuals
         # -----------------------------
+        """
         edge_models, device_models = backward_pass(
             edge_models=edge_models,
             device_models=device_models,
@@ -1109,7 +1112,9 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
             n_classes=8,
             use_classification=True,
             verbose=True
-        )  # -----------------------------
+        )  
+        """
+        # -----------------------------
         # 4. Compute Device-Level Accuracy
         # -----------------------------
         device_acc_epoch = []
@@ -1227,7 +1232,7 @@ def evaluate_final_accuracy(devices_data, device_models, edge_groups, le, num_cl
 # ============================================================
 
 if __name__ == "__main__":
-    folder_path = "CIC_IoT_IDAD_Dataset_2024"
+    folder_path = "CIC_IoT_DIAD_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
