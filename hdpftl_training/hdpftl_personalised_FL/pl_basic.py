@@ -1497,3 +1497,4 @@ if __name__ == "__main__":
     plt.legend()
     plt.grid(True)
     plt.show()
+    plt.close('all')  # explicitly close all figures
