@@ -68,7 +68,7 @@ config = {
     "max_depth": -1,
     "feature_fraction": 0.8,
     "early_stopping_rounds_device": 20,
-    "early_stopping_rounds_edge": 20,
+    "early_stopping_rounds_edge": 100,
     "early_stopping_rounds_backward": 10,
     "class_weight": "balanced",
     "lambda_l1": 1.0,
@@ -202,18 +202,29 @@ def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_
 
 def predict_proba_fixed(model, X, num_classes, le=None):
     """
-    Predict probabilities safely, even if some classes were missing during training.
-    Ensures shape (n_samples, num_classes) and uses NumPy arrays to avoid warnings.
+    Safe wrapper for LightGBM's predict_proba:
+    - Ensures correct feature count (pads/slices X if needed).
+    - Ensures correct class count (fills missing classes if needed).
+    - Always returns shape (n_samples, num_classes).
     """
     X_np = safe_array(X)
+
+    # --- Feature alignment ---
+    n_features_model = getattr(model, "n_features_in_", X_np.shape[1])
+    if X_np.shape[1] > n_features_model:
+        X_np = X_np[:, :n_features_model]  # slice down
+    elif X_np.shape[1] < n_features_model:
+        pad_width = n_features_model - X_np.shape[1]
+        X_np = np.pad(X_np, ((0, 0), (0, pad_width)), mode="constant")
+
+    # --- Prediction ---
     pred = model.predict_proba(X_np)
     pred = np.atleast_2d(pred)
 
-    # Already matches num_classes
+    # --- Class alignment ---
     if pred.shape[1] == num_classes:
         return pred
 
-    # Fill missing classes
     full = np.zeros((pred.shape[0], num_classes), dtype=float)
     model_classes = getattr(model, "classes_", np.arange(pred.shape[1]))
 
@@ -225,9 +236,10 @@ def predict_proba_fixed(model, X, num_classes, le=None):
                 full[:, pos] = pred[:, i]
     else:
         for i, cls in enumerate(model_classes):
-            full[:, int(cls)] = pred[:, i]
+            if cls < num_classes:
+                full[:, int(cls)] = pred[:, i]
 
-    # Normalize to avoid zeros
+    # --- Normalize ---
     row_sums = full.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0] = 1.0
     full /= row_sums
@@ -268,7 +280,13 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
         device_embeddings: list of np.ndarray, one-hot leaf embeddings per device
         y_true_devices: list of np.ndarray, y_finetune per device
     """
-
+    print("""
+    ************************************************************
+    *                                                          *
+    *                  STARTING DEVICE LAYER                   *
+    *                                                          *
+    ************************************************************
+    """)
     device_embeddings = []
 
     for idx, dev_tuple in enumerate(devices_data):
@@ -333,23 +351,27 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
     return residuals_devices, device_models, device_embeddings, y_true_devices
 
 
-def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, num_classes,
-                        X_finetune=None, y_finetune=None):
+def edge_layer_boosting(edge_groups, device_embeddings, devices_residuals,
+                        le, num_classes, X_finetune=None, y_finetune=None,
+                        device_weights=None):
     """
-    Edge-level sequential boosting with fully safe incremental boosting.
+    Vectorized edge-level sequential boosting.
 
-    Handles:
-    - Missing classes in pseudo-labels
-    - Feature mismatches for init_model
-    - Safe validation handling
-    - Robust averaging of predictions
-
-    Returns:
-        edge_outputs: list of np.ndarray, predictions per edge
-        edge_models: list of list, trained models per edge
-        residuals_edges: list of np.ndarray, final residuals per edge
-        edge_embeddings_list: list of np.ndarray, padded leaf embeddings per edge
+    Key improvements:
+    - Fully vectorized residual updates per edge
+    - Device weighting supported
+    - Safe padding for embeddings
+    - Robust handling of missing classes
+    - Optional validation slicing
     """
+
+    print("""
+    ************************************************************
+    *                                                          *
+    *             STARTING EDGE LAYER               *
+    *                                                          *
+    ************************************************************
+    """)
 
     edge_models = []
     residuals_edges = []
@@ -362,49 +384,57 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, n
             residuals_edges.append(None)
             edge_embeddings_list.append(None)
             edge_outputs.append(None)
+            print(f"Edge {edge_idx}: no devices, skipping.")
             continue
 
         # -----------------------------
-        # Stack device embeddings and residuals with padding
+        # Stack embeddings and residuals
         # -----------------------------
         embeddings_list = [device_embeddings[i] for i in edge_devices]
-        residual_list = [residuals_devices[i] for i in edge_devices]
+        residual_list = [devices_residuals[i] for i in edge_devices]
+
+        # Device weights
+        if device_weights is None:
+            weights = np.ones(len(edge_devices))
+        else:
+            weights = np.array([device_weights[i] for i in edge_devices])
 
         max_cols = max(e.shape[1] for e in embeddings_list)
         padded_embeddings = [
             np.pad(e, ((0, 0), (0, max_cols - e.shape[1])), mode="constant")
             for e in embeddings_list
         ]
-
         X_edge = np.vstack(padded_embeddings)
-        residual_edge = np.vstack(residual_list)
+
+        residual_edge = np.vstack([r * w for r, w in zip(residual_list, weights)])
+        residual_edge = np.clip(residual_edge, 0.0, None)
 
         models_per_edge = []
 
-        # Sequential boosting per edge
-        for t in range(config.get("edge_boosting_rounds", 1)):
-            y_pseudo = residual_edge.argmax(axis=1)
-
+        # -----------------------------
+        # Vectorized boosting rounds
+        # -----------------------------
+        boosting_rounds = config["edge_boosting_rounds"]
+        for t in range(boosting_rounds):
+            # Vectorized pseudo-label selection
+            y_pseudo = np.argmax(residual_edge, axis=1)
             unique_classes = np.unique(y_pseudo)
-            # Stop if less than 2 classes
+
             if len(unique_classes) < 2:
                 print(f"Edge {edge_idx}, round {t}: only {len(unique_classes)} class(es), skipping boosting.")
                 break
 
-            # Only use init_model if feature shapes match and all classes exist
+            # Use previous model if compatible
+            init_model = None
             if models_per_edge:
                 prev_model = models_per_edge[-1]
                 if prev_model.n_features_in_ == X_edge.shape[1] and len(unique_classes) == num_classes:
                     init_model = prev_model
-                else:
-                    init_model = None
-            else:
-                init_model = None
 
-            # Slice validation features to match X_edge if necessary
+            # Validation slice
             X_valid_slice = X_finetune[:, :X_edge.shape[1]] if X_finetune is not None else None
 
-            # Train LightGBM safely
+            # Train LightGBM
             model = train_lightgbm(
                 X_edge, y_pseudo,
                 X_valid=X_valid_slice,
@@ -416,27 +446,23 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, n
                 init_model=init_model
             )
 
+            # Vectorized prediction & residual update
             pred_proba = predict_proba_fixed(model, X_edge, num_classes, le=le)
-
-            # Update residuals safely
-            residual_edge -= pred_proba
-            residual_edge = np.clip(residual_edge, 0.0, None)
+            residual_edge = np.clip(residual_edge - pred_proba, 0.0, None)
 
             models_per_edge.append(model)
 
+        # -----------------------------
         # Store results
+        # -----------------------------
         edge_models.append(models_per_edge)
         residuals_edges.append(residual_edge)
         edge_embeddings_list.append(X_edge)
 
-        # Compute edge outputs robustly
+        # Compute edge outputs (vectorized averaging)
         if models_per_edge:
-            model_preds = [np.atleast_2d(m.predict_proba(X_edge)) for m in models_per_edge]
-            edge_pred_avg = average_predictions(
-                model_preds,
-                num_samples=X_edge.shape[0],
-                num_classes=num_classes
-            )
+            model_preds = np.array([m.predict_proba(X_edge) for m in models_per_edge])
+            edge_pred_avg = np.mean(model_preds, axis=0)
             edge_outputs.append(edge_pred_avg)
         else:
             edge_outputs.append(None)
@@ -445,29 +471,37 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices, le, n
 
 
 def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_edge,
-                                      device_embeddings, residuals_edges=None,
-                                      num_classes=2, verbose=True):
+                                      device_embeddings, edge_groups,
+                                      residuals_edges=None, num_classes=2, verbose=True):
     """
-    Global (server) Bayesian aggregation using edge embeddings,
-    weighting edges by their residual errors, with explicit alpha/beta calculation.
-    Returns NumPy arrays only, no PyTorch.
+    Global Bayesian aggregation using edge outputs, weighting edges by residuals.
+    Fully NumPy-based.
 
     Args:
         edge_outputs: list of np.ndarray, outputs from edge models
         edge_embeddings: list of np.ndarray, embeddings per edge
         y_true_per_edge: list of np.ndarray, true labels per edge
         device_embeddings: list of np.ndarray, for slicing
+        edge_groups: list of list of device indices per edge
         residuals_edges: list of np.ndarray, optional residuals for weighting
-        num_classes: int
+        num_classes: int, number of classes
         verbose: bool
 
     Returns:
-        y_global_pred: np.ndarray, global predictions (softmax)
+        y_global_pred: np.ndarray, global softmax predictions
         global_residuals: np.ndarray, residuals for backward pass
         theta_global: dict with 'alpha' and 'beta'
         edge_sample_slices: list of tuples (start_idx, end_idx) per edge
-        device_sample_slices: list of slice per device
+        device_sample_slices: list of slice objects per device
     """
+
+    print("""
+    ************************************************************
+    *                                                          *
+    *                  STARTING GLOBAL LAYER                   *
+    *                                                          *
+    ************************************************************
+    """)
 
     # -----------------------------
     # Step 1: Filter valid edges
@@ -484,11 +518,12 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_
     y_global_list = []
     edge_sample_slices = []
     start_idx = 0
+
     for i in valid_edges:
         out = edge_outputs[i]
         n_samples = out.shape[0]
 
-        # Pad classes if necessary
+        # Pad missing classes
         if out.shape[1] < num_classes:
             out = np.pad(out, ((0, 0), (0, num_classes - out.shape[1])), mode='constant')
         edge_preds_list.append(out)
@@ -501,7 +536,7 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_
             labels = labels[:n_samples]
         y_global_list.append(labels)
 
-        # Slice for this edge
+        # Edge sample slice
         edge_sample_slices.append((start_idx, start_idx + n_samples))
         start_idx += n_samples
 
@@ -510,32 +545,34 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_
     # -----------------------------
     H_global = np.vstack(edge_preds_list)  # (n_samples_total, num_classes)
     y_global = np.hstack(y_global_list)
-    n_samples = H_global.shape[0]
+    n_samples_total = H_global.shape[0]
 
     # -----------------------------
     # Step 4: Compute edge weights
     # -----------------------------
     if residuals_edges is not None:
+        # Weight = inverse mean squared residual per sample
         weights_list = [1.0 / (np.mean(residuals_edges[i] ** 2, axis=1) + 1e-6)
                         for i in valid_edges]
         edge_weights = np.hstack(weights_list)
     else:
-        edge_weights = np.ones(n_samples)
-    edge_weights /= np.sum(edge_weights)  # normalize
+        edge_weights = np.ones(n_samples_total)
+
+    # Normalize weights
+    edge_weights /= np.sum(edge_weights)
 
     if verbose:
-        print("Normalized edge weights:", edge_weights)
+        print(f"Normalized edge weights sum to {np.sum(edge_weights):.6f}")
 
     # -----------------------------
-    # Step 5: Alpha and beta
+    # Step 5: Compute alpha and beta
     # -----------------------------
     alpha = np.sum(H_global * edge_weights[:, None], axis=0)
 
-    # One-hot true labels
-    y_onehot = np.zeros((n_samples, num_classes))
-    y_onehot[np.arange(n_samples), y_global] = 1
+    # One-hot encode true labels
+    y_onehot = np.zeros((n_samples_total, num_classes))
+    y_onehot[np.arange(n_samples_total), y_global] = 1
 
-    # Residuals and beta
     global_residuals = y_onehot - H_global
     beta = np.sum(global_residuals * edge_weights[:, None], axis=0)
 
@@ -547,11 +584,11 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_
     y_global_pred = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
 
     # -----------------------------
-    # Step 7: Generate device sample slices
+    # Step 7: Compute device sample slices
     # -----------------------------
     device_sample_slices = []
     for edge_idx, edge_devices in enumerate(edge_groups):
-        start_idx_edge = edge_sample_slices[edge_idx][0]
+        start_idx_edge = edge_sample_slices[edge_idx][0] if edge_idx < len(edge_sample_slices) else 0
         for d in edge_devices:
             n_samples_device = device_embeddings[d].shape[0]
             device_sample_slices.append(slice(start_idx_edge, start_idx_edge + n_samples_device))
@@ -559,7 +596,13 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_
 
     theta_global = {"alpha": alpha, "beta": beta}
 
+    if verbose:
+        print(f"Global alpha: {alpha}")
+        print(f"Global beta: {beta}")
+        print(f"Total samples: {n_samples_total}")
+
     return y_global_pred, global_residuals, theta_global, edge_sample_slices, device_sample_slices
+
 
 
 # ============================================================
@@ -646,6 +689,7 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
         edge_embeddings=edge_embeddings,
         y_true_per_edge=y_true_per_edge,
         device_embeddings=device_embeddings,
+        edge_groups = edge_groups,
         residuals_edges=residuals_edges,
         num_classes=num_classes
     )
@@ -670,6 +714,13 @@ def backward_pass(edge_models, device_models, edge_embeddings, device_embeddings
 
     Returns updated edge_models and device_models.
     """
+    print("""
+    ************************************************************
+    *                                                          *
+    *                  BACKWARD PASS                           *
+    *                                                          *
+    ************************************************************
+    """)
 
     updated_edge_preds = []
 
@@ -904,7 +955,7 @@ def safe_edge_output(edge_outputs, num_classes):
     return safe_list
 
 
-def compute_accuracy(y_true, y_pred):
+def  compute_accuracy(y_true, y_pred):
     """
     Compute accuracy safely with debug info.
 
@@ -1037,6 +1088,92 @@ def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_
     return devices_data, hierarchical_data, edge_groups
 
 
+def compute_multilevel_accuracy(devices_data,
+                                device_models,
+                                edge_groups,
+                                edge_models,
+                                y_global_true,
+                                y_global_pred,
+                                num_classes,
+                                le=None,
+                                verbose=True):
+    """
+    Compute accuracy at device, edge, and global levels.
+
+    Returns:
+        metrics: dict with full details:
+            - device_accs: list of per-device accuracies
+            - device_mean, device_std
+            - edge_accs: list of per-edge accuracies
+            - edge_mean, edge_std
+            - global_acc
+    """
+    # -----------------------------
+    # 1. Device-Level Accuracy
+    # -----------------------------
+    device_accs = []
+    for i, (X_test, _, y_test, _) in enumerate(devices_data):
+        X_test_np = safe_array(X_test)
+        device_preds = np.zeros((X_test_np.shape[0], num_classes))
+
+        if device_models[i] is not None:
+            for mdl in device_models[i]:
+                device_preds += predict_proba_fixed(mdl, X_test_np, num_classes, le=le)
+            device_preds /= max(len(device_models[i]), 1)
+
+        device_accs.append(compute_accuracy(y_test, device_preds.argmax(axis=1)))
+
+    device_mean = float(np.mean(device_accs)) if device_accs else 0.0
+    device_std = float(np.std(device_accs)) if device_accs else 0.0
+
+    # -----------------------------
+    # 2. Edge-Level Accuracy
+    # -----------------------------
+    edge_accs = []
+    for edge_idx, devices_in_edge in enumerate(edge_groups):
+        if not devices_in_edge or edge_models[edge_idx] is None:
+            continue
+
+        X_edge = np.vstack([safe_array(devices_data[d][0]) for d in devices_in_edge])
+        y_edge = np.hstack([devices_data[d][2] for d in devices_in_edge])
+
+        edge_preds = np.zeros((X_edge.shape[0], num_classes))
+        for mdl in edge_models[edge_idx]:
+            edge_preds += predict_proba_fixed(mdl, X_edge, num_classes, le=le)
+        edge_preds /= max(len(edge_models[edge_idx]), 1)
+
+        edge_accs.append(compute_accuracy(y_edge, edge_preds.argmax(axis=1)))
+
+    edge_mean = float(np.mean(edge_accs)) if edge_accs else 0.0
+    edge_std = float(np.std(edge_accs)) if edge_accs else 0.0
+
+    # -----------------------------
+    # 3. Global Accuracy
+    # -----------------------------
+    global_acc = compute_accuracy(y_global_true, y_global_pred.argmax(axis=1))
+
+    # -----------------------------
+    # 4. Verbose Logging
+    # -----------------------------
+    if verbose:
+        print(f"[Acc] Device Mean: {device_mean:.4f} ± {device_std:.4f} | "
+              f"Edge Mean: {edge_mean:.4f} ± {edge_std:.4f} | "
+              f"Global: {global_acc:.4f}")
+
+    # -----------------------------
+    # 5. Return Dict
+    # -----------------------------
+    return {
+        "device_accs": device_accs,
+        "device_mean": device_mean,
+        "device_std": device_std,
+        "edge_accs": edge_accs,
+        "edge_mean": edge_mean,
+        "edge_std": edge_std,
+        "global_acc": float(global_acc)
+    }
+
+
 # ============================================================
 #                  HPFL TRAINING AND EVALUATION
 # ============================================================
@@ -1058,15 +1195,14 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         num_classes: int
         X_finetune, y_finetune: optional fine-tuning data
         verbose: bool
-        device: 'cpu' or 'cuda'
 
     Returns:
-        device_models, edge_models, residuals_devices, residuals_edges,
+        device_models, edge_models,
+        residuals_devices, residuals_edges,
         y_global_pred, device_embeddings, edge_embeddings,
-        device_accs, edge_accs, global_accs
+        metrics_history: dict with per-epoch means & stds
     """
 
-    device_accs, edge_accs, global_accs = [], [], []
     residuals_devices = [None] * len(devices_data)
     device_models = [None] * len(devices_data)
     residuals_edges = [None] * len(edge_groups)
@@ -1077,9 +1213,24 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
 
     num_epochs = config["epoch"]
 
+    # --- history tracking ---
+    history = {
+        "device_means": [],
+        "device_stds": [],
+        "edge_means": [],
+        "edge_stds": [],
+        "global_accs": []
+    }
+
     for epoch in range(num_epochs):
-        if verbose:
-            print(f"\n=== Epoch {epoch + 1}/{num_epochs} ===")
+        # Pretty epoch header
+        print(f"""
+        ************************************************************
+        *                                                          *
+        *                  === Epoch {epoch + 1}/{num_epochs} ===  *
+        *                                                          *
+        ************************************************************
+        """)
 
         # -----------------------------
         # 1. Forward Pass
@@ -1089,14 +1240,27 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
             device_embeddings, edge_embeddings, y_global_true, \
             y_true_per_edge, global_residuals, edge_sample_slices, \
             y_true_devices, device_sample_slices = forward_pass(
-            devices_data, edge_groups, le, num_classes,
-            X_finetune, y_finetune,
-            residuals_devices=residuals_devices,
-            device_models=device_models
+                devices_data, edge_groups, le, num_classes,
+                X_finetune, y_finetune,
+                residuals_devices=residuals_devices,
+                device_models=device_models
         )
 
-        # Move residuals to device for backward pass
-        global_residuals_torch = torch.tensor(global_residuals, dtype=torch.float32, device=config["device"])
+
+        # -----------------------------
+        # 2. Compute Multi-Level Accuracy
+        # -----------------------------
+        metrics = compute_multilevel_accuracy(
+            devices_data,
+            device_models,
+            edge_groups,
+            edge_models,
+            y_global_true,
+            y_global_pred,
+            num_classes,
+            le=le,
+            verbose=True
+        )
 
         # -----------------------------
         # 3. Backward Pass using global residuals
@@ -1115,55 +1279,19 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
             verbose=True
         )  
         """
-        # -----------------------------
-        # 4. Compute Device-Level Accuracy
-        # -----------------------------
-        device_acc_epoch = []
-        for i, (X_test, _, y_test, _) in enumerate(devices_data):
-            X_test_np = safe_array(X_test)
-            device_preds = np.zeros((X_test_np.shape[0], num_classes))
 
-            if device_models[i] is not None:
-                for mdl in device_models[i]:
-                    device_preds += predict_proba_fixed(mdl, X_test_np, num_classes, le=le)
-                device_preds /= max(len(device_models[i]), 1)
+        # Store results
+        history["device_means"].append(metrics["device_mean"])
+        history["device_stds"].append(metrics["device_std"])
+        history["edge_means"].append(metrics["edge_mean"])
+        history["edge_stds"].append(metrics["edge_std"])
+        history["global_accs"].append(metrics["global_acc"])
 
-            device_acc_epoch.append(compute_accuracy(y_test, device_preds.argmax(axis=1)))
-        device_accs.append(np.mean(device_acc_epoch))
+    return (device_models, edge_models,
+            residuals_devices, residuals_edges,
+            y_global_pred, device_embeddings, edge_embeddings,
+            history)
 
-        # -----------------------------
-        # 5. Compute Edge-Level Accuracy
-        # -----------------------------
-        edge_acc_epoch = []
-        for edge_idx, devices_in_edge in enumerate(edge_groups):
-            if not devices_in_edge or edge_models[edge_idx] is None:
-                continue
-
-            X_edge = np.vstack([safe_array(devices_data[d][0]) for d in devices_in_edge])
-            y_edge = np.hstack([devices_data[d][2] for d in devices_in_edge])
-
-            edge_preds = np.zeros((X_edge.shape[0], num_classes))
-            for mdl in edge_models[edge_idx]:
-                edge_preds += predict_proba_fixed(mdl, X_edge, num_classes, le=le)
-            edge_preds /= max(len(edge_models[edge_idx]), 1)
-
-            edge_acc_epoch.append(compute_accuracy(y_edge, edge_preds.argmax(axis=1)))
-        edge_accs.append(np.mean(edge_acc_epoch) if edge_acc_epoch else 0.0)
-
-        # -----------------------------
-        # 6. Compute Global Accuracy
-        # -----------------------------
-        global_acc = compute_accuracy(y_global_true, y_global_pred.argmax(axis=1))
-        global_accs.append(global_acc)
-
-        if verbose:
-            print(f"[Epoch {epoch + 1}] Device Acc: {np.mean(device_acc_epoch):.4f}, "
-                  f"Edge Acc: {np.mean(edge_acc_epoch) if edge_acc_epoch else 0.0:.4f}, "
-                  f"Global Acc: {global_acc:.4f}")
-
-    return device_models, edge_models, residuals_devices, residuals_edges, \
-        y_global_pred, device_embeddings, edge_embeddings, \
-        device_accs, edge_accs, global_accs
 
 
 def evaluate_final_accuracy(devices_data, device_models, edge_groups, le, num_classes, gossip_summary=None):
