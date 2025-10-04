@@ -24,7 +24,9 @@ import numpy as np
 import pandas as pd
 import torch
 from lightgbm import early_stopping, LGBMClassifier, LGBMRegressor, log_evaluation
+from matplotlib.animation import FuncAnimation
 from scipy.special import softmax as sp_softmax
+from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
@@ -1003,13 +1005,13 @@ def safe_array(X):
         return X.to_numpy(dtype=np.float32)
     return np.asarray(X, dtype=np.float32)
 
-
+"""
 def safe_edge_output(edge_outputs, num_classes):
-    """
+    \"""
     Ensures each edge output is 2D with shape (n_samples, num_classes).
     If outputs are missing columns, pad with zeros.
     If outputs are 1D, convert to one-hot.
-    """
+    \"""
     safe_list = []
     for i, H in enumerate(edge_outputs):
         H = np.asarray(H)
@@ -1040,7 +1042,7 @@ def safe_edge_output(edge_outputs, num_classes):
         safe_list.append(H)
 
     return safe_list
-
+"""
 
 def  compute_accuracy(y_true, y_pred):
     """
@@ -1299,6 +1301,7 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
     edge_embeddings = [None] * len(edge_groups)
 
     num_epochs = config["epoch"]
+    y_true_per_epoch = []
 
     # --- history tracking ---
     history = {
@@ -1306,11 +1309,12 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         "device_stds": [],
         "edge_means": [],
         "edge_stds": [],
-        "global_accs": []
+        "global_accs": [],
+        "y_true_per_epoch": []
+
     }
 
     for epoch in range(num_epochs):
-        # Pretty epoch header
         print(f"""
         ************************************************************
         *                                                          *
@@ -1332,7 +1336,7 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
                 residuals_devices=residuals_devices,
                 device_models=device_models
         )
-
+        y_true_per_epoch.append(y_global_true)
 
         # -----------------------------
         # 2. Compute Multi-Level Accuracy
@@ -1373,6 +1377,7 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         history["edge_means"].append(metrics["edge_mean"])
         history["edge_stds"].append(metrics["edge_std"])
         history["global_accs"].append(metrics["global_acc"])
+        history["y_true_per_epoch"].append(y_global_true)
 
     return (device_models, edge_models,
             residuals_devices, residuals_edges,
@@ -1380,14 +1385,14 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
             history)
 
 
-
+"""
 def evaluate_final_accuracy(devices_data, device_models, edge_groups, le, num_classes, gossip_summary=None):
-    """
+    \"""
     Evaluate final accuracy at:
     - Device-level
     - Edge-level
     - Global/Gossip-level (if gossip_summary provided)
-    """
+    \"""
     # -----------------------------
     # Device-level
     # -----------------------------
@@ -1441,10 +1446,215 @@ def evaluate_final_accuracy(devices_data, device_models, edge_groups, le, num_cl
         global_acc = compute_accuracy(y_global, global_preds)
 
     return device_acc, edge_acc, global_acc
+"""
+
+# Create dated folder inside the main save_dir
+def get_dated_save_dir(base_dir="hdpftl_plot_outputs"):
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    dated_dir = os.path.join(base_dir, today_str)
+    os.makedirs(dated_dir, exist_ok=True)
+    return dated_dir
+
+
+
+def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs", threshold=0.95):
+    """
+    Generate all Hierarchical PFL plots with layer-wise contributions.
+    Device/Edge accuracies are compared with global predictions.
+    Automatically creates a dated folder under save_root_dir.
+
+    Args:
+        history (dict): Dictionary with keys:
+            - "device_means": list of device-level mean accuracies per epoch
+            - "edge_means": list of edge-level mean accuracies per epoch
+            - "global_accs": list of global accuracies per epoch
+            - "y_true_per_epoch": list of np.ndarray ground truth labels per epoch (optional)
+            - "y_global_preds": list of np.ndarray global predictions per epoch (optional)
+        save_root_dir (str): Base directory to save plots
+        threshold (float): Ratio threshold to highlight potential bottlenecks (default 0.95)
+    """
+
+    # -----------------------------
+    # Create dated folder
+    # -----------------------------
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    save_dir = os.path.join(save_root_dir, today_str)
+    os.makedirs(save_dir, exist_ok=True)
+
+    # -----------------------------
+    # Extract accuracies
+    # -----------------------------
+    device_accs = np.array(history["device_means"])
+    edge_accs = np.array(history["edge_means"])
+    global_accs = np.array(history["global_accs"])
+    num_epochs = len(global_accs)
+    layers = ["Device", "Edge", "Global"]
+    colors = ['skyblue', 'orange', 'green']
+
+    # -----------------------------
+    # Compute contributions per layer
+    # -----------------------------
+    edge_contribs = np.clip(edge_accs - device_accs, 0, None)
+    global_contribs = np.clip(global_accs - edge_accs, 0, None)
+
+    # -----------------------------
+    # Compute device/edge accuracy vs global predictions per epoch
+    # -----------------------------
+    device_vs_global = []
+    edge_vs_global = []
+    y_global_preds_all = history.get("y_global_preds", None)
+
+    if y_global_preds_all is not None:
+        for epoch in range(num_epochs):
+            y_global_pred = y_global_preds_all[epoch]
+
+            # Device vs global
+            dev_epoch = history["device_means"][epoch]
+            if isinstance(dev_epoch, list):
+                dev_accs_epoch = [accuracy_score(y_global_pred, dev_preds) for dev_preds in dev_epoch]
+                device_vs_global.append(np.mean(dev_accs_epoch))
+            else:
+                device_vs_global.append(accuracy_score(y_global_pred, dev_epoch))
+
+            # Edge vs global
+            edge_epoch = history["edge_means"][epoch]
+            if isinstance(edge_epoch, list):
+                edge_accs_epoch = [accuracy_score(y_global_pred, edge_preds) for edge_preds in edge_epoch]
+                edge_vs_global.append(np.mean(edge_accs_epoch))
+            else:
+                edge_vs_global.append(accuracy_score(y_global_pred, edge_epoch))
+
+        device_vs_global = np.array(device_vs_global)
+        edge_vs_global = np.array(edge_vs_global)
+    else:
+        device_vs_global = device_accs / global_accs
+        edge_vs_global = edge_accs / global_accs
+
+    # -----------------------------
+    # 1. Per-epoch stacked bar charts + individual layer plots
+    # -----------------------------
+    for epoch in range(num_epochs):
+        # Stacked bar per epoch
+        contributions = [device_accs[epoch], edge_contribs[epoch], global_contribs[epoch]]
+        plt.figure(figsize=(6, 4))
+        bars = plt.bar(layers, contributions, color=colors)
+        plt.ylim(0, 1)
+        plt.ylabel("Contribution to Final Accuracy")
+        plt.title(f"Epoch {epoch+1} Layer Contributions")
+        for bar, val in zip(bars, contributions):
+            plt.text(bar.get_x() + bar.get_width()/2, float(val) + 0.02, f"{float(val):.3f}",
+                     ha='center', va='bottom')
+        plt.grid(axis='y', linestyle='--', alpha=0.6)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch+1}.png"))
+        plt.close()
+
+        # Individual layer plots + vs global predictions overlay
+        for layer, acc, vs_global_acc, color in zip(
+            layers,
+            [device_accs[epoch], edge_accs[epoch], global_accs[epoch]],
+            [device_vs_global[epoch], edge_vs_global[epoch], global_accs[epoch]],
+            colors
+        ):
+            plt.figure(figsize=(4, 3))
+            plt.bar([layer], [acc], color=color, alpha=0.7, label=f"Actual {layer}")
+            if layer != "Global":
+                plt.bar([layer], [vs_global_acc], color='red', alpha=0.3, label="vs Global")
+            plt.ylim(0, 1)
+            plt.ylabel("Accuracy")
+            plt.title(f"Epoch {epoch+1} - {layer} Accuracy vs Global")
+            plt.text(0, float(acc)+0.02, f"{float(acc):.3f}", ha='center')
+            if layer != "Global":
+                plt.text(0, float(vs_global_acc)-0.05, f"{float(vs_global_acc):.3f}", ha='center', color='red')
+            plt.legend()
+            plt.grid(axis='y', linestyle='--', alpha=0.6)
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"epoch_{epoch+1}_{layer.lower()}_vs_global.png"))
+            plt.close()
+
+        # Highlight if device/edge close to next layer
+        if device_vs_global[epoch] >= threshold * edge_vs_global[epoch]:
+            print(f"Epoch {epoch+1}: Device predictions very close to Edge predictions relative to global")
+        if edge_vs_global[epoch] >= threshold:
+            print(f"Epoch {epoch+1}: Edge predictions very close to Global predictions")
+
+    # -----------------------------
+    # 2. Combined contribution trends + vs global overlay
+    # -----------------------------
+    plt.figure(figsize=(10, 6))
+    plt.plot(device_accs, label="Device Contribution", marker='o', color='skyblue')
+    plt.plot(edge_contribs, label="Edge Contribution", marker='s', color='orange')
+    plt.plot(global_contribs, label="Global Contribution", marker='^', color='green')
+    plt.plot(device_vs_global, '--', color='blue', label="Device vs Global")
+    plt.plot(edge_vs_global, '--', color='darkorange', label="Edge vs Global")
+    plt.xlabel("Epoch")
+    plt.ylabel("Layer Contribution / Relative Accuracy")
+    plt.title("Hierarchical PFL Layer Contributions Across Epochs")
+    plt.ylim(0, 1)
+    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "combined_layer_contributions_vs_global.png"))
+    plt.show()
+    plt.close()
+
+    # -----------------------------
+    # 3. Overall accuracy trends
+    # -----------------------------
+    plt.figure(figsize=(10, 6))
+    plt.plot(device_accs, label="Device-level Accuracy", marker='o', color='skyblue')
+    plt.plot(edge_accs, label="Edge-level Accuracy", marker='s', color='orange')
+    plt.plot(global_accs, label="Global Accuracy", marker='^', color='green')
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.title("Hierarchical PFL Accuracy Trends")
+    plt.ylim(0, 1)
+    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "overall_accuracy_trends.png"))
+    plt.show()
+    plt.close()
+
+    # -----------------------------
+    # 4. Stacked cumulative contributions
+    # -----------------------------
+    device_cum = device_accs
+    edge_cum = device_cum + edge_contribs
+    global_cum = edge_cum + global_contribs
+
+    plt.figure(figsize=(10, 6))
+    plt.fill_between(np.arange(num_epochs), 0, device_cum, color='skyblue', alpha=0.6, label='Device')
+    plt.fill_between(np.arange(num_epochs), device_cum, edge_cum, color='orange', alpha=0.6, label='Edge')
+    plt.fill_between(np.arange(num_epochs), edge_cum, global_cum, color='green', alpha=0.6, label='Global')
+    plt.plot(np.arange(num_epochs), global_cum, marker='^', color='black', linewidth=2, label='Total Accuracy')
+
+    for i in range(num_epochs):
+        plt.text(i, float(device_cum[i])/2, f"{float(device_cum[i]):.3f}", ha='center', va='center', color='blue', fontsize=9)
+        plt.text(i, float(device_cum[i]) + (float(edge_cum[i]) - float(device_cum[i]))/2,
+                 f"{float(edge_cum[i] - device_cum[i]):.3f}", ha='center', va='center', color='darkorange', fontsize=9)
+        plt.text(i, float(edge_cum[i]) + (float(global_cum[i]) - float(edge_cum[i]))/2,
+                 f"{float(global_cum[i] - edge_cum[i]):.3f}", ha='center', va='center', color='green', fontsize=9)
+
+    plt.xlabel("Epoch")
+    plt.ylabel("Cumulative Accuracy")
+    plt.title("Cumulative Layer Contributions Per Epoch")
+    plt.ylim(0, 1)
+    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "stacked_cumulative_contributions_annotated.png"))
+    plt.show()
+    plt.close()
+
+    print(f"All plots saved to folder: {save_dir}")
 
 
 # ============================================================
-# Training Loop Example
+#                     Main
 # ============================================================
 
 if __name__ == "__main__":
@@ -1485,16 +1695,5 @@ if __name__ == "__main__":
         verbose=True
     )
 
-    # 5. Plot accuracy trends
-    plt.figure(figsize=(10, 6))
-    plt.plot(history["device_means"], label="Device-level Mean Acc", marker='o')
-    plt.plot(history["edge_means"], label="Edge-level Mean Acc", marker='s')
-    plt.plot(history["global_accs"], label="Global Acc", marker='^')
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.title("Hierarchical PFL Accuracy Trends")
-    plt.ylim(0, 1)
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-    plt.close('all')  # explicitly close all figures
+    plot_hpfl_all(history)
+
