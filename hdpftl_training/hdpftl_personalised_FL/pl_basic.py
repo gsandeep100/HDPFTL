@@ -211,26 +211,26 @@ def predict_proba_fixed(model, X, num_classes, le=None):
     - Always returns shape (n_samples, num_classes).
     """
     X_np = safe_array(X)
-    if X_np.ndim == 1:
-        X_np = X_np.reshape(-1, 1)  # ensure 2D (n_samples, n_features)
 
     # --- Feature alignment ---
     n_features_model = getattr(model, "n_features_in_", X_np.shape[1])
     if X_np.shape[1] > n_features_model:
-        X_np = X_np[:, :n_features_model]  # slice down
+        X_np = X_np[:, :n_features_model]
     elif X_np.shape[1] < n_features_model:
         pad_width = n_features_model - X_np.shape[1]
         X_np = np.pad(X_np, ((0, 0), (0, pad_width)), mode="constant")
+
+    n_samples = X_np.shape[0]
 
     # --- Prediction ---
     pred = model.predict_proba(X_np)
     pred = np.atleast_2d(pred)
 
     # --- Class alignment ---
-    if pred.shape[1] == num_classes:
+    if pred.shape[1] == num_classes and pred.shape[0] == n_samples:
         return pred
 
-    full = np.zeros((pred.shape[0], num_classes), dtype=float)
+    full = np.zeros((n_samples, num_classes), dtype=float)
     model_classes = getattr(model, "classes_", np.arange(pred.shape[1]))
 
     if le is not None:
@@ -242,7 +242,9 @@ def predict_proba_fixed(model, X, num_classes, le=None):
     else:
         for i, cls in enumerate(model_classes):
             if cls < num_classes:
-                full[:, int(cls)] = pred[:, i]
+                # Ensure we don't exceed pred shape
+                if i < pred.shape[0]:
+                    full[:, int(cls)] = pred[:, i]
 
     # --- Normalize ---
     row_sums = full.sum(axis=1, keepdims=True)
@@ -1180,6 +1182,9 @@ def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_
     return devices_data, hierarchical_data, edge_groups
 
 
+from sklearn.metrics import accuracy_score
+import numpy as np
+
 def compute_multilevel_accuracy(
     device_models,
     edge_models,
@@ -1192,24 +1197,6 @@ def compute_multilevel_accuracy(
 ):
     """
     Compute device-level, edge-level, and global accuracy on test data.
-
-    Args:
-        device_models: list of lists of trained models per device
-        edge_models: list of lists of trained models per edge
-        edge_groups: list of lists, devices per edge
-        X_test: list of np.ndarray per device
-        y_test: list/array of true labels per device
-        y_global_pred_test: np.ndarray from forward_pass (global predictions)
-        num_classes: int
-        verbose: bool
-
-    Returns:
-        metrics: dict containing:
-            - device_accs
-            - edge_accs
-            - global_acc
-            - device_vs_global
-            - edge_vs_global
     """
 
     # -----------------------------
@@ -1220,24 +1207,27 @@ def compute_multilevel_accuracy(
 
     for dev_idx, X_dev in enumerate(X_test):
         pred_accum = np.zeros((X_dev.shape[0], num_classes), dtype=float)
-        trained_models = device_models[dev_idx]
-
-        # Skip None models
-        if trained_models is None:
-            trained_models = []
+        trained_models = device_models[dev_idx] if dev_idx < len(device_models) else []
 
         for mdl in trained_models:
             if mdl is None:
                 continue
             pred_accum += predict_proba_fixed(mdl, X_dev, num_classes)
 
-        # Average if more than 1 model
         if len(trained_models) > 0:
             pred_accum /= len([m for m in trained_models if m is not None])
 
         device_preds.append(pred_accum)
         device_labels = pred_accum.argmax(axis=1)
-        y_true_dev = np.array(y_test[dev_idx])
+
+        # Ensure labels are 1D arrays, even if scalar
+        y_true_dev = np.atleast_1d(np.array(y_test[dev_idx]))
+
+        if len(y_true_dev) != len(device_labels):
+            print(f"[Warning] Device {dev_idx}: mismatch "
+                  f"y_true={len(y_true_dev)}, y_pred={len(device_labels)}")
+            continue
+
         device_accs.append(accuracy_score(y_true_dev, device_labels))
 
     # -----------------------------
@@ -1247,15 +1237,11 @@ def compute_multilevel_accuracy(
     edge_accs = []
 
     for edge_idx, edge_devices in enumerate(edge_groups):
-        # Collect all device test data for this edge
         X_edge = np.vstack([X_test[d] for d in edge_devices])
-        y_edge_true = np.hstack([y_test[d] for d in edge_devices])
+        y_edge_true = np.hstack([np.atleast_1d(y_test[d]) for d in edge_devices])
 
         pred_accum = np.zeros((X_edge.shape[0], num_classes), dtype=float)
-        trained_models = edge_models[edge_idx]
-
-        if trained_models is None:
-            trained_models = []
+        trained_models = edge_models[edge_idx] or []
 
         for mdl in trained_models:
             if mdl is None:
@@ -1267,14 +1253,25 @@ def compute_multilevel_accuracy(
 
         edge_preds.append(pred_accum)
         edge_labels = pred_accum.argmax(axis=1)
+
+        if len(y_edge_true) != len(edge_labels):
+            print(f"[Warning] Edge {edge_idx}: mismatch "
+                  f"y_true={len(y_edge_true)}, y_pred={len(edge_labels)}")
+            continue
+
         edge_accs.append(accuracy_score(y_edge_true, edge_labels))
 
     # -----------------------------
     # 3. Global predictions
     # -----------------------------
     global_labels = y_global_pred_test.argmax(axis=1)
-    y_global_true = np.hstack(y_test)
-    global_acc = accuracy_score(y_global_true, global_labels)
+    y_global_true = np.hstack([np.atleast_1d(y) for y in y_test])
+
+    if len(y_global_true) != len(global_labels):
+        print(f"[Warning] Global mismatch: y_true={len(y_global_true)}, y_pred={len(global_labels)}")
+        global_acc = 0.0
+    else:
+        global_acc = accuracy_score(y_global_true, global_labels)
 
     # -----------------------------
     # 4. Device / Edge vs Global
@@ -1284,9 +1281,13 @@ def compute_multilevel_accuracy(
     for dev_idx, X_dev in enumerate(X_test):
         n_samples = X_dev.shape[0]
         slice_idx = slice(start_idx, start_idx + n_samples)
-        device_vs_global.append(
-            accuracy_score(global_labels[slice_idx], device_preds[dev_idx].argmax(axis=1))
-        )
+        if slice_idx.stop <= len(global_labels):
+            device_vs_global.append(
+                accuracy_score(global_labels[slice_idx],
+                               device_preds[dev_idx].argmax(axis=1))
+            )
+        else:
+            print(f"[Warning] Device {dev_idx}: slice exceeds global size")
         start_idx += n_samples
 
     edge_vs_global = []
@@ -1294,9 +1295,13 @@ def compute_multilevel_accuracy(
     for edge_idx, edge_devices in enumerate(edge_groups):
         n_samples_edge = sum(X_test[d].shape[0] for d in edge_devices)
         slice_idx = slice(start_idx, start_idx + n_samples_edge)
-        edge_vs_global.append(
-            accuracy_score(global_labels[slice_idx], edge_preds[edge_idx].argmax(axis=1))
-        )
+        if slice_idx.stop <= len(global_labels):
+            edge_vs_global.append(
+                accuracy_score(global_labels[slice_idx],
+                               edge_preds[edge_idx].argmax(axis=1))
+            )
+        else:
+            print(f"[Warning] Edge {edge_idx}: slice exceeds global size")
         start_idx += n_samples_edge
 
     # -----------------------------
@@ -1311,7 +1316,9 @@ def compute_multilevel_accuracy(
     }
 
     if verbose:
-        print(f"Device mean acc: {np.mean(device_accs):.4f}, Edge mean acc: {np.mean(edge_accs):.4f}, Global acc: {global_acc:.4f}")
+        print(f"Device mean acc: {np.mean(device_accs) if device_accs else 0:.4f}, "
+              f"Edge mean acc: {np.mean(edge_accs) if edge_accs else 0:.4f}, "
+              f"Global acc: {global_acc:.4f}")
 
     return metrics
 
