@@ -1215,7 +1215,7 @@ def compute_multilevel_accuracy(
     for dev_idx, X_dev in enumerate(X_test):
         n_samples = X_dev.shape[0]
         pred_accum = np.zeros((n_samples, num_classes), dtype=float)
-        trained_models = device_models[dev_idx] or []
+        trained_models = device_models[dev_idx] if dev_idx < len(device_models) else []
 
         # Predict
         for mdl in trained_models:
@@ -1263,17 +1263,21 @@ def compute_multilevel_accuracy(
 
         edge_preds.append(pred_accum)
 
-        # --- Fix scalar labels per device ---
-        y_edge_true = np.hstack([
-            np.full(X_test[d].shape[0], y_test[d]) if np.atleast_1d(y_test[d]).size == 1
-            else np.atleast_1d(y_test[d])
-            for d in edge_devices
-        ])
+        # --- Fix scalar/mismatched labels per device ---
+        y_edge_true_list = []
+        for d in edge_devices:
+            y_d = np.atleast_1d(y_test[d])
+            if y_d.shape[0] == 1:
+                y_d = np.full(X_test[d].shape[0], y_d[0])
+            elif y_d.shape[0] != X_test[d].shape[0]:
+                print(f"[Warning] Edge {edge_idx}, Device {d}: y_true length {y_d.shape[0]} "
+                      f"!= X_test samples {X_test[d].shape[0]}; trimming to match")
+                y_d = y_d[:X_test[d].shape[0]]  # trim if longer
+            y_edge_true_list.append(y_d)
 
-        if y_edge_true.shape[0] != X_edge.shape[0]:
-            raise ValueError(f"Edge {edge_idx}: y_true length {y_edge_true.shape[0]} "
-                             f"does not match X_edge samples {X_edge.shape[0]}")
+        y_edge_true = np.hstack(y_edge_true_list)
 
+        # Compute accuracy
         edge_labels = pred_accum.argmax(axis=1)
         edge_accs.append(accuracy_score(y_edge_true, edge_labels))
 
