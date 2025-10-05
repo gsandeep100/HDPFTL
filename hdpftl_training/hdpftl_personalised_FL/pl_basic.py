@@ -90,110 +90,111 @@ DeviceData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 # LightGBM Training
 # ============================================================
 
-def train_lightgbm(X_train, y_train, X_valid=None, y_valid=None, early_stopping_rounds=None,
-                   learning_rate=None, num_iteration=None, num_classes=None, init_model=None):
+def train_lightgbm(
+        X_train,
+        y_train,
+        X_valid=None,
+        y_valid=None,
+        early_stopping_rounds = config["num_iterations_edge"],
+        learning_rate = config["learning_rate_device"],
+        init_model = None,
+        verbose=-1
+):
     """
-    Train a LightGBM classifier safely with both training and validation monitoring.
-    Supports continuing from a previous model via `init_model`.
+    Train a LightGBM classifier safely with optional validation and continuation from a previous model.
 
     Args:
-        X_train (array-like): Training features.
-        y_train (array-like): Training labels.
-        X_valid (array-like, optional): Validation features (default: None).
-        y_valid (array-like, optional): Validation labels (default: None).
-        early_stopping_rounds (int, optional): Stop if validation score does not improve
-            after this many rounds (default: None).
-        learning_rate (float, optional): Learning rate for boosting (default: 0.01).
-        num_iteration (int, optional): Maximum number of boosting rounds (default: 5000).
-        num_classes (int, optional): Number of target classes. If None, inferred from labels.
-        init_model (LGBMClassifier, optional): Previous model to continue training from.
-
-        Note:- Compare multi_logloss for train vs. valid:
-
-        If train logloss keeps going down but valid stops improving → overfitting.
-
-        If neither improves much → weak features or wrong parameters.
-
-        OR in other Words
-
-        If train ↓ and valid ↑ → overfitting (trees too complex, regularize more).
-
-        If train flat + valid flat → weak features (model can’t learn).
-
-        If train ↓ and valid ↓ together → good learning.
+        X_train, y_train: training data
+        X_valid, y_valid: optional validation data
+        config: dict of hyperparameters
+        learning_rate: float
+        num_iterations: int
+        early_stopping_rounds: int
+        init_model: existing LGBMClassifier to continue training
+        verbose: int, verbosity level (-1 to suppress)
 
     Returns:
-        model (lightgbm.LGBMClassifier): Trained LightGBM model.
+        Trained LGBMClassifier
     """
 
+    # Safe conversion
+    X_train = np.array(X_train)
+    y_train = np.array(y_train)
+    X_valid = np.array(X_valid) if X_valid is not None else None
+    y_valid = np.array(y_valid) if y_valid is not None else None
+
+    # Handle one-hot labels
+    if y_train.ndim > 1 and y_train.shape[1] > 1:
+        y_train = np.argmax(y_train, axis=1)
+    if y_valid is not None and y_valid.ndim > 1 and y_valid.shape[1] > 1:
+        y_valid = np.argmax(y_valid, axis=1)
+
+    # Determine number of classes
+    num_classes = len(np.unique(y_train))
+    objective = "binary" if num_classes == 2 else "multiclass"
+
+    # Build new model only if init_model is not provided
+    if init_model is None:
+        model_params = {
+            "boosting_type": config.get("boosting", "gbdt"),
+            "objective": objective,
+            "num_class": num_classes if num_classes > 2 else None,
+            "n_estimators": config.get("n_estimators", 5000),
+            "learning_rate": learning_rate,
+            "num_iterations": config.get("num_iterations_device", 100),
+            "num_leaves": config.get("num_leaves", 31),
+            "max_depth": config.get("max_depth", -1),
+            "min_child_samples": config.get("min_child_samples", 20),
+            "class_weight": config.get("class_weight", None),
+            "lambda_l1": config.get("lambda_l1", 0.0) * 2,
+            "lambda_l2": config.get("lambda_l2", 0.0) * 2,
+            "feature_fraction": config.get("feature_fraction", 1.0),
+            "random_state": config.get("random_seed", 42),
+            "device": config.get("device", "cpu"),
+            "verbose": verbose
+        }
+        model = LGBMClassifier(**model_params)
+    else:
+        model = init_model  # continue training previous model
+
+    # Prepare fit kwargs
     fit_kwargs = {}
-
-    # Convert inputs to NumPy arrays
-    X_np = safe_array(X_train)
-    y_np = safe_array(y_train)
-    X_valid_np = safe_array(X_valid) if X_valid is not None else None
-    y_valid_np = safe_array(y_valid) if y_valid is not None else None
-
-    if num_classes is None:
-        num_classes = len(np.unique(y_np))
-
-    objective = "multiclass" if num_classes > 2 else "binary"
-    num_class = num_classes if num_classes > 2 else None
-
-    model = lgb.LGBMClassifier(
-        # Objective & classes
-        boosting=config["boosting"],
-        objective=objective,
-        num_class=num_class,
-
-        # Boosting setup
-        n_estimators=config["n_estimators"],
-        learning_rate=learning_rate,
-        num_iterations=num_iteration,
-
-        # Tree complexity
-        num_leaves=config["num_leaves"],
-        max_depth=config["max_depth"],
-
-        # Data constraints & regularization
-        min_child_samples=config["min_child_samples"],
-        class_weight=config["class_weight"],
-        lambda_l1=config["lambda_l1"] * 2,
-        lambda_l2=config["lambda_l2"] * 2,
-        feature_fraction=config["feature_fraction"],
-
-        random_state=config["random_seed"],
-        device=config["device"],
-        gpu_platform_id=0,
-        gpu_device_id=0,
-        verbose=-1
-    )
-
-    if X_valid_np is not None and y_valid_np is not None and early_stopping_rounds:
-        # Filter validation set to match training classes
-        mask = np.isin(y_valid_np, np.unique(y_np))
-        if mask.sum() < 10:  # avoid too few samples after filtering
-            mask = np.ones_like(y_valid_np, dtype=bool)
-
-        X_valid_filtered = X_valid_np[mask]
-        y_valid_filtered = y_valid_np[mask]
+    if X_valid is not None and y_valid is not None and early_stopping_rounds:
+        mask = np.isin(y_valid, np.unique(y_train))
+        if mask.sum() < 10:
+            mask = np.ones_like(y_valid, dtype=bool)
+        X_valid_filtered = X_valid[mask]
+        y_valid_filtered = y_valid[mask]
 
         fit_kwargs.update({
-            "eval_set": [(X_np, y_np), (X_valid_filtered, y_valid_filtered)],
+            "eval_set": [(X_train, y_train), (X_valid_filtered, y_valid_filtered)],
             "eval_metric": "multi_logloss" if num_classes > 2 else "logloss",
             "eval_names": ["train", "valid"],
             "callbacks": [
                 early_stopping(early_stopping_rounds),
                 log_evaluation(10)
-            ],
+            ]
         })
 
-    # Pass previous model to continue boosting
+    # Continue from previous model only if classes match
     if init_model is not None:
-        fit_kwargs["init_model"] = init_model
+        train_classes = np.unique(y_train)
+        model_classes = init_model.classes_
 
-    # Train the model
-    model.fit(safe_array(X_np), safe_array(y_np), **fit_kwargs)
+        # Check if training labels match the init_model classes
+        if len(train_classes) == len(model_classes) and np.all(np.isin(train_classes, model_classes)):
+            fit_kwargs["init_model"] = init_model
+        else:
+            print(
+                "Skipping init_model because training labels do not match previous model classes. "
+                f"Train classes: {train_classes}, Model classes: {model_classes}"
+            )
+            init_model = None  # safely skip continuation
+
+    # Train
+    print("Training shapes:", X_train.shape, y_train.shape)
+    print("Unique labels:", np.unique(y_train))
+    model.fit(X_train, y_train, **fit_kwargs)
 
     return model
 
@@ -210,6 +211,8 @@ def predict_proba_fixed(model, X, num_classes, le=None):
     - Always returns shape (n_samples, num_classes).
     """
     X_np = safe_array(X)
+    if X_np.ndim == 1:
+        X_np = X_np.reshape(-1, 1)  # ensure 2D (n_samples, n_features)
 
     # --- Feature alignment ---
     n_features_model = getattr(model, "n_features_in_", X_np.shape[1])
@@ -328,14 +331,13 @@ def device_layer_boosting(devices_data, residuals_devices, device_models, le, nu
             init_model = models_per_device[-1] if models_per_device else None
 
             # Train LightGBM on pseudo-labels (residual-driven labels)
+
             model = train_lightgbm(
                 X_train, y_pseudo,
                 X_valid=X_finetune[:, :X_train.shape[1]] if X_finetune is not None else None,
                 y_valid=y_finetune,
                 early_stopping_rounds=config["early_stopping_rounds_device"],
                 learning_rate=config["learning_rate_device"],
-                num_iteration=config["num_iterations_device"],
-                num_classes=num_classes,
                 init_model=init_model
             )
 
@@ -465,8 +467,6 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices,
                 y_valid=y_finetune,
                 early_stopping_rounds=config["early_stopping_rounds_edge"],
                 learning_rate=config["learning_rate_edge"],
-                num_iteration=config["num_iterations_edge"],
-                num_classes=num_classes,
                 init_model=init_model
             )
 
@@ -506,7 +506,14 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices,
     # Final global prediction matrix
     # -----------------------------
     if global_pred_blocks:
-        global_pred_matrix = np.vstack(global_pred_blocks)
+        padded_blocks = []
+        for block in global_pred_blocks:
+            if block.shape[1] < num_classes:
+                # Pad missing columns (new classes) with zeros
+                pad_width = num_classes - block.shape[1]
+                block = np.hstack([block, np.zeros((block.shape[0], pad_width))])
+            padded_blocks.append(block)
+        global_pred_matrix = np.vstack(padded_blocks)
     else:
         global_pred_matrix = np.empty((0, num_classes))
 
@@ -961,6 +968,46 @@ def safe_array(X):
         return X.to_numpy(dtype=np.float32)
     return np.asarray(X, dtype=np.float32)
 
+
+def safe_labels(y):
+    """Convert labels to integer NumPy array for LightGBM."""
+    if y is None:
+        return None
+    if isinstance(y, (pd.Series, pd.DataFrame)):
+        y = y.to_numpy()
+    y = np.asarray(y)
+    # Convert one-hot to class indices if needed
+    if y.ndim > 1 and y.shape[1] > 1:
+        y = np.argmax(y, axis=1)
+    return y.astype(np.int32)
+
+
+def safe_fit(X, y, *, model=None, **fit_kwargs):
+    X_safe = safe_array(X)
+    y_safe = safe_labels(y)
+
+    # Determine number of classes
+    n_classes = len(np.unique(y_safe))
+    objective = 'binary' if n_classes == 2 else 'multiclass'
+
+    # Handle verbose safely
+    verbose = fit_kwargs.pop("verbose", None)
+
+    # Use given model or create a new one
+    if model is None:
+        model = LGBMClassifier(objective=objective)
+        if verbose is not None:
+            model.set_params(verbose=verbose)
+
+    # Set num_class for multiclass if needed
+    if n_classes > 2:
+        model.set_params(num_class=n_classes)
+
+    # Fit the model with valid kwargs only
+    model.fit(X_safe, y_safe, **fit_kwargs)
+    return model
+
+
 """
 def safe_edge_output(edge_outputs, num_classes):
     \"""
@@ -1136,136 +1183,138 @@ def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_
 def compute_multilevel_accuracy(
     device_models,
     edge_models,
-    y_test,
-    X_test,
     edge_groups,
+    X_test,
+    y_test,
     y_global_pred_test,
     num_classes=2,
     verbose=True
 ):
     """
-    Compute device/edge/global accuracies on the X_test / y_test dataset.
+    Compute device-level, edge-level, and global accuracy on test data.
 
     Args:
-        device_models: list of trained device models
-        edge_models: list of trained edge models
-        y_test: list of arrays, true labels per device
-        X_test: list of arrays, input features per device
-        edge_groups: list of list of device indices per edge
-        y_global_pred_test: np.ndarray, global predictions for X_test
+        device_models: list of lists of trained models per device
+        edge_models: list of lists of trained models per edge
+        edge_groups: list of lists, devices per edge
+        X_test: list of np.ndarray per device
+        y_test: list/array of true labels per device
+        y_global_pred_test: np.ndarray from forward_pass (global predictions)
         num_classes: int
         verbose: bool
 
     Returns:
-        metrics: dict
-            - global_acc
+        metrics: dict containing:
             - device_accs
-            - device_vs_global
             - edge_accs
+            - global_acc
+            - device_vs_global
             - edge_vs_global
     """
 
-    def to_labels(pred):
-        pred = np.asarray(pred)
-        if pred.ndim == 1:  # already labels
-            return pred
-        elif pred.ndim == 2:
-            return pred.argmax(axis=1)
-        else:
-            raise ValueError(f"Unexpected shape {pred.shape}")
-
     # -----------------------------
-    # 1. Device predictions on X_test
+    # 1. Device-level predictions
     # -----------------------------
-    device_test_preds = []
-    for idx, models in enumerate(device_models):
-        X_dev = X_test[idx]
-        if not models:
-            device_test_preds.append(np.zeros((X_dev.shape[0], num_classes)))
-            continue
+    device_preds = []
+    device_accs = []
 
-        # Sequentially apply boosting models
-        pred_accum = np.zeros((X_dev.shape[0], num_classes))
-        for mdl in models:
+    for dev_idx, X_dev in enumerate(X_test):
+        pred_accum = np.zeros((X_dev.shape[0], num_classes), dtype=float)
+        trained_models = device_models[dev_idx]
+
+        # Skip None models
+        if trained_models is None:
+            trained_models = []
+
+        for mdl in trained_models:
+            if mdl is None:
+                continue
             pred_accum += predict_proba_fixed(mdl, X_dev, num_classes)
-        # Average over boosting rounds
-        pred_accum /= len(models)
-        device_test_preds.append(pred_accum)
+
+        # Average if more than 1 model
+        if len(trained_models) > 0:
+            pred_accum /= len([m for m in trained_models if m is not None])
+
+        device_preds.append(pred_accum)
+        device_labels = pred_accum.argmax(axis=1)
+        y_true_dev = np.array(y_test[dev_idx])
+        device_accs.append(accuracy_score(y_true_dev, device_labels))
 
     # -----------------------------
-    # 2. Edge predictions on X_test
+    # 2. Edge-level predictions
     # -----------------------------
-    edge_test_preds = []
-    for edge_idx, edge_devs in enumerate(edge_groups):
-        # Aggregate device predictions for this edge
-        edge_pred_list = [device_test_preds[d] for d in edge_devs]
-        edge_pred_stack = np.vstack(edge_pred_list)
+    edge_preds = []
+    edge_accs = []
 
-        # If edge has a trained edge model, refine prediction
-        if edge_models and edge_models[edge_idx]:
-            edge_pred_accum = np.zeros_like(edge_pred_stack)
-            for mdl in edge_models[edge_idx]:
-                edge_pred_accum += predict_proba_fixed(mdl, edge_pred_stack, num_classes)
-            edge_pred_accum /= len(edge_models[edge_idx])
-            edge_test_preds.append(edge_pred_accum)
-        else:
-            edge_test_preds.append(edge_pred_stack)
+    for edge_idx, edge_devices in enumerate(edge_groups):
+        # Collect all device test data for this edge
+        X_edge = np.vstack([X_test[d] for d in edge_devices])
+        y_edge_true = np.hstack([y_test[d] for d in edge_devices])
+
+        pred_accum = np.zeros((X_edge.shape[0], num_classes), dtype=float)
+        trained_models = edge_models[edge_idx]
+
+        if trained_models is None:
+            trained_models = []
+
+        for mdl in trained_models:
+            if mdl is None:
+                continue
+            pred_accum += predict_proba_fixed(mdl, X_edge, num_classes)
+
+        if len(trained_models) > 0:
+            pred_accum /= len([m for m in trained_models if m is not None])
+
+        edge_preds.append(pred_accum)
+        edge_labels = pred_accum.argmax(axis=1)
+        edge_accs.append(accuracy_score(y_edge_true, edge_labels))
 
     # -----------------------------
-    # 3. Global accuracy
+    # 3. Global predictions
     # -----------------------------
-    global_labels = to_labels(y_global_pred_test)
+    global_labels = y_global_pred_test.argmax(axis=1)
     y_global_true = np.hstack(y_test)
     global_acc = accuracy_score(y_global_true, global_labels)
 
     # -----------------------------
-    # 4. Device vs Global, Device accuracy
+    # 4. Device / Edge vs Global
     # -----------------------------
-    device_labels = [to_labels(d) for d in device_test_preds]
-    device_accs = [accuracy_score(y_test[i], d) for i, d in enumerate(device_labels)]
-
-    # Map each device’s predictions to global indices
-    device_sample_slices = []
+    device_vs_global = []
     start_idx = 0
-    for d in device_labels:
-        n_samples = len(d)
-        device_sample_slices.append(slice(start_idx, start_idx + n_samples))
+    for dev_idx, X_dev in enumerate(X_test):
+        n_samples = X_dev.shape[0]
+        slice_idx = slice(start_idx, start_idx + n_samples)
+        device_vs_global.append(
+            accuracy_score(global_labels[slice_idx], device_preds[dev_idx].argmax(axis=1))
+        )
         start_idx += n_samples
 
-    device_vs_global = [
-        accuracy_score(global_labels[slice_i], d) for slice_i, d in zip(device_sample_slices, device_labels)
-    ]
-
-    # -----------------------------
-    # 5. Edge vs Global, Edge accuracy
-    # -----------------------------
-    edge_labels = [to_labels(e) for e in edge_test_preds]
-    edge_accs = []
     edge_vs_global = []
-
     start_idx = 0
-    for e in edge_labels:
-        n_samples = len(e)
-        slice_i = slice(start_idx, start_idx + n_samples)
-        y_true_edge = y_global_true[slice_i]
-        edge_accs.append(accuracy_score(y_true_edge, e))
-        edge_vs_global.append(accuracy_score(global_labels[slice_i], e))
-        start_idx += n_samples
+    for edge_idx, edge_devices in enumerate(edge_groups):
+        n_samples_edge = sum(X_test[d].shape[0] for d in edge_devices)
+        slice_idx = slice(start_idx, start_idx + n_samples_edge)
+        edge_vs_global.append(
+            accuracy_score(global_labels[slice_idx], edge_preds[edge_idx].argmax(axis=1))
+        )
+        start_idx += n_samples_edge
 
-    if verbose:
-        print(f"Global Accuracy: {global_acc:.4f}")
-        print(f"Device Accuracies: {device_accs}")
-        print(f"Device vs Global: {device_vs_global}")
-        print(f"Edge Accuracies: {edge_accs}")
-        print(f"Edge vs Global: {edge_vs_global}")
-
-    return {
-        "global_acc": global_acc,
+    # -----------------------------
+    # 5. Return metrics
+    # -----------------------------
+    metrics = {
         "device_accs": device_accs,
-        "device_vs_global": device_vs_global,
         "edge_accs": edge_accs,
+        "global_acc": global_acc,
+        "device_vs_global": device_vs_global,
         "edge_vs_global": edge_vs_global
     }
+
+    if verbose:
+        print(f"Device mean acc: {np.mean(device_accs):.4f}, Edge mean acc: {np.mean(edge_accs):.4f}, Global acc: {global_acc:.4f}")
+
+    return metrics
+
 
 # ============================================================
 #                  HPFL TRAINING AND EVALUATION
@@ -1592,7 +1641,7 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
 # ============================================================
 
 if __name__ == "__main__":
-    folder_path = "CIC_IoT_DIAD_2024"
+    folder_path = "CIC_IoT_IDAD_Dataset_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
