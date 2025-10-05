@@ -515,30 +515,17 @@ def edge_layer_boosting(edge_groups, device_embeddings, residuals_devices,
 
 
 def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_edge,
-                                      device_embeddings, edge_groups,
                                       residuals_edges=None, num_classes=2, verbose=True):
     """
     Global Bayesian aggregation using edge outputs, weighting edges by residuals.
-
-    Idea:
-    -------
-    - Each edge has already boosted its devices → strong local predictions.
-    - The global layer fuses these edge outputs using Bayesian weighting.
-    - Residuals from edges act like uncertainty measures → edges with lower
-      residuals get higher trust (weights).
-    - Output is a single global softmax prediction matrix.
 
     Args:
         edge_outputs: list of np.ndarray
             Edge-level boosted outputs (probability matrices per edge)
         edge_embeddings: list of np.ndarray
-            Embeddings per edge (used for alignment and slicing)
+            Embeddings per edge (used for alignment)
         y_true_per_edge: list of np.ndarray
             True labels per edge
-        device_embeddings: list of np.ndarray
-            Raw device embeddings (used to slice device-level samples later)
-        edge_groups: list of list of device indices
-            Devices grouped by edge
         residuals_edges: list of np.ndarray, optional
             Residuals from edge boosting (used for reliability weighting)
         num_classes: int
@@ -550,13 +537,9 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_
         y_global_pred: np.ndarray
             Global softmax predictions (n_samples_total × num_classes)
         global_residuals: np.ndarray
-            Residuals after global aggregation (for backward pass/analysis)
+            Residuals after global aggregation (for analysis/backprop)
         theta_global: dict
             Parameters of Bayesian fusion: {"alpha": α, "beta": β}
-        edge_sample_slices: list of tuples
-            Sample index ranges per edge
-        device_sample_slices: list of slice
-            Sample index ranges per device
     """
 
     print("""
@@ -577,23 +560,20 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_
         raise ValueError("No valid edges found!")
 
     # -----------------------------
-    # Step 2: Collect edge predictions and labels
+    # Step 2: Stack predictions and labels across edges
     # -----------------------------
     edge_preds_list = []
     y_global_list = []
-    edge_sample_slices = []  # track where each edge’s samples go in global space
-    start_idx = 0
-
     for i in valid_edges:
-        out = edge_outputs[i]             # boosted predictions from edge i
+        out = edge_outputs[i]
         n_samples = out.shape[0]
 
-        # Pad missing classes if edge model didn’t output all
+        # Pad missing classes if needed
         if out.shape[1] < num_classes:
             out = np.pad(out, ((0, 0), (0, num_classes - out.shape[1])), mode='constant')
         edge_preds_list.append(out)
 
-        # True labels (padded or trimmed to match n_samples)
+        # True labels
         labels = np.atleast_1d(y_true_per_edge[i])
         if len(labels) < n_samples:
             labels = np.pad(labels, (0, n_samples - len(labels)), mode='edge')
@@ -601,66 +581,41 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_
             labels = labels[:n_samples]
         y_global_list.append(labels)
 
-        # Record slice for this edge’s samples
-        edge_sample_slices.append((start_idx, start_idx + n_samples))
-        start_idx += n_samples
-
-    # -----------------------------
-    # Step 3: Stack predictions and labels across edges
-    # -----------------------------
-    H_global = np.vstack(edge_preds_list)   # Shape: (total_samples, num_classes)
+    H_global = np.vstack(edge_preds_list)   # (total_samples, num_classes)
     y_global = np.hstack(y_global_list)     # Flattened true labels
     n_samples_total = H_global.shape[0]
 
     # -----------------------------
-    # Step 4: Compute edge weights (Bayesian reliability)
+    # Step 3: Compute edge weights (Bayesian reliability)
     # -----------------------------
     if residuals_edges is not None:
-        # Lower residual → higher confidence (inverse mean squared residual)
         weights_list = [1.0 / (np.mean(residuals_edges[i] ** 2, axis=1) + 1e-6)
                         for i in valid_edges]
         edge_weights = np.hstack(weights_list)
     else:
         edge_weights = np.ones(n_samples_total)
 
-    # Normalization so weights sum to 1
     edge_weights /= np.sum(edge_weights)
-
     if verbose:
         print(f"Normalized edge weights sum to {np.sum(edge_weights):.6f}")
 
     # -----------------------------
-    # Step 5: Bayesian parameters α and β
+    # Step 4: Bayesian parameters α and β
     # -----------------------------
-    # α: weighted average of predictions
-    alpha = np.sum(H_global * edge_weights[:, None], axis=0)
+    alpha = np.sum(H_global * edge_weights[:, None], axis=0)  # weighted average of predictions
 
-    # β: correction term from residuals (difference between true labels and preds)
     y_onehot = np.zeros((n_samples_total, num_classes))
     y_onehot[np.arange(n_samples_total), y_global] = 1
     global_residuals = y_onehot - H_global
-    beta = np.sum(global_residuals * edge_weights[:, None], axis=0)
+    beta = np.sum(global_residuals * edge_weights[:, None], axis=0)  # correction term
 
     # -----------------------------
-    # Step 6: Softmax global predictions
+    # Step 5: Compute global softmax predictions
     # -----------------------------
-    # Adjust logits by residual correction β
     logits = H_global + beta
     exp_logits = np.exp(logits - np.max(logits, axis=1, keepdims=True))
     y_global_pred = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
 
-    # -----------------------------
-    # Step 7: Map back to device sample slices
-    # -----------------------------
-    device_sample_slices = []
-    for edge_idx, edge_devices in enumerate(edge_groups):
-        start_idx_edge = edge_sample_slices[edge_idx][0] if edge_idx < len(edge_sample_slices) else 0
-        for d in edge_devices:
-            n_samples_device = device_embeddings[d].shape[0]
-            device_sample_slices.append(slice(start_idx_edge, start_idx_edge + n_samples_device))
-            start_idx_edge += n_samples_device
-
-    # Store Bayesian parameters
     theta_global = {"alpha": alpha, "beta": beta}
 
     if verbose:
@@ -668,10 +623,7 @@ def global_layer_bayesian_aggregation(edge_outputs, edge_embeddings, y_true_per_
         print(f"Global beta: {beta}")
         print(f"Total samples: {n_samples_total}")
 
-    # -----------------------------
-    # Final output
-    # -----------------------------
-    return y_global_pred, global_residuals, theta_global, edge_sample_slices, device_sample_slices
+    return y_global_pred, global_residuals, theta_global
 
 
 
@@ -759,15 +711,21 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
     # -----------------------------
     # 4. Global Layer Aggregation
     # -----------------------------
-    y_global_pred, global_residuals, theta_global, edge_sample_slices, device_sample_slices = global_layer_bayesian_aggregation(
+    y_global_pred, global_residuals, theta_global = global_layer_bayesian_aggregation(
         edge_outputs=edge_outputs,
         edge_embeddings=edge_embeddings_list,
         y_true_per_edge=y_true_per_edge,
-        device_embeddings=device_embeddings,
-        edge_groups=edge_groups,
         residuals_edges=residuals_edges,
         num_classes=num_classes
     )
+
+    y_global_true = np.hstack(y_true_per_edge)  # <- ensures labels match stacked preds
+
+    # Accuracy
+    y_pred_labels = y_global_pred.argmax(axis=1)
+    global_acc = compute_accuracy(y_global_true, y_pred_labels)
+
+    print(f"Global Accuracy: {global_acc:.4f}")
 
     # -----------------------------
     # 5. Return
@@ -785,11 +743,9 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
         y_global_true,
         y_true_per_edge,
         global_residuals,
-        edge_sample_slices,
         y_true_devices,
-        device_sample_slices
+        global_acc
     )
-
 
 
 def backward_pass(edge_models, device_models, edge_embeddings, device_embeddings,
@@ -1177,91 +1133,139 @@ def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_
     return devices_data, hierarchical_data, edge_groups
 
 
-def compute_multilevel_accuracy(devices_data,
-                                device_models,
-                                edge_groups,
-                                edge_models,
-                                y_global_true,
-                                y_global_pred,
-                                num_classes,
-                                le=None,
-                                verbose=True):
+def compute_multilevel_accuracy(
+    device_models,
+    edge_models,
+    y_test,
+    X_test,
+    edge_groups,
+    y_global_pred_test,
+    num_classes=2,
+    verbose=True
+):
     """
-    Compute accuracy at device, edge, and global levels.
+    Compute device/edge/global accuracies on the X_test / y_test dataset.
+
+    Args:
+        device_models: list of trained device models
+        edge_models: list of trained edge models
+        y_test: list of arrays, true labels per device
+        X_test: list of arrays, input features per device
+        edge_groups: list of list of device indices per edge
+        y_global_pred_test: np.ndarray, global predictions for X_test
+        num_classes: int
+        verbose: bool
 
     Returns:
-        metrics: dict with full details:
-            - device_accs: list of per-device accuracies
-            - device_mean, device_std
-            - edge_accs: list of per-edge accuracies
-            - edge_mean, edge_std
+        metrics: dict
             - global_acc
+            - device_accs
+            - device_vs_global
+            - edge_accs
+            - edge_vs_global
     """
-    # -----------------------------
-    # 1. Device-Level Accuracy
-    # -----------------------------
-    device_accs = []
-    for i, (X_test, _, y_test, _) in enumerate(devices_data):
-        X_test_np = safe_array(X_test)
-        device_preds = np.zeros((X_test_np.shape[0], num_classes))
 
-        if device_models[i] is not None:
-            for mdl in device_models[i]:
-                device_preds += predict_proba_fixed(mdl, X_test_np, num_classes, le=le)
-            device_preds /= max(len(device_models[i]), 1)
-
-        device_accs.append(compute_accuracy(y_test, device_preds.argmax(axis=1)))
-
-    device_mean = float(np.mean(device_accs)) if device_accs else 0.0
-    device_std = float(np.std(device_accs)) if device_accs else 0.0
+    def to_labels(pred):
+        pred = np.asarray(pred)
+        if pred.ndim == 1:  # already labels
+            return pred
+        elif pred.ndim == 2:
+            return pred.argmax(axis=1)
+        else:
+            raise ValueError(f"Unexpected shape {pred.shape}")
 
     # -----------------------------
-    # 2. Edge-Level Accuracy
+    # 1. Device predictions on X_test
     # -----------------------------
-    edge_accs = []
-    for edge_idx, devices_in_edge in enumerate(edge_groups):
-        if not devices_in_edge or edge_models[edge_idx] is None:
+    device_test_preds = []
+    for idx, models in enumerate(device_models):
+        X_dev = X_test[idx]
+        if not models:
+            device_test_preds.append(np.zeros((X_dev.shape[0], num_classes)))
             continue
 
-        X_edge = np.vstack([safe_array(devices_data[d][0]) for d in devices_in_edge])
-        y_edge = np.hstack([devices_data[d][2] for d in devices_in_edge])
-
-        edge_preds = np.zeros((X_edge.shape[0], num_classes))
-        for mdl in edge_models[edge_idx]:
-            edge_preds += predict_proba_fixed(mdl, X_edge, num_classes, le=le)
-        edge_preds /= max(len(edge_models[edge_idx]), 1)
-
-        edge_accs.append(compute_accuracy(y_edge, edge_preds.argmax(axis=1)))
-
-    edge_mean = float(np.mean(edge_accs)) if edge_accs else 0.0
-    edge_std = float(np.std(edge_accs)) if edge_accs else 0.0
+        # Sequentially apply boosting models
+        pred_accum = np.zeros((X_dev.shape[0], num_classes))
+        for mdl in models:
+            pred_accum += predict_proba_fixed(mdl, X_dev, num_classes)
+        # Average over boosting rounds
+        pred_accum /= len(models)
+        device_test_preds.append(pred_accum)
 
     # -----------------------------
-    # 3. Global Accuracy
+    # 2. Edge predictions on X_test
     # -----------------------------
-    global_acc = compute_accuracy(y_global_true, y_global_pred.argmax(axis=1))
+    edge_test_preds = []
+    for edge_idx, edge_devs in enumerate(edge_groups):
+        # Aggregate device predictions for this edge
+        edge_pred_list = [device_test_preds[d] for d in edge_devs]
+        edge_pred_stack = np.vstack(edge_pred_list)
+
+        # If edge has a trained edge model, refine prediction
+        if edge_models and edge_models[edge_idx]:
+            edge_pred_accum = np.zeros_like(edge_pred_stack)
+            for mdl in edge_models[edge_idx]:
+                edge_pred_accum += predict_proba_fixed(mdl, edge_pred_stack, num_classes)
+            edge_pred_accum /= len(edge_models[edge_idx])
+            edge_test_preds.append(edge_pred_accum)
+        else:
+            edge_test_preds.append(edge_pred_stack)
 
     # -----------------------------
-    # 4. Verbose Logging
+    # 3. Global accuracy
     # -----------------------------
+    global_labels = to_labels(y_global_pred_test)
+    y_global_true = np.hstack(y_test)
+    global_acc = accuracy_score(y_global_true, global_labels)
+
+    # -----------------------------
+    # 4. Device vs Global, Device accuracy
+    # -----------------------------
+    device_labels = [to_labels(d) for d in device_test_preds]
+    device_accs = [accuracy_score(y_test[i], d) for i, d in enumerate(device_labels)]
+
+    # Map each device’s predictions to global indices
+    device_sample_slices = []
+    start_idx = 0
+    for d in device_labels:
+        n_samples = len(d)
+        device_sample_slices.append(slice(start_idx, start_idx + n_samples))
+        start_idx += n_samples
+
+    device_vs_global = [
+        accuracy_score(global_labels[slice_i], d) for slice_i, d in zip(device_sample_slices, device_labels)
+    ]
+
+    # -----------------------------
+    # 5. Edge vs Global, Edge accuracy
+    # -----------------------------
+    edge_labels = [to_labels(e) for e in edge_test_preds]
+    edge_accs = []
+    edge_vs_global = []
+
+    start_idx = 0
+    for e in edge_labels:
+        n_samples = len(e)
+        slice_i = slice(start_idx, start_idx + n_samples)
+        y_true_edge = y_global_true[slice_i]
+        edge_accs.append(accuracy_score(y_true_edge, e))
+        edge_vs_global.append(accuracy_score(global_labels[slice_i], e))
+        start_idx += n_samples
+
     if verbose:
-        print(f"[Acc] Device Mean: {device_mean:.4f} ± {device_std:.4f} | "
-              f"Edge Mean: {edge_mean:.4f} ± {edge_std:.4f} | "
-              f"Global: {global_acc:.4f}")
+        print(f"Global Accuracy: {global_acc:.4f}")
+        print(f"Device Accuracies: {device_accs}")
+        print(f"Device vs Global: {device_vs_global}")
+        print(f"Edge Accuracies: {edge_accs}")
+        print(f"Edge vs Global: {edge_vs_global}")
 
-    # -----------------------------
-    # 5. Return Dict
-    # -----------------------------
     return {
+        "global_acc": global_acc,
         "device_accs": device_accs,
-        "device_mean": device_mean,
-        "device_std": device_std,
+        "device_vs_global": device_vs_global,
         "edge_accs": edge_accs,
-        "edge_mean": edge_mean,
-        "edge_std": edge_std,
-        "global_acc": float(global_acc)
+        "edge_vs_global": edge_vs_global
     }
-
 
 # ============================================================
 #                  HPFL TRAINING AND EVALUATION
@@ -1273,7 +1277,7 @@ def compute_multilevel_accuracy(devices_data,
 # ============================================================
 
 def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
-                             X_finetune, y_finetune, verbose=True):
+                             X_finetune, y_finetune, X_test, y_test, verbose=True):
     """
     HPFL training loop with forward/backward passes and accuracy tracking.
 
@@ -1305,13 +1309,14 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
 
     # --- history tracking ---
     history = {
-        "device_means": [],
-        "device_stds": [],
-        "edge_means": [],
-        "edge_stds": [],
-        "global_accs": [],
-        "y_true_per_epoch": []
-
+        "device_means": [],  # mean accuracy across all devices per epoch
+        "device_stds": [],  # std dev of device accuracies per epoch
+        "edge_means": [],  # mean accuracy across all edges per epoch
+        "edge_stds": [],  # std dev of edge accuracies per epoch
+        "global_accs": [],  # global model accuracy per epoch
+        "device_vs_global": [],  # mean device accuracy compared with global per epoch
+        "edge_vs_global": [],  # mean edge accuracy compared with global per epoch
+        "y_true_per_epoch": []  # optional: true labels of test set per epoch
     }
 
     for epoch in range(num_epochs):
@@ -1326,11 +1331,12 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         # -----------------------------
         # 1. Forward Pass
         # -----------------------------
+
         device_models, edge_models, edge_outputs, theta_global, \
             residuals_devices, residuals_edges, y_global_pred, \
             device_embeddings, edge_embeddings, y_global_true, \
-            y_true_per_edge, global_residuals, edge_sample_slices, \
-            y_true_devices, device_sample_slices = forward_pass(
+            y_true_per_edge, global_residuals, \
+            y_true_devices,global_acc = forward_pass(
                 devices_data, edge_groups, le, num_classes,
                 X_finetune, y_finetune,
                 residuals_devices=residuals_devices,
@@ -1341,15 +1347,14 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         # -----------------------------
         # 2. Compute Multi-Level Accuracy
         # -----------------------------
-        metrics = compute_multilevel_accuracy(
-            devices_data,
-            device_models,
-            edge_groups,
-            edge_models,
-            y_global_true,
-            y_global_pred,
-            num_classes,
-            le=le,
+        metrics_test = compute_multilevel_accuracy(
+            device_models=device_models,
+            edge_models=edge_models,
+            edge_groups=edge_groups,
+            y_test=y_test,
+            X_test=X_test,
+            y_global_pred_test=y_global_pred,  # from forward pass
+            num_classes=num_classes,
             verbose=True
         )
 
@@ -1371,18 +1376,26 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         )  
         """
 
-        # Store results
-        history["device_means"].append(metrics["device_mean"])
-        history["device_stds"].append(metrics["device_std"])
-        history["edge_means"].append(metrics["edge_mean"])
-        history["edge_stds"].append(metrics["edge_std"])
-        history["global_accs"].append(metrics["global_acc"])
-        history["y_true_per_epoch"].append(y_global_true)
 
-    return (device_models, edge_models,
-            residuals_devices, residuals_edges,
-            y_global_pred, device_embeddings, edge_embeddings,
-            history)
+        # Update history for plotting
+        history["device_means"].append(np.mean(metrics_test["device_accs"]))
+        history["device_stds"].append(np.std(metrics_test["device_accs"]))
+        history["edge_means"].append(np.mean(metrics_test["edge_accs"]))
+        history["edge_stds"].append(np.std(metrics_test["edge_accs"]))
+        history["global_accs"].append(metrics_test["global_acc"])
+        history["device_vs_global"].append(np.mean(metrics_test["device_vs_global"]))
+        history["edge_vs_global"].append(np.mean(metrics_test["edge_vs_global"]))
+        history["y_true_per_epoch"].append(y_test)  # optional reference
+
+    return (device_models,
+        edge_models,
+        residuals_devices,
+        residuals_edges,
+        y_global_pred,
+        y_true_per_epoch,
+        device_embeddings,
+        edge_embeddings,
+        history)
 
 
 """
@@ -1456,155 +1469,92 @@ def get_dated_save_dir(base_dir="hdpftl_plot_outputs"):
     return dated_dir
 
 
-
-def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs", threshold=0.95):
+def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
     """
-    Generate all Hierarchical PFL plots with layer-wise contributions.
-    Device/Edge accuracies are compared with global predictions.
-    Automatically creates a dated folder under save_root_dir.
+    Generate all Hierarchical PFL plots with layer-wise contributions and comparisons
+    against global accuracy.
 
     Args:
-        history (dict): Dictionary with keys:
-            - "device_means": list of device-level mean accuracies per epoch
-            - "edge_means": list of edge-level mean accuracies per epoch
-            - "global_accs": list of global accuracies per epoch
-            - "y_true_per_epoch": list of np.ndarray ground truth labels per epoch (optional)
-            - "y_global_preds": list of np.ndarray global predictions per epoch (optional)
+        history (dict): Output from compute_multilevel_accuracy for each epoch, e.g.:
+            history[epoch_idx] = {
+                'device_accs': [...],
+                'edge_accs': [...],
+                'global_acc': ...,
+                'device_vs_global': [...],
+                'edge_vs_global': [...]
+            }
         save_root_dir (str): Base directory to save plots
-        threshold (float): Ratio threshold to highlight potential bottlenecks (default 0.95)
     """
 
     # -----------------------------
-    # Create dated folder
+    # Create dated folder automatically
     # -----------------------------
     today_str = datetime.now().strftime("%Y-%m-%d")
-    save_dir = os.path.join(save_root_dir, today_str)
+    save_dir = os.path.join(save_root_dir, f"{today_str}")
     os.makedirs(save_dir, exist_ok=True)
 
-    # -----------------------------
-    # Extract accuracies
-    # -----------------------------
-    device_accs = np.array(history["device_means"])
-    edge_accs = np.array(history["edge_means"])
-    global_accs = np.array(history["global_accs"])
-    num_epochs = len(global_accs)
+    num_epochs = len(history)
     layers = ["Device", "Edge", "Global"]
     colors = ['skyblue', 'orange', 'green']
 
     # -----------------------------
-    # Compute contributions per layer
+    # 1. Per-epoch stacked bar charts & comparisons
     # -----------------------------
-    edge_contribs = np.clip(edge_accs - device_accs, 0, None)
-    global_contribs = np.clip(global_accs - edge_accs, 0, None)
+    for epoch_idx in range(num_epochs):
+        metrics = history[epoch_idx]
 
-    # -----------------------------
-    # Compute device/edge accuracy vs global predictions per epoch
-    # -----------------------------
-    device_vs_global = []
-    edge_vs_global = []
-    y_global_preds_all = history.get("y_global_preds", None)
+        device_accs = np.array(metrics['device_accs'])
+        edge_accs = np.array(metrics['edge_accs'])
+        global_acc = metrics['global_acc']
+        device_vs_global = np.array(metrics['device_vs_global'])
+        edge_vs_global = np.array(metrics['edge_vs_global'])
 
-    if y_global_preds_all is not None:
-        for epoch in range(num_epochs):
-            y_global_pred = y_global_preds_all[epoch]
+        # -----------------------------
+        # Stacked contribution vs global
+        # -----------------------------
+        contributions = [np.mean(device_accs), np.mean(edge_accs) - np.mean(device_accs), global_acc - np.mean(edge_accs)]
+        contributions = np.clip(contributions, 0, None)
 
-            # Device vs global
-            dev_epoch = history["device_means"][epoch]
-            if isinstance(dev_epoch, list):
-                dev_accs_epoch = [accuracy_score(y_global_pred, dev_preds) for dev_preds in dev_epoch]
-                device_vs_global.append(np.mean(dev_accs_epoch))
-            else:
-                device_vs_global.append(accuracy_score(y_global_pred, dev_epoch))
-
-            # Edge vs global
-            edge_epoch = history["edge_means"][epoch]
-            if isinstance(edge_epoch, list):
-                edge_accs_epoch = [accuracy_score(y_global_pred, edge_preds) for edge_preds in edge_epoch]
-                edge_vs_global.append(np.mean(edge_accs_epoch))
-            else:
-                edge_vs_global.append(accuracy_score(y_global_pred, edge_epoch))
-
-        device_vs_global = np.array(device_vs_global)
-        edge_vs_global = np.array(edge_vs_global)
-    else:
-        device_vs_global = device_accs / global_accs
-        edge_vs_global = edge_accs / global_accs
-
-    # -----------------------------
-    # 1. Per-epoch stacked bar charts + individual layer plots
-    # -----------------------------
-    for epoch in range(num_epochs):
-        # Stacked bar per epoch
-        contributions = [device_accs[epoch], edge_contribs[epoch], global_contribs[epoch]]
         plt.figure(figsize=(6, 4))
         bars = plt.bar(layers, contributions, color=colors)
         plt.ylim(0, 1)
         plt.ylabel("Contribution to Final Accuracy")
-        plt.title(f"Epoch {epoch+1} Layer Contributions")
+        plt.title(f"Epoch {epoch_idx+1} Layer Contributions")
         for bar, val in zip(bars, contributions):
-            plt.text(bar.get_x() + bar.get_width()/2, float(val) + 0.02, f"{float(val):.3f}",
-                     ha='center', va='bottom')
+            plt.text(bar.get_x() + bar.get_width()/2, float(val) + 0.02, f"{float(val):.3f}", ha='center', va='bottom')
         plt.grid(axis='y', linestyle='--', alpha=0.6)
         plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch+1}.png"))
+        plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch_idx+1}.png"))
         plt.close()
 
-        # Individual layer plots + vs global predictions overlay
-        for layer, acc, vs_global_acc, color in zip(
-            layers,
-            [device_accs[epoch], edge_accs[epoch], global_accs[epoch]],
-            [device_vs_global[epoch], edge_vs_global[epoch], global_accs[epoch]],
-            colors
-        ):
-            plt.figure(figsize=(4, 3))
-            plt.bar([layer], [acc], color=color, alpha=0.7, label=f"Actual {layer}")
-            if layer != "Global":
-                plt.bar([layer], [vs_global_acc], color='red', alpha=0.3, label="vs Global")
-            plt.ylim(0, 1)
-            plt.ylabel("Accuracy")
-            plt.title(f"Epoch {epoch+1} - {layer} Accuracy vs Global")
-            plt.text(0, float(acc)+0.02, f"{float(acc):.3f}", ha='center')
-            if layer != "Global":
-                plt.text(0, float(vs_global_acc)-0.05, f"{float(vs_global_acc):.3f}", ha='center', color='red')
-            plt.legend()
-            plt.grid(axis='y', linestyle='--', alpha=0.6)
-            plt.tight_layout()
-            plt.savefig(os.path.join(save_dir, f"epoch_{epoch+1}_{layer.lower()}_vs_global.png"))
-            plt.close()
-
-        # Highlight if device/edge close to next layer
-        if device_vs_global[epoch] >= threshold * edge_vs_global[epoch]:
-            print(f"Epoch {epoch+1}: Device predictions very close to Edge predictions relative to global")
-        if edge_vs_global[epoch] >= threshold:
-            print(f"Epoch {epoch+1}: Edge predictions very close to Global predictions")
+        # -----------------------------
+        # Device vs Global and Edge vs Global plots
+        # -----------------------------
+        plt.figure(figsize=(6, 4))
+        plt.bar([f"Device vs Global", f"Edge vs Global"],
+                [np.mean(device_vs_global), np.mean(edge_vs_global)],
+                color=['skyblue', 'orange'])
+        plt.ylim(0, 1)
+        plt.ylabel("Accuracy compared to Global")
+        plt.title(f"Epoch {epoch_idx+1} Layer vs Global Accuracy")
+        plt.grid(axis='y', linestyle='--', alpha=0.6)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"epoch_vs_global_{epoch_idx+1}.png"))
+        plt.close()
 
     # -----------------------------
-    # 2. Combined contribution trends + vs global overlay
+    # 2. Accuracy trends across epochs
     # -----------------------------
+    mean_device_accs = [np.mean(history[e]['device_accs']) for e in range(num_epochs)]
+    mean_edge_accs = [np.mean(history[e]['edge_accs']) for e in range(num_epochs)]
+    global_accs = [history[e]['global_acc'] for e in range(num_epochs)]
+    mean_device_vs_global = [np.mean(history[e]['device_vs_global']) for e in range(num_epochs)]
+    mean_edge_vs_global = [np.mean(history[e]['edge_vs_global']) for e in range(num_epochs)]
+
+    # Layer Accuracy Trends
     plt.figure(figsize=(10, 6))
-    plt.plot(device_accs, label="Device Contribution", marker='o', color='skyblue')
-    plt.plot(edge_contribs, label="Edge Contribution", marker='s', color='orange')
-    plt.plot(global_contribs, label="Global Contribution", marker='^', color='green')
-    plt.plot(device_vs_global, '--', color='blue', label="Device vs Global")
-    plt.plot(edge_vs_global, '--', color='darkorange', label="Edge vs Global")
-    plt.xlabel("Epoch")
-    plt.ylabel("Layer Contribution / Relative Accuracy")
-    plt.title("Hierarchical PFL Layer Contributions Across Epochs")
-    plt.ylim(0, 1)
-    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "combined_layer_contributions_vs_global.png"))
-    plt.show()
-    plt.close()
-
-    # -----------------------------
-    # 3. Overall accuracy trends
-    # -----------------------------
-    plt.figure(figsize=(10, 6))
-    plt.plot(device_accs, label="Device-level Accuracy", marker='o', color='skyblue')
-    plt.plot(edge_accs, label="Edge-level Accuracy", marker='s', color='orange')
+    plt.plot(mean_device_accs, label="Device Accuracy", marker='o', color='skyblue')
+    plt.plot(mean_edge_accs, label="Edge Accuracy", marker='s', color='orange')
     plt.plot(global_accs, label="Global Accuracy", marker='^', color='green')
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
@@ -1618,35 +1568,19 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs", threshold=0.95):
     plt.show()
     plt.close()
 
-    # -----------------------------
-    # 4. Stacked cumulative contributions
-    # -----------------------------
-    device_cum = device_accs
-    edge_cum = device_cum + edge_contribs
-    global_cum = edge_cum + global_contribs
-
+    # Device/Edge vs Global Trends
     plt.figure(figsize=(10, 6))
-    plt.fill_between(np.arange(num_epochs), 0, device_cum, color='skyblue', alpha=0.6, label='Device')
-    plt.fill_between(np.arange(num_epochs), device_cum, edge_cum, color='orange', alpha=0.6, label='Edge')
-    plt.fill_between(np.arange(num_epochs), edge_cum, global_cum, color='green', alpha=0.6, label='Global')
-    plt.plot(np.arange(num_epochs), global_cum, marker='^', color='black', linewidth=2, label='Total Accuracy')
-
-    for i in range(num_epochs):
-        plt.text(i, float(device_cum[i])/2, f"{float(device_cum[i]):.3f}", ha='center', va='center', color='blue', fontsize=9)
-        plt.text(i, float(device_cum[i]) + (float(edge_cum[i]) - float(device_cum[i]))/2,
-                 f"{float(edge_cum[i] - device_cum[i]):.3f}", ha='center', va='center', color='darkorange', fontsize=9)
-        plt.text(i, float(edge_cum[i]) + (float(global_cum[i]) - float(edge_cum[i]))/2,
-                 f"{float(global_cum[i] - edge_cum[i]):.3f}", ha='center', va='center', color='green', fontsize=9)
-
+    plt.plot(mean_device_vs_global, label="Device vs Global", marker='o', color='skyblue')
+    plt.plot(mean_edge_vs_global, label="Edge vs Global", marker='s', color='orange')
     plt.xlabel("Epoch")
-    plt.ylabel("Cumulative Accuracy")
-    plt.title("Cumulative Layer Contributions Per Epoch")
+    plt.ylabel("Accuracy compared to Global")
+    plt.title("Device/Edge Accuracy vs Global Across Epochs")
     plt.ylim(0, 1)
     plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "stacked_cumulative_contributions_annotated.png"))
+    plt.savefig(os.path.join(save_dir, "device_edge_vs_global_trends.png"))
     plt.show()
     plt.close()
 
@@ -1684,7 +1618,7 @@ if __name__ == "__main__":
 
     # 4. Train HPFL model with accuracy tracking
     device_models, edge_models, residuals_devices, residuals_edges, \
-        y_global_pred, device_embeddings, edge_embeddings, \
+        y_global_pred, y_true_per_epoch, device_embeddings, edge_embeddings, \
         history = hpfl_train_with_accuracy(
         devices_data=devices_data,
         edge_groups=edge_groups,
@@ -1692,6 +1626,8 @@ if __name__ == "__main__":
         num_classes=num_classes,
         X_finetune=X_finetune,
         y_finetune=y_finetune,
+        X_test = X_test,
+        y_test = y_test,
         verbose=True
     )
 
