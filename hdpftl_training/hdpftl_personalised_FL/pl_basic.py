@@ -1650,11 +1650,11 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
     # -----------------------------
     # 2. Accuracy trends across epochs
     # -----------------------------
-    mean_device_accs = [np.mean(history[e]['device_means']) for e in range(num_epochs)]
-    mean_edge_accs = [np.mean(history[e]['edge_means']) for e in range(num_epochs)]
-    global_accs = [history[e]['global_accs'] for e in range(num_epochs)]
-    mean_device_vs_global = [np.mean(history[e]['device_vs_global']) for e in range(num_epochs)]
-    mean_edge_vs_global = [np.mean(history[e]['edge_vs_global']) for e in range(num_epochs)]
+    mean_device_accs = [np.mean(history['device_means'][e]) for e in range(num_epochs)]
+    mean_edge_accs = [np.mean(history['edge_means'][e]) for e in range(num_epochs)]
+    global_accs = [history['global_accs'][e]for e in range(num_epochs)]
+    mean_device_vs_global = [np.mean(history['device_vs_global'][e]) for e in range(num_epochs)]
+    mean_edge_vs_global = [np.mean(history['edge_vs_global'][e]) for e in range(num_epochs)]
 
     # Layer Accuracy Trends
     plt.figure(figsize=(10, 6))
