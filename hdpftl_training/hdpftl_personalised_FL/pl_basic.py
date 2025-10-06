@@ -1188,6 +1188,23 @@ def compute_multilevel_accuracy(
     num_classes=2,
     verbose=True
 ):
+    def expand_labels(y, n_samples):
+        """
+        Expand scalar or short labels to match the sample size.
+        """
+        y = np.atleast_1d(y)
+        if y.size == 1:
+            return np.full(n_samples, y[0])
+        elif y.size != n_samples:
+            # Fix mismatch by trimming or padding
+            y_new = np.zeros(n_samples, dtype=y.dtype)
+            n_copy = min(y.size, n_samples)
+            y_new[:n_copy] = y[:n_copy]
+            if n_samples > y.size:
+                y_new[n_copy:] = y[-1]  # pad with last label
+            return y_new
+        return y
+
     """
     Compute device-level, edge-level, and global accuracy on test data,
     handling scalar labels and class/feature alignment.
@@ -1243,12 +1260,18 @@ def compute_multilevel_accuracy(
     # -----------------------------
     # 2. Edge-level predictions
     # -----------------------------
+    # -----------------------------
+    # 2. Edge-level predictions
+    # -----------------------------
     edge_preds = []
     edge_accs = []
 
     for edge_idx, edge_devices in enumerate(edge_groups):
         # Combine device test data for this edge
-        X_edge = np.vstack([X_test[d] for d in edge_devices])
+        X_edge = np.vstack([
+            np.atleast_2d(X_test[d]).reshape(-1, 1)  # force each device array into (n_samples, 1)
+            for d in edge_devices
+        ])
         pred_accum = np.zeros((X_edge.shape[0], num_classes), dtype=float)
         trained_models = edge_models[edge_idx] or []
 
@@ -1263,33 +1286,41 @@ def compute_multilevel_accuracy(
 
         edge_preds.append(pred_accum)
 
-        # --- Fix scalar/mismatched labels per device ---
+        # --- Fix scalar labels per device ---
         y_edge_true_list = []
         for d in edge_devices:
-            y_d = np.atleast_1d(y_test[d])
-            if y_d.shape[0] == 1:
-                y_d = np.full(X_test[d].shape[0], y_d[0])
-            elif y_d.shape[0] != X_test[d].shape[0]:
-                print(f"[Warning] Edge {edge_idx}, Device {d}: y_true length {y_d.shape[0]} "
-                      f"!= X_test samples {X_test[d].shape[0]}; trimming to match")
-                y_d = y_d[:X_test[d].shape[0]]  # trim if longer
-            y_edge_true_list.append(y_d)
+            n_samples_d = X_test[d].shape[0]
+            y_expanded = expand_labels(y_test[d], n_samples_d)
+            y_edge_true_list.append(y_expanded)
 
         y_edge_true = np.hstack(y_edge_true_list)
 
-        # Compute accuracy
+        # --- Now lengths MUST match ---
+        if y_edge_true.shape[0] != X_edge.shape[0]:
+            raise ValueError(
+                f"Edge {edge_idx}: y_true length {y_edge_true.shape[0]} "
+                f"does not match X_edge samples {X_edge.shape[1]}"
+            )
+
         edge_labels = pred_accum.argmax(axis=1)
         edge_accs.append(accuracy_score(y_edge_true, edge_labels))
 
     # -----------------------------
     # 3. Global predictions
     # -----------------------------
-    global_labels = y_global_pred_test.argmax(axis=1)
-    y_global_true = np.hstack([
-        np.full(X_test[d].shape[0], y_test[d]) if np.atleast_1d(y_test[d]).size == 1
-        else np.atleast_1d(y_test[d])
+    global_labels = np.concatenate([
+        dp.argmax(axis=1)  # predicted class per sample
+        for dp in device_preds
+    ])
+    y_global_true = np.concatenate([
+        np.repeat(y_test[d], X_test[d].shape[0]) if np.ndim(y_test[d]) == 0
+        else np.asarray(y_test[d]).ravel()
         for d in range(len(X_test))
     ])
+
+    # Now lengths must match
+    assert len(global_labels) == len(y_global_true), f"Mismatch: {len(global_labels)} vs {len(y_global_true)}"
+
     global_acc = accuracy_score(y_global_true, global_labels)
 
     # -----------------------------
@@ -1566,7 +1597,7 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
     save_dir = os.path.join(save_root_dir, f"{today_str}")
     os.makedirs(save_dir, exist_ok=True)
 
-    num_epochs = len(history)
+    num_epochs = config["epoch"]
     layers = ["Device", "Edge", "Global"]
     colors = ['skyblue', 'orange', 'green']
 
@@ -1574,13 +1605,14 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
     # 1. Per-epoch stacked bar charts & comparisons
     # -----------------------------
     for epoch_idx in range(num_epochs):
-        metrics = history[epoch_idx]
 
-        device_accs = np.array(metrics['device_accs'])
-        edge_accs = np.array(metrics['edge_accs'])
-        global_acc = metrics['global_acc']
-        device_vs_global = np.array(metrics['device_vs_global'])
-        edge_vs_global = np.array(metrics['edge_vs_global'])
+        device_accs = history["device_means"][epoch_idx]
+        device_stds = history["device_stds"][epoch_idx]
+        edge_accs = history["edge_means"][epoch_idx]
+        edge_stds = history["edge_stds"][epoch_idx]
+        global_acc = history["global_accs"][epoch_idx]
+        device_vs_global = history["device_vs_global"][epoch_idx]
+        edge_vs_global = history["edge_vs_global"][epoch_idx]
 
         # -----------------------------
         # Stacked contribution vs global
@@ -1618,9 +1650,9 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
     # -----------------------------
     # 2. Accuracy trends across epochs
     # -----------------------------
-    mean_device_accs = [np.mean(history[e]['device_accs']) for e in range(num_epochs)]
-    mean_edge_accs = [np.mean(history[e]['edge_accs']) for e in range(num_epochs)]
-    global_accs = [history[e]['global_acc'] for e in range(num_epochs)]
+    mean_device_accs = [np.mean(history[e]['device_means']) for e in range(num_epochs)]
+    mean_edge_accs = [np.mean(history[e]['edge_means']) for e in range(num_epochs)]
+    global_accs = [history[e]['global_accs'] for e in range(num_epochs)]
     mean_device_vs_global = [np.mean(history[e]['device_vs_global']) for e in range(num_epochs)]
     mean_edge_vs_global = [np.mean(history[e]['edge_vs_global']) for e in range(num_epochs)]
 

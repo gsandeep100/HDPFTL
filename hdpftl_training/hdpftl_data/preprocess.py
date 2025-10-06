@@ -911,11 +911,16 @@ def preprocess_data_safe(log_path_str, selected_folder, writer=None, scaler_type
             log_path_str, os.path.join(config.OUTPUT_DATASET_ALL_DATA, selected_folder)
         )
 
+    #df = df.sample(frac=0.1, random_state=42)#TODO REMOVE
+
     features = df.columns.difference(['Label'])
     df[features] = df[features].astype(np.float32)
 
     X_final, y_final = df[features].to_numpy(), df['Label'].to_numpy()
+
+
     X_final = util.to_float32(X_final)
+
 
     # --- Prepare / balance data with class-safe SMOTE ---
 
