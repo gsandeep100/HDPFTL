@@ -896,7 +896,7 @@ def safe_timer_wrapper(name, writer=None, tag=None):
     return timer if timer is not None else nullcontext()
 
 
-def preprocess_data_safe(log_path_str, selected_folder, writer=None, scaler_type='minmax', min_samples_per_class=1):
+def preprocess_data_safe(log_path_str, selected_folder, writer=None, scaler_type='minmax', min_samples_per_class=2):
     """
     Load, balance, and split dataset ensuring all classes are preserved in pretrain, finetune, and test.
     SMOTE is applied only to training splits to avoid leakage.
