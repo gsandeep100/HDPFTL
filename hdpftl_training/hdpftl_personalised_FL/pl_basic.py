@@ -1852,17 +1852,16 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
 
 
         # Update history for plotting
-        """
-        history["device_means"].append(np.mean(metrics_test["device_accs"]))
-        history["device_stds"].append(np.std(metrics_test["device_accs"]))
-        history["edge_means"].append(np.mean(metrics_test["edge_accs"]))
-        history["edge_stds"].append(np.std(metrics_test["edge_accs"]))
-        history["global_accs"].append(metrics_test["global_acc"])
-        history["device_vs_global"].append(np.mean(metrics_test["device_vs_global"]))
-        history["edge_vs_global"].append(np.mean(metrics_test["edge_vs_global"]))
-        history["y_true_per_epoch"].append(y_test)  # optional reference
-        """
-    return metrics_test
+        history["device_means"].append(np.mean(metrics_test["device"]["acc"]))
+        history["device_stds"].append(np.std(metrics_test["device"]["acc"]))
+        history["edge_means"].append(np.mean(metrics_test["edge"]["acc"]))
+        history["edge_stds"].append(np.std(metrics_test["edge"]["acc"]))
+        history["global_accs"].append(metrics_test["global"]["acc"])
+        history["device_vs_global"].append(np.mean(metrics_test["device"]["acc"]) - metrics_test["global"]["acc"])
+        history["edge_vs_global"].append(np.mean(metrics_test["edge"]["acc"]) - metrics_test["global"]["acc"])
+        history["y_true_per_epoch"].append(y_tests)  # list of true labels per device for reference
+
+    return history
         
 
 
@@ -2223,7 +2222,7 @@ if __name__ == "__main__":
 
     # 4. Train HPFL model with accuracy tracking
 
-    metrics_test = hpfl_train_with_accuracy(d_data=devices_data, e_groups=edge_groups, edge_finetune_data = edge_finetune_data,
+    history = hpfl_train_with_accuracy(d_data=devices_data, e_groups=edge_groups, edge_finetune_data = edge_finetune_data,
                                            le=le, n_classes=num_classes, verbose=True)
-    plot_hpfl_all(metrics_test)
+    plot_hpfl_all(history)
 
