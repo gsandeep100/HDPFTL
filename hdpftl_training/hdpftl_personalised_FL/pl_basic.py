@@ -1657,13 +1657,13 @@ def evaluate_multilevel_performance(
     # 4️⃣ Prepare structured metrics dictionary
     # ---------------------------
     metrics_test = {
-        "device_means": [device_accs],   # wrapped as list for per-epoch compatibility
-        "device_stds": [np.std(device_accs)],
-        "edge_means": [edge_accs],
-        "edge_stds": [np.std(edge_accs)],
-        "global_accs": [global_acc],
-        "device_vs_global": [device_accs],  # for plotting vs global
-        "edge_vs_global": [edge_accs],
+        "device_means": device_accs,  # full list per epoch
+        "device_stds": np.std(device_accs),  # scalar
+        "edge_means": edge_accs,  # full list per epoch
+        "edge_stds": np.std(edge_accs),  # scalar
+        "global_accs": global_acc,  # scalar
+        "device_vs_global": device_accs,  # full list; subtract global later for plotting
+        "edge_vs_global": edge_accs,  # full list; subtract global later
         "metrics": {
             "device": {
                 "acc": device_accs,
@@ -1852,14 +1852,27 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
 
 
         # Update history for plotting
-        history["device_means"].append(np.mean(metrics_test["device"]["acc"]))
-        history["device_stds"].append(np.std(metrics_test["device"]["acc"]))
-        history["edge_means"].append(np.mean(metrics_test["edge"]["acc"]))
-        history["edge_stds"].append(np.std(metrics_test["edge"]["acc"]))
-        history["global_accs"].append(metrics_test["global"]["acc"])
-        history["device_vs_global"].append(np.mean(metrics_test["device"]["acc"]) - metrics_test["global"]["acc"])
-        history["edge_vs_global"].append(np.mean(metrics_test["edge"]["acc"]) - metrics_test["global"]["acc"])
-        history["y_true_per_epoch"].append(y_tests)  # list of true labels per device for reference
+        history["device_accs_per_epoch"].append(metrics_test["metrics"]["device"]["acc"])
+        history["edge_accs_per_epoch"].append(metrics_test["metrics"]["edge"]["acc"])
+        history["global_accs"].append(metrics_test["metrics"]["global"]["acc"])
+
+        # mean/std for reference
+        history["device_means"].append(np.mean(metrics_test["metrics"]["device"]["acc"]))
+        history["device_stds"].append(np.std(metrics_test["metrics"]["device"]["acc"]))
+        history["edge_means"].append(np.mean(metrics_test["metrics"]["edge"]["acc"]))
+        history["edge_stds"].append(np.std(metrics_test["metrics"]["edge"]["acc"]))
+
+        # differences per device/edge vs global
+        history["device_vs_global"].append([
+            acc - metrics_test["metrics"]["global"]["acc"]
+            for acc in metrics_test["metrics"]["device"]["acc"]
+        ])
+        history["edge_vs_global"].append([
+            acc - metrics_test["metrics"]["global"]["acc"]
+            for acc in metrics_test["metrics"]["edge"]["acc"]
+        ])
+
+        history["y_true_per_epoch"].append(y_tests)
 
     return history
         
@@ -2078,9 +2091,10 @@ def plot_device_accuracies(
 def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     """
     Generate Hierarchical PFL plots from structured metrics dictionary.
+    Handles variable number of devices/edges per epoch and empty lists safely.
 
     Args:
-        metrics_test (dict): Output from `evaluate_multilevel_performance`.
+        metrics_test (dict): Output metrics dictionary per epoch.
         save_root_dir (str): Base directory to save plots.
     """
 
@@ -2088,53 +2102,59 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     # Create dated folder automatically
     # -----------------------------
     today_str = datetime.now().strftime("%Y-%m-%d")
-    save_dir = os.path.join(save_root_dir, f"{today_str}")
+    save_dir = os.path.join(save_root_dir, today_str)
     os.makedirs(save_dir, exist_ok=True)
 
     # -----------------------------
     # Extract per-epoch values
     # -----------------------------
-    device_means = metrics_test["device_means"]
-    device_stds = metrics_test["device_stds"]
-    edge_means = metrics_test["edge_means"]
-    edge_stds = metrics_test["edge_stds"]
-    global_accs = metrics_test["global_accs"]
-    device_vs_global = metrics_test["device_vs_global"]
-    edge_vs_global = metrics_test["edge_vs_global"]
+    device_means = metrics_test["device_accs_per_epoch"]  # list of lists
+    edge_means = metrics_test["edge_accs_per_epoch"]      # list of lists
+    global_accs = metrics_test["global_accs"]            # list of scalars
+    device_vs_global = metrics_test["device_vs_global"]  # list of lists
+    edge_vs_global = metrics_test["edge_vs_global"]      # list of lists
 
     num_epochs = len(global_accs)
-    layers = ["Device", "Edge", "Global"]
-    colors = ["skyblue", "orange", "green"]
+    colors = {"Device": "skyblue", "Edge": "orange", "Global": "green"}
 
     # -----------------------------
     # 1. Per-epoch stacked contributions & comparisons
     # -----------------------------
     for epoch_idx in range(num_epochs):
+        # Safely compute means (handle empty lists)
+        mean_device = np.mean(device_means[epoch_idx]) if device_means[epoch_idx] else 0
+        mean_edge = np.mean(edge_means[epoch_idx]) if edge_means[epoch_idx] else 0
+        global_acc = global_accs[epoch_idx]
+
         # Contribution bars
         contributions = [
-            np.mean(device_means[epoch_idx]),
-            np.mean(edge_means[epoch_idx]) - np.mean(device_means[epoch_idx]),
-            global_accs[epoch_idx] - np.mean(edge_means[epoch_idx]),
+            mean_device,
+            max(mean_edge - mean_device, 0),
+            max(global_acc - mean_edge, 0),
         ]
-        contributions = np.clip(contributions, 0, None)
 
+        layers = ["Device", "Edge", "Global"]
         plt.figure(figsize=(6, 4))
-        bars = plt.bar(layers, contributions, color=colors)
+        bars = plt.bar(layers, contributions, color=[colors[l] for l in layers])
         plt.ylim(0, 1)
         plt.ylabel("Contribution to Final Accuracy")
         plt.title(f"Epoch {epoch_idx+1} Layer Contributions")
         for bar, val in zip(bars, contributions):
-            plt.text(bar.get_x() + bar.get_width() / 2, float(val) + 0.02, f"{float(val):.3f}", ha="center", va="bottom")
+            plt.text(bar.get_x() + bar.get_width()/2, float(val)+0.02, f"{val:.3f}",
+                     ha="center", va="bottom")
         plt.grid(axis="y", linestyle="--", alpha=0.6)
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch_idx+1}.png"))
         plt.close()
 
         # Device vs Global & Edge vs Global
+        mean_dev_vs_glob = np.mean(device_vs_global[epoch_idx]) if device_vs_global[epoch_idx] else 0
+        mean_edge_vs_glob = np.mean(edge_vs_global[epoch_idx]) if edge_vs_global[epoch_idx] else 0
+
         plt.figure(figsize=(6, 4))
         plt.bar(["Device vs Global", "Edge vs Global"],
-                [np.mean(device_vs_global[epoch_idx]), np.mean(edge_vs_global[epoch_idx])],
-                color=["skyblue", "orange"])
+                [mean_dev_vs_glob, mean_edge_vs_glob],
+                color=[colors["Device"], colors["Edge"]])
         plt.ylim(0, 1)
         plt.ylabel("Accuracy compared to Global")
         plt.title(f"Epoch {epoch_idx+1} Layer vs Global Accuracy")
@@ -2146,14 +2166,13 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     # -----------------------------
     # 2. Accuracy trends across epochs
     # -----------------------------
-    mean_device_accs = [np.mean(d) for d in device_means]
-    mean_edge_accs = [np.mean(e) for e in edge_means]
+    mean_device_accs = [np.mean(d) if d else 0 for d in device_means]
+    mean_edge_accs = [np.mean(e) if e else 0 for e in edge_means]
 
-    # Layer Accuracy Trends
     plt.figure(figsize=(10, 6))
-    plt.plot(mean_device_accs, label="Device Accuracy", marker="o", color="skyblue")
-    plt.plot(mean_edge_accs, label="Edge Accuracy", marker="s", color="orange")
-    plt.plot(global_accs, label="Global Accuracy", marker="^", color="green")
+    plt.plot(mean_device_accs, label="Device Accuracy", marker="o", color=colors["Device"])
+    plt.plot(mean_edge_accs, label="Edge Accuracy", marker="s", color=colors["Edge"])
+    plt.plot(global_accs, label="Global Accuracy", marker="^", color=colors["Global"])
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
     plt.title("Hierarchical PFL Accuracy Trends")
@@ -2166,13 +2185,13 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     plt.show()
     plt.close()
 
-    # Device/Edge vs Global Trends
-    mean_device_vs_global = [np.mean(d) for d in device_vs_global]
-    mean_edge_vs_global = [np.mean(e) for e in edge_vs_global]
+    # Device/Edge vs Global trends
+    mean_device_vs_global = [np.mean(d) if d else 0 for d in device_vs_global]
+    mean_edge_vs_global = [np.mean(e) if e else 0 for e in edge_vs_global]
 
     plt.figure(figsize=(10, 6))
-    plt.plot(mean_device_vs_global, label="Device vs Global", marker="o", color="skyblue")
-    plt.plot(mean_edge_vs_global, label="Edge vs Global", marker="s", color="orange")
+    plt.plot(mean_device_vs_global, label="Device vs Global", marker="o", color=colors["Device"])
+    plt.plot(mean_edge_vs_global, label="Edge vs Global", marker="s", color=colors["Edge"])
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy compared to Global")
     plt.title("Device/Edge Accuracy vs Global Across Epochs")
