@@ -17,7 +17,7 @@ import os
 import warnings
 from datetime import datetime
 from typing import List, Tuple, Union
-
+import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -1754,16 +1754,21 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
     num_epochs = config["epoch"]
     y_true_per_epoch = []
 
-    # --- history tracking ---
+    # Initialize history object before training/evaluation loop
     history = {
-        "device_means": [],  # mean accuracy across all devices per epoch
-        "device_stds": [],  # std dev of device accuracies per epoch
-        "edge_means": [],  # mean accuracy across all edges per epoch
-        "edge_stds": [],  # std dev of edge accuracies per epoch
-        "global_accs": [],  # global model accuracy per epoch
-        "device_vs_global": [],  # mean device accuracy compared with global per epoch
-        "edge_vs_global": [],  # mean edge accuracy compared with global per epoch
-        "y_true_per_epoch": []  # optional: true labels of test set per epoch
+        "device_accs_per_epoch": [],
+        "edge_accs_per_epoch": [],
+        "global_accs": [],
+
+        "device_means": [],
+        "device_stds": [],
+        "edge_means": [],
+        "edge_stds": [],
+
+        "device_vs_global": [],
+        "edge_vs_global": [],
+
+        "y_true_per_epoch": [],
     }
 
     for epoch in range(num_epochs):
@@ -1850,28 +1855,30 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
         )  
         """
 
-
         # Update history for plotting
-        history["device_accs_per_epoch"].append(metrics_test["metrics"]["device"]["acc"])
-        history["edge_accs_per_epoch"].append(metrics_test["metrics"]["edge"]["acc"])
-        history["global_accs"].append(metrics_test["metrics"]["global"]["acc"])
+        metrics = metrics_test["metrics"]
 
-        # mean/std for reference
-        history["device_means"].append(np.mean(metrics_test["metrics"]["device"]["acc"]))
-        history["device_stds"].append(np.std(metrics_test["metrics"]["device"]["acc"]))
-        history["edge_means"].append(np.mean(metrics_test["metrics"]["edge"]["acc"]))
-        history["edge_stds"].append(np.std(metrics_test["metrics"]["edge"]["acc"]))
+        history["device_accs_per_epoch"].append(metrics["device"]["acc"])
+        history["edge_accs_per_epoch"].append(metrics["edge"]["acc"])
+        history["global_accs"].append(metrics["global"]["acc"])
 
-        # differences per device/edge vs global
+        # Mean/std across devices and edges for reference
+        history["device_means"].append(np.mean(metrics["device"]["acc"]))
+        history["device_stds"].append(np.std(metrics["device"]["acc"]))
+        history["edge_means"].append(np.mean(metrics["edge"]["acc"]))
+        history["edge_stds"].append(np.std(metrics["edge"]["acc"]))
+
+        # Differences per device/edge vs global accuracy
+        global_acc = metrics["global"]["acc"]
+
         history["device_vs_global"].append([
-            acc - metrics_test["metrics"]["global"]["acc"]
-            for acc in metrics_test["metrics"]["device"]["acc"]
+            acc - global_acc for acc in metrics["device"]["acc"]
         ])
         history["edge_vs_global"].append([
-            acc - metrics_test["metrics"]["global"]["acc"]
-            for acc in metrics_test["metrics"]["edge"]["acc"]
+            acc - global_acc for acc in metrics["edge"]["acc"]
         ])
 
+        # Store y_true per epoch if available
         history["y_true_per_epoch"].append(y_tests)
 
     return history
@@ -2091,7 +2098,8 @@ def plot_device_accuracies(
 def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     """
     Generate Hierarchical PFL plots from structured metrics dictionary.
-    Handles variable number of devices/edges per epoch and empty lists safely.
+    Includes per-epoch stacked contributions, device/edge vs global,
+    overall accuracy trends, and per-device/edge heatmaps.
 
     Args:
         metrics_test (dict): Output metrics dictionary per epoch.
@@ -2108,8 +2116,8 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     # -----------------------------
     # Extract per-epoch values
     # -----------------------------
-    device_means = metrics_test["device_accs_per_epoch"]  # list of lists
-    edge_means = metrics_test["edge_accs_per_epoch"]      # list of lists
+    device_accs = metrics_test["device_accs_per_epoch"]  # list of lists
+    edge_accs = metrics_test["edge_accs_per_epoch"]      # list of lists
     global_accs = metrics_test["global_accs"]            # list of scalars
     device_vs_global = metrics_test["device_vs_global"]  # list of lists
     edge_vs_global = metrics_test["edge_vs_global"]      # list of lists
@@ -2121,9 +2129,8 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     # 1. Per-epoch stacked contributions & comparisons
     # -----------------------------
     for epoch_idx in range(num_epochs):
-        # Safely compute means (handle empty lists)
-        mean_device = np.mean(device_means[epoch_idx]) if device_means[epoch_idx] else 0
-        mean_edge = np.mean(edge_means[epoch_idx]) if edge_means[epoch_idx] else 0
+        mean_device = np.mean(device_accs[epoch_idx]) if device_accs[epoch_idx] else 0
+        mean_edge = np.mean(edge_accs[epoch_idx]) if edge_accs[epoch_idx] else 0
         global_acc = global_accs[epoch_idx]
 
         # Contribution bars
@@ -2132,8 +2139,8 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
             max(mean_edge - mean_device, 0),
             max(global_acc - mean_edge, 0),
         ]
-
         layers = ["Device", "Edge", "Global"]
+
         plt.figure(figsize=(6, 4))
         bars = plt.bar(layers, contributions, color=[colors[l] for l in layers])
         plt.ylim(0, 1)
@@ -2146,6 +2153,8 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch_idx+1}.png"))
         plt.close()
+        plt.clf()  # clears the current figure
+        plt.cla()  # clears current axes
 
         # Device vs Global & Edge vs Global
         mean_dev_vs_glob = np.mean(device_vs_global[epoch_idx]) if device_vs_global[epoch_idx] else 0
@@ -2162,12 +2171,44 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, f"epoch_vs_global_{epoch_idx+1}.png"))
         plt.close()
+        plt.clf()  # clears the current figure
+        plt.cla()  # clears current axes
+        # -----------------------------
+        # 1b. Device-level heatmap
+        # -----------------------------
+        if device_accs[epoch_idx]:
+            plt.figure(figsize=(max(6, len(device_accs[epoch_idx])*0.5), 4))
+            sns.heatmap(np.array([device_accs[epoch_idx]]), annot=True, cmap="Blues",
+                        cbar=True, vmin=0, vmax=1)
+            plt.xlabel("Device Index")
+            plt.ylabel("Epoch")
+            plt.title(f"Epoch {epoch_idx+1} Device Accuracies")
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"epoch_device_heatmap_{epoch_idx+1}.png"))
+            plt.close()
+            plt.clf()  # clears the current figure
+            plt.cla()  # clears current axes
+        # -----------------------------
+        # 1c. Edge-level heatmap
+        # -----------------------------
+        if edge_accs[epoch_idx]:
+            plt.figure(figsize=(max(6, len(edge_accs[epoch_idx])*0.5), 4))
+            sns.heatmap(np.array([edge_accs[epoch_idx]]), annot=True, cmap="Oranges",
+                        cbar=True, vmin=0, vmax=1)
+            plt.xlabel("Edge Index")
+            plt.ylabel("Epoch")
+            plt.title(f"Epoch {epoch_idx+1} Edge Accuracies")
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"epoch_edge_heatmap_{epoch_idx+1}.png"))
+            plt.close()
+            plt.clf()  # clears the current figure
+            plt.cla()  # clears current axes
 
     # -----------------------------
     # 2. Accuracy trends across epochs
     # -----------------------------
-    mean_device_accs = [np.mean(d) if d else 0 for d in device_means]
-    mean_edge_accs = [np.mean(e) if e else 0 for e in edge_means]
+    mean_device_accs = [np.mean(d) if d else 0 for d in device_accs]
+    mean_edge_accs = [np.mean(e) if e else 0 for e in edge_accs]
 
     plt.figure(figsize=(10, 6))
     plt.plot(mean_device_accs, label="Device Accuracy", marker="o", color=colors["Device"])
@@ -2184,6 +2225,8 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     plt.savefig(os.path.join(save_dir, "overall_accuracy_trends.png"))
     plt.show()
     plt.close()
+    plt.clf()  # clears the current figure
+    plt.cla()  # clears current axes
 
     # Device/Edge vs Global trends
     mean_device_vs_global = [np.mean(d) if d else 0 for d in device_vs_global]
@@ -2203,6 +2246,38 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     plt.savefig(os.path.join(save_dir, "device_edge_vs_global_trends.png"))
     plt.show()
     plt.close()
+    plt.clf()  # clears the current figure
+    plt.cla()  # clears current axes
+
+    # -----------------------------
+    # 3. Aggregate heatmaps across all epochs
+    # -----------------------------
+
+    # Device accuracy heatmap across epochs
+    device_matrix = np.array([d if d else [0] * len(device_accs[0]) for d in device_accs])
+    plt.figure(figsize=(max(8, device_matrix.shape[1] * 0.5), max(6, device_matrix.shape[0] * 0.5)))
+    sns.heatmap(device_matrix, annot=True, cmap="Blues", cbar=True, vmin=0, vmax=1)
+    plt.xlabel("Device Index")
+    plt.ylabel("Epoch")
+    plt.title("Device Accuracies Across Epochs")
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "all_epochs_device_heatmap.png"))
+    plt.close()
+    plt.clf()  # clears the current figure
+    plt.cla()  # clears current axes
+
+    # Edge accuracy heatmap across epochs
+    edge_matrix = np.array([e if e else [0] * len(edge_accs[0]) for e in edge_accs])
+    plt.figure(figsize=(max(8, edge_matrix.shape[1] * 0.5), max(6, edge_matrix.shape[0] * 0.5)))
+    sns.heatmap(edge_matrix, annot=True, cmap="Oranges", cbar=True, vmin=0, vmax=1)
+    plt.xlabel("Edge Index")
+    plt.ylabel("Epoch")
+    plt.title("Edge Accuracies Across Epochs")
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "all_epochs_edge_heatmap.png"))
+    plt.close()
+    plt.clf()  # clears the current figure
+    plt.cla()  # clears current axes
 
     print(f"All plots saved to folder: {save_dir}")
 
