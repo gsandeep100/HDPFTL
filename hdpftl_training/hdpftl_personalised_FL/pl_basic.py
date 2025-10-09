@@ -26,7 +26,7 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 
 from lightgbm import early_stopping, LGBMClassifier, LGBMRegressor, log_evaluation
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, log_loss
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
@@ -205,47 +205,52 @@ def train_lightgbm(
 
 def predict_proba_fixed(model, X, num_classes):
     """
-    Safe wrapper for LightGBM's predict_proba:
-    - Ensures correct feature count (pads/slices X if needed).
-    - Ensures correct class count (fills missing classes if needed).
-    - Works for numeric 0..K-1 or non-sequential labels.
-    - Always returns shape (n_samples, num_classes).
+    Universal safe prediction wrapper for LightGBM / sklearn models.
+    Handles:
+      - Binary and multiclass
+      - Degenerate one-hot predictions
+      - Missing or mismatched classes
+      - Prevents NaN in logloss
     """
-
-    import numpy as np
-
-    # --- Ensure X is 2D numpy array ---
-    X_np = np.atleast_2d(np.array(X))
-
-    # --- Feature alignment ---
+    X_np = np.atleast_2d(np.array(X, dtype=float))
     n_features_model = getattr(model, "n_features_in_", X_np.shape[1])
+
     if X_np.shape[1] > n_features_model:
-        X_np = X_np[:, :n_features_model]  # slice down
+        X_np = X_np[:, :n_features_model]
     elif X_np.shape[1] < n_features_model:
-        pad_width = n_features_model - X_np.shape[1]
-        X_np = np.pad(X_np, ((0, 0), (0, pad_width)), mode="constant")
+        X_np = np.pad(X_np, ((0, 0), (0, n_features_model - X_np.shape[1])), mode="constant")
 
-    # --- Predict probabilities ---
-    pred = model.predict_proba(X_np)
-    pred = np.atleast_2d(pred)  # ensures shape is (n_samples, n_classes)
+    # Predict probabilities
+    if hasattr(model, "predict_proba"):
+        X_df = pd.DataFrame(X_np, columns=model.feature_name_)
+        pred = model.predict_proba(X_df)
+    else:
+        X_df = pd.DataFrame(X_np, columns=model.feature_name_)
+        pred = model.predict(X_df, raw_score=False)
 
-    # --- Map to full class array ---
-    full = np.zeros((pred.shape[0], num_classes), dtype=float)
+    pred = np.atleast_2d(pred)
+
+    # Binary flatten
+    if pred.ndim == 1:
+        pred = np.column_stack([1 - pred, pred])
+
+    # Smooth degenerate one-hot predictions
+    eps = 1e-6
+    pred = np.clip(pred, eps, 1 - eps)
+
+    # Align to all num_classes
+    full = np.zeros((pred.shape[0], num_classes))
     model_classes = getattr(model, "classes_", np.arange(pred.shape[1]))
-
-    # Assign predicted probabilities to correct class indices
     for i, cls in enumerate(model_classes):
-        # Only assign if within bounds
         if 0 <= int(cls) < num_classes:
             full[:, int(cls)] = pred[:, i]
 
-    # --- Normalize rows to sum to 1 ---
+    # Normalize rows
     row_sums = full.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1.0  # avoid division by zero
+    row_sums[row_sums == 0] = 1
     full /= row_sums
 
     return full
-
 
 def get_leaf_indices(model, X):
     """
@@ -260,7 +265,8 @@ def get_leaf_indices(model, X):
             Each entry indicates the leaf index for that sample in that tree
     """
     # LightGBM: pred_leaf=True returns leaf indices
-    leaf_indices = model.predict(X, pred_leaf=True)
+    X_df = pd.DataFrame(X, columns=model.feature_name_)
+    leaf_indices = model.predict(X_df, pred_leaf=True)
 
     # Ensure it's a NumPy array
     return np.array(leaf_indices)
@@ -270,113 +276,124 @@ def get_leaf_indices(model, X):
 # Device Layer Boosting with missing-class safe probabilities
 # ============================================================
 
-def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes,
-                          X_ftune=None, y_ftune=None):
+def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes):
     """
     Device-level sequential boosting (classification version) with safe incremental boosting.
 
     Returns:
-        residuals_devices: list of np.ndarray, final residuals per device
-        device_models: list of lists, trained models per device
+        d_residuals: list of np.ndarray, final residuals per device
+        d_models: list of lists, trained models per device
         device_embeddings: list of np.ndarray, one-hot leaf embeddings per device
-        y_true_devices: list of np.ndarray, y_finetune per device
+        device_weights: list of np.ndarray, per-model log-loss-based weights per device
     """
-    print("""
-    ************************************************************
-    *                                                          *
-    *                  STARTING DEVICE LAYER                   *
-    *                                                          *
-    ************************************************************
-    """)
+    print("\n" + "*"*60)
+    print("*" + " " * 28 + "STARTING DEVICE LAYER" + " " * 28 + "*")
+    print("*" * 60 + "\n")
 
     device_embeddings = []
+    device_val_scores = []
 
-    # Loop through each device (each device gets its own mini boosting process)
+
+    eps_residual = 1e-6  # small epsilon to prevent degenerate residuals
+
     for idx, dev_tuple in enumerate(d_data):
-        X_train, _, y_train, _ = dev_tuple
-
+        X_train, _, y_train, _, _, _, X_device_finetune, y_device_finetune = dev_tuple
         n_samples = X_train.shape[0]
 
         # ----------------------------
         # Initialize residuals per device
         # ----------------------------
         if d_residuals[idx] is None:
-            # One-hot encode labels → residuals start as perfect truth signal
             residual = np.zeros((n_samples, n_classes), dtype=float)
-            residual[np.arange(n_samples), le.fit_transform(y_train)] = 1.0
+            y_encoded = le.transform(y_train)
+            residual[np.arange(n_samples), y_encoded] = 1.0
         else:
-            # If we already had previous round residuals, reuse them
             residual = d_residuals[idx].copy()
 
-        # Retrieve models already trained for this device (if incremental learning is on)
         models_per_device = d_models[idx] if d_models[idx] else []
 
         # ----------------------------
-        # Sequential boosting for this device
+        # Sequential boosting
         # ----------------------------
         for t in range(config["device_boosting_rounds"]):
-            # Pseudo-labels from residuals: take the class with max residual
+            # Use current residuals as pseudo-labels
             y_pseudo = residual.argmax(axis=1)
 
-            # If pseudo-labels collapse into one class → skip (no useful training signal)
+            # Stop if only a single class remains
             if len(np.unique(y_pseudo)) < 2:
-                logging.debug(f"Device {idx}, round {t}: single class, skipping.")
+                print(f"Device {idx}, round {t}: only single class left, skipping further boosting.")
                 break
 
-            # Warm-start: only reuse previous model if input shapes match
             init_model = models_per_device[-1] if models_per_device else None
-
-            # Train LightGBM on pseudo-labels (residual-driven labels)
 
             model = train_lightgbm(
                 X_train, y_pseudo,
-                X_valid=X_ftune[:, :X_train.shape[1]] if X_ftune is not None else None,
-                y_valid=y_ftune,
+                X_valid=X_device_finetune[:, :X_train.shape[1]] if y_device_finetune is not None else None,
+                y_valid=y_device_finetune,
                 early_stopping_rounds=config["early_stopping_rounds_device"],
                 learning_rate=config["learning_rate_device"],
                 init_model=init_model
             )
 
-            # Get probability predictions from the model
+            # Safe probability predictions
             pred_proba = predict_proba_fixed(model, X_train, n_classes)
 
             # ----------------------------
-            # Update residuals
+            # Update residuals safely
             # ----------------------------
-            residual -= pred_proba          # reduce mass where model is confident
-            #residual = np.clip(residual, 0.0, None)  # keep residuals non-negative
+            # Smooth residuals: subtract predicted probs but keep min eps
+            residual -= pred_proba
+            residual = np.clip(residual, -1 + eps_residual, 1 - eps_residual)
 
-            # Store model for this device
             models_per_device.append(model)
 
-        # Save final residuals + trained models
         d_residuals[idx] = residual
         d_models[idx] = models_per_device
 
         # ----------------------------
-        # Compute device embedding (leaf indices one-hot encoding)
+        # Device embeddings
         # ----------------------------
         leaf_indices_list = [get_leaf_indices(mdl, X_train) for mdl in models_per_device]
         if leaf_indices_list:
-            # Concatenate leaf indices from all boosting rounds
             leaf_indices_concat = np.hstack(leaf_indices_list)
-
-            # One-hot encode leaf positions across all trees
             leaf_embeddings = np.zeros((n_samples, np.max(leaf_indices_concat) + 1))
             leaf_embeddings[np.arange(n_samples)[:, None], leaf_indices_concat] = 1.0
         else:
-            # If no models trained, fallback to dummy embedding
             leaf_embeddings = np.zeros((n_samples, 1))
-
         device_embeddings.append(leaf_embeddings)
 
-    # ----------------------------
-    # Convert y_finetune into per-device arrays (for eval/finetune later)
-    # ----------------------------
-    #y_true_devices = [np.array(y_ftune[d]) for d in range(len(d_data))]
+        # ----------------------------
+        # Compute per-model validation weights if finetune data provided
+        # ----------------------------
+        if X_device_finetune is not None and y_device_finetune is not None and models_per_device:
+            scores_per_model = []
+            y_val_encoded = le.transform(np.atleast_1d(y_device_finetune))
+            for mdl in models_per_device:
+                y_pred_proba = predict_proba_fixed(mdl, y_device_finetune, n_classes)
+                # Safe log loss
+                try:
+                    loss = log_loss(y_val_encoded, y_pred_proba)
+                except ValueError:
+                    loss = 1.0  # fallback for degenerate cases
+                scores_per_model.append(1.0 / (loss + 1e-7))
+            scores_per_model = np.array(scores_per_model)
+            if scores_per_model.sum() > 0:
+                scores_per_model /= scores_per_model.sum()
+            else:
+                scores_per_model = np.ones_like(scores_per_model) / len(scores_per_model)
+            device_val_scores.append(scores_per_model)
+        else:
+            device_val_scores.append(np.ones(len(models_per_device)) / len(models_per_device)
+                                     if models_per_device else np.array([1.0]))
 
+    # collapse per-model weights into scalar per-device weights (done ONCE)
+    device_weights = np.array([
+        np.mean(w) if isinstance(w, np.ndarray) else float(w)
+        for w in device_val_scores
+    ], dtype=float)
 
-    return d_residuals, d_models, device_embeddings
+    return d_residuals, d_models, device_embeddings, device_weights
+
 
 
 def edge_layer_boosting(e_groups, d_embeddings, d_residuals,
@@ -411,6 +428,14 @@ def edge_layer_boosting(e_groups, d_embeddings, d_residuals,
     global_offset = 0  # tracks row position in global prediction matrix
 
     for edge_idx, edge_devices in enumerate(e_groups):
+
+        # select finetune data for this edge
+        if X_ftune is not None and y_ftune is not None:
+            X_valid_edge = X_ftune[edge_idx]
+            y_valid_edge = y_ftune[edge_idx]
+        else:
+            X_valid_edge, y_valid_edge = None, None
+
         if len(edge_devices) == 0:
             e_models.append([])
             e_residuals.append(None)
@@ -430,6 +455,12 @@ def edge_layer_boosting(e_groups, d_embeddings, d_residuals,
         else:
             weights = np.array([device_weights[i] for i in edge_devices])
 
+        # Normalize per-edge
+        if weights.sum() > 0:
+            weights = weights / weights.sum()
+        else:
+            weights = np.ones_like(weights) / len(weights)
+
         # pad embeddings to same width
         max_cols = max(e.shape[1] for e in embeddings_list)
         padded_embeddings = [
@@ -439,6 +470,7 @@ def edge_layer_boosting(e_groups, d_embeddings, d_residuals,
         X_edge = np.vstack(padded_embeddings)
 
         # weighted residual stacking
+
         residual_edge = np.vstack([r * w for r, w in zip(residual_list, weights)])
         residual_edge = np.clip(residual_edge, 0.0, None)
 
@@ -456,12 +488,12 @@ def edge_layer_boosting(e_groups, d_embeddings, d_residuals,
                 break
 
             init_model = models_per_edge[-1] if models_per_edge else None
-            X_valid_slice = X_ftune[:, :X_edge.shape[1]] if X_ftune is not None else None
+            X_valid_slice = X_valid_edge[:, :X_edge.shape[1]] if X_valid_edge is not None else None
 
             model = train_lightgbm(
                 X_edge, y_pseudo,
                 X_valid=X_valid_slice,
-                y_valid=y_ftune,
+                y_valid=y_valid_edge,
                 early_stopping_rounds=config["early_stopping_rounds_edge"],
                 learning_rate=config["learning_rate_edge"],
                 init_model=init_model
@@ -625,8 +657,7 @@ def global_layer_bayesian_aggregation(e_outputs, e_embeddings, e_residuals=None,
 # Forward pass with Device → Edge → Gossip
 # ============================================================
 
-def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finetune,
-                 X_test, y_test,residuals_devices=None, device_models=None):
+def forward_pass(devices_data, edge_groups, le, num_classes,X_edge_finetunes,y_edge_finetunes,residuals_devices=None, device_models=None):
     """
     Perform a single forward pass through:
     - Device-level boosting
@@ -641,6 +672,8 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
         global_residuals, edge_sample_slices, y_true_devices, device_sample_slices
     """
 
+
+
     if residuals_devices is None:
         residuals_devices = [None] * len(devices_data)
     if device_models is None:
@@ -649,18 +682,15 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
     # -----------------------------
     # 1. Device Layer
     # -----------------------------
-    residuals_devices, device_models, device_embeddings = device_layer_boosting(
+    residuals_devices, device_models, device_embeddings, device_weights = device_layer_boosting(
         devices_data, residuals_devices, device_models,
-        le, num_classes, X_finetune, y_finetune
+        le, num_classes
     )
     assert device_embeddings is not None, "Device embeddings returned as None!"
 
-    device_accs_last = plot_device_accuracies(device_models, X_test, y_test, le, num_classes, combine_mode="last")
-    device_accs_avg = plot_device_accuracies(device_models, X_test, y_test, le, num_classes, combine_mode="average")
-    device_accs_vote = plot_device_accuracies(device_models, X_test, y_test, le, num_classes, combine_mode="hard_vote")
+    #return (residuals_devices, device_models, device_embeddings, device_val_scores)
 
 
-"""
     # -----------------------------
     # 2. Edge Layer
     # -----------------------------
@@ -671,12 +701,13 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
         d_embeddings=device_embeddings,
         d_residuals=residuals_devices,
         n_classes=num_classes,
-        X_ftune=X_finetune,
-        y_ftune=y_finetune
+        X_ftune=X_edge_finetunes,
+        y_ftune=y_edge_finetunes,
+        device_weights=device_weights
     )
 
     # -----------------------------
-    # 3. Build Global Ground Truth
+    # Build Global Ground Truth
     # -----------------------------
     y_global_true = np.full((n_samples,), fill_value=-1, dtype=int)
     y_true_per_edge = []
@@ -685,25 +716,23 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
         labels_edge_list = []
 
         for dev_idx in edge_devices:
-            y_dev = np.array(y_finetune[dev_idx])
-            num_samples_dev = device_embeddings[dev_idx].shape[0]
+            # Get indices corresponding to this device in global embeddings
+            idxs = edge_sample_slices.get(dev_idx, np.arange(device_embeddings[dev_idx].shape[0]))
 
-            # Expand single label if needed
-            if y_dev.size == 1:
-                y_dev = np.full((num_samples_dev,), y_dev.item())
-            elif y_dev.size != num_samples_dev:
-                raise ValueError(
-                    f"Device {dev_idx}: y_dev has {y_dev.size} samples, "
-                    f"but embeddings has {num_samples_dev}"
-                )
+            # Extract the labels for these indices
+            y_dev_full = np.array(y_edge_finetunes[dev_idx])
+            if y_dev_full.size != idxs.size:
+                # Trim or repeat labels safely if needed
+                if y_dev_full.size < idxs.size:
+                    y_dev = np.pad(y_dev_full, (0, idxs.size - y_dev_full.size), mode='edge')
+                else:
+                    y_dev = y_dev_full[:idxs.size]
+            else:
+                y_dev = y_dev_full
 
             labels_edge_list.append(y_dev)
-
-            # Assign labels to global vector safely
-            idxs = edge_sample_slices.get(dev_idx, np.arange(num_samples_dev))
             y_global_true[idxs] = y_dev
 
-        # Stack per-edge labels
         labels_edge = np.hstack(labels_edge_list)
         y_true_per_edge.append(labels_edge)
 
@@ -743,7 +772,7 @@ def forward_pass(devices_data, edge_groups, le, num_classes, X_finetune, y_finet
         y_true_per_edge,
         global_residuals
     )
-"""
+
 
 def backward_pass(edge_models, device_models, edge_embeddings, device_embeddings,
                   y_true_per_edge, y_global_pred=None,
@@ -1109,54 +1138,103 @@ def dirichlet_partition(X, y, num_devices, alpha=0.3, seed=42):
 # -----------------------------
 def dirichlet_partition_for_devices_edges_non_iid(X, y, num_devices, n_edges, alpha=0.5, seed=42):
     """
-    Hierarchical non-IID partition.
-    Each device gets its own local train/test split for device-level training.
+    Hierarchical non-IID partition for devices and edges.
+
+    Each device:
+        - X_train, y_train → for device-level training
+        - X_device_finetune, y_device_finetune → optional local finetune
+        - X_edge_finetune, y_edge_finetune → used to train edge models
+
+    Each edge:
+        - Aggregates X_edge_finetune / y_edge_finetune from its devices
+
+    Returns:
+        devices_data: list of tuples per device
+        edge_groups: list of device index lists per edge
+        edge_data: list of tuples per edge
     """
-    X_np = X.to_numpy() if isinstance(X, (pd.DataFrame, pd.Series)) else X
-    y_np = y.to_numpy() if isinstance(y, (pd.DataFrame, pd.Series)) else y
+
+    # Convert to numpy arrays
+    X_np = X.to_numpy() if isinstance(X, (pd.DataFrame, pd.Series)) else np.array(X)
+    y_np = y.to_numpy() if isinstance(y, (pd.DataFrame, pd.Series)) else np.array(y)
+
     rng = np.random.default_rng(seed)
-
     unique_classes = np.unique(y_np)
-    device_indices = [[] for _ in range(num_devices)]
 
-    # Step 1: Non-IID class partition across devices
+    # -------------------------
+    # Step 1: Dirichlet Non-IID split for devices
+    # -------------------------
+    device_indices = [[] for _ in range(num_devices)]
     for c in unique_classes:
         class_idx = np.where(y_np == c)[0]
         rng.shuffle(class_idx)
+
+        # Dirichlet proportions
         proportions = rng.dirichlet(alpha * np.ones(num_devices))
-        min_count = max(int(min(proportions) * len(class_idx)), 1)  # ensure at least 1
-        proportions = np.maximum((proportions * len(class_idx)).astype(int), min_count)
-        diff = len(class_idx) - proportions.sum()
-        proportions[np.argmax(proportions)] += diff
-        splits = np.split(class_idx, np.cumsum(proportions)[:-1])
-        for device_id, split in enumerate(splits):
-            device_indices[device_id].extend(split.tolist())
+        counts = np.maximum((proportions * len(class_idx)).astype(int), 1)
+        diff = len(class_idx) - counts.sum()
+        counts[np.argmax(counts)] += diff  # fix rounding
+        splits = np.split(class_idx, np.cumsum(counts)[:-1])
+        for dev_id, split in enumerate(splits):
+            device_indices[dev_id].extend(split.tolist())
 
-    # Step 2: Build device-level data with local train/test
+    # -------------------------
+    # Step 2: Device-level train / finetune splits
+    # -------------------------
     devices_data = []
-    for device_id, idxs in enumerate(device_indices):
+    for dev_id, idxs in enumerate(device_indices):
         X_dev, y_dev = X_np[idxs], y_np[idxs]
-        # n_samples = len(X_dev)
 
-        # Split each device into mini-devices if needed
-        # mini_idxs = np.array_split(np.arange(n_samples), device_per_edge)
-        # device_subdata = [(X_dev[i], y_dev[i]) for i in mini_idxs]
-        # hierarchical_data[device_id] = [(X_dev, y_dev)]
-
-        # Local train/test split per device
-        X_train, X_test_local, y_train, y_test_local = train_test_split(
-            X_dev, y_dev, test_size=0.3, random_state=seed
+        # Device train/test split
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_dev, y_dev, test_size=0.1, random_state=seed
         )
-        devices_data.append((X_train, X_test_local, y_train, y_test_local))
 
-    # Step 3: Create edge groups
+        # Split training into device finetune + edge finetune
+        X_train, X_edge_finetune, y_train, y_edge_finetune = train_test_split(
+            X_train, y_train, test_size=0.1, random_state=seed
+        )
+
+        X_train, X_device_finetune, y_train, y_device_finetune = train_test_split(
+            X_train, y_train, test_size=0.1, random_state=seed
+        )
+
+        devices_data.append((
+            X_train, X_test, y_train, y_test,
+            X_edge_finetune, y_edge_finetune,
+            X_device_finetune, y_device_finetune
+        ))
+
+    # -------------------------
+    # Step 3: Assign devices to edges
+    # -------------------------
+    def make_edge_groups(num_devices, n_edges, random_state=None):
+        rng_local = np.random.default_rng(random_state)
+        devices = np.arange(num_devices)
+        rng_local.shuffle(devices)
+        return np.array_split(devices, n_edges)
+
     edge_groups = make_edge_groups(num_devices, n_edges, random_state=seed)
 
-    return devices_data, edge_groups
+    # -------------------------
+    # Step 4: Aggregate edge finetune data
+    # -------------------------
+    edge_finetune_data = []
+    for edge_idx, devices_in_edge in enumerate(edge_groups):
+        X_edge_all, y_edge_all = [], []
+        for dev_id in devices_in_edge:
+            # Take only the device's edge-finetune subset
+            X_edge_all.append(devices_data[dev_id][4])  # X_edge_finetune
+            y_edge_all.append(devices_data[dev_id][5])  # y_edge_finetune
+        X_edge_all = np.vstack(X_edge_all)
+        y_edge_all = np.concatenate(y_edge_all)
+        edge_finetune_data.append((X_edge_all, y_edge_all))
 
+    return devices_data, edge_groups, edge_finetune_data
 
+"""
 def dirichlet_partition_for_devices_edges(X, y, num_devices, device_per_edge, n_edges):
-    """Return device_data and hierarchical_data for devices and edges."""
+    \"""Return device_data and hierarchical_data for devices and edges.\"""
     device_data_dict = dirichlet_partition(X, y, num_devices, config["alpha"], config["random_seed"])
     devices_data = []
     hierarchical_data = {}
@@ -1187,14 +1265,14 @@ def compute_multilevel_accuracy(
     calibrate=True,
     device_weight_mode="samples",
 ):
-    """
+    \"""
     Compute hierarchical accuracies (device, edge, global) with optional calibration
     and weighted averaging. Also computes metrics comparing device vs global and
     edge vs global predictions.
 
     Parameters:
         y_global_pred_test: Precomputed global predictions [n_samples_total x num_classes]
-    """
+    \"""
 
     # ---------------------------
     # Suppress runtime warnings locally
@@ -1404,8 +1482,208 @@ def compute_multilevel_accuracy(
         "edge_vs_global": edge_vs_global,
     }
 
+"""
+# You must define these helpers externally or above:
+#   - predict_proba_fixed(model, X, num_classes)
+#   - multi_class_brier(y_true, y_pred_probs)
+#   - top_k_accuracy(y_true, y_pred_probs, k)
 
+def evaluate_multilevel_performance(
+    device_models,
+    edge_models,
+    edge_groups,
+    X_tests, y_tests,
+    le,
+    num_classes,
+    combine_mode="last",
+    device_model_weights=None,
+    edge_model_weights=None,
+    device_val_scores=None,
+    edge_val_scores=None,
+    calibrate=True,
+    device_weight_mode="samples",
+    top_k=3,
+):
+    """
+    Unified evaluation for hierarchical federated models:
+    Computes per-device, per-edge, and global metrics.
 
+    Returns a dictionary compatible with plot_hpfl_all.
+    """
+
+    # ---------------------------
+    # Helper functions
+    # ---------------------------
+    def normalize_weights(weights):
+        w = np.asarray(weights, dtype=float)
+        w[np.isnan(w)] = 0.0
+        s = w.sum()
+        if s <= 0:
+            return np.ones_like(w) / len(w)
+        return w / s
+
+    def calibrate_probs(y_true, probs):
+        y_true = np.atleast_1d(y_true)
+        probs = np.atleast_2d(probs)
+        if probs.shape[0] == 1 and y_true.shape[0] > 1:
+            probs = np.tile(probs, (y_true.shape[0], 1))
+        if probs.shape[1] == 2:
+            ir = IsotonicRegression(out_of_bounds="clip")
+            ir.fit(probs[:, 1], y_true)
+            calibrated_p1 = ir.transform(probs[:, 1])
+            return np.column_stack([1 - calibrated_p1, calibrated_p1])
+        return probs
+
+    # ---------------------------
+    # Suppress warnings
+    # ---------------------------
+    warnings.filterwarnings("ignore", category=UserWarning)
+    np.seterr(divide='ignore', over='ignore', invalid='ignore')
+
+    # ---------------------------
+    # 1️⃣ Device-level metrics
+    # ---------------------------
+    device_preds, device_accs, log_losses, brier_scores, topk_accuracies = [], [], [], [], []
+
+    for idx, models_per_device in enumerate(device_models):
+        if not models_per_device:
+            device_accs.append(0.0)
+            log_losses.append(np.nan)
+            brier_scores.append(np.nan)
+            topk_accuracies.append(np.nan)
+            device_preds.append(np.zeros((X_tests[idx].shape[0], num_classes)))
+            continue
+
+        X_test = np.atleast_2d(X_tests[idx])
+        y_test = np.atleast_1d(y_tests[idx])
+        y_true = le.transform(y_test)
+
+        # Stack predictions
+        preds_list = [predict_proba_fixed(m, X_test, num_classes) for m in models_per_device]
+
+        # Compute weights
+        if combine_mode == "weighted":
+            if device_val_scores and idx < len(device_val_scores):
+                w = np.array(device_val_scores[idx])
+            else:
+                w = np.ones(len(preds_list))
+            w = w / w.sum()
+        else:
+            w = None
+
+        # Combine predictions
+        if combine_mode == "last":
+            y_pred_probs = preds_list[-1]
+        elif combine_mode == "average":
+            y_pred_probs = np.mean(preds_list, axis=0)
+        elif combine_mode == "weighted":
+            y_pred_probs = np.zeros_like(preds_list[0])
+            for pi, wi in zip(preds_list, w):
+                y_pred_probs += wi * pi
+        elif combine_mode == "hard_vote":
+            votes = np.array([np.argmax(p, axis=1) for p in preds_list])
+            y_pred_probs = np.zeros((votes.shape[1], num_classes))
+            for c in range(num_classes):
+                y_pred_probs[:, c] = np.mean(votes == c, axis=0)
+        elif combine_mode == "stacked":
+            X_stack = np.hstack(preds_list)
+            meta = LogisticRegression(max_iter=500)
+            meta.fit(X_stack, y_true)
+            y_pred_probs = meta.predict_proba(X_stack)
+        else:
+            raise ValueError(f"Unknown combine_mode: {combine_mode}")
+
+        # Optional calibration
+        if calibrate:
+            y_pred_probs = calibrate_probs(y_true, y_pred_probs)
+
+        y_pred = np.argmax(y_pred_probs, axis=1)
+        device_preds.append(y_pred_probs)
+        device_accs.append(accuracy_score(y_true, y_pred))
+        try:
+            log_losses.append(log_loss(y_true, y_pred_probs))
+        except ValueError:
+            log_losses.append(np.nan)
+        brier_scores.append(multi_class_brier(y_true, y_pred_probs))
+        topk_accuracies.append(top_k_accuracy(y_true, y_pred_probs, k=top_k))
+
+    # ---------------------------
+    # 2️⃣ Edge-level metrics
+    # ---------------------------
+    edge_preds, edge_accs = [], []
+
+    for edge_idx, edge_devices in enumerate(edge_groups):
+        device_edge_preds = [device_preds[d] for d in edge_devices if d < len(device_preds)]
+        y_edge_true_list = [le.transform(y_tests[d]) for d in edge_devices]
+        y_edge_true = np.hstack(y_edge_true_list)
+        X_edge = np.vstack([X_tests[d] for d in edge_devices])
+
+        if device_weight_mode == "samples":
+            w_devices = [X_tests[d].shape[0] for d in edge_devices]
+        else:
+            w_devices = [1.0] * len(edge_devices)
+        w_devices = normalize_weights(w_devices)
+
+        device_mix_pred = np.zeros_like(device_edge_preds[0])
+        for wi, dp in zip(w_devices, device_edge_preds):
+            device_mix_pred += wi * dp
+
+        edge_models_list = edge_models[edge_idx] if edge_idx < len(edge_models) else []
+        edge_model_preds = []
+        for mdl in edge_models_list:
+            p = predict_proba_fixed(mdl, X_edge, num_classes)
+            if calibrate:
+                p = calibrate_probs(y_edge_true, p)
+            edge_model_preds.append(p)
+
+        if len(edge_model_preds) > 0:
+            edge_pred_accum = np.mean(edge_model_preds, axis=0)
+            pred_accum = 0.5 * (edge_pred_accum + device_mix_pred)
+        else:
+            pred_accum = device_mix_pred
+
+        edge_preds.append(pred_accum)
+        edge_accs.append(accuracy_score(y_edge_true, pred_accum.argmax(axis=1)))
+
+    # ---------------------------
+    # 3️⃣ Global-level metrics
+    # ---------------------------
+    global_pred = np.vstack(device_preds)
+    global_labels = global_pred.argmax(axis=1)
+    y_global_true = np.concatenate([le.transform(y_tests[d]) for d in range(len(X_tests))])
+    global_acc = accuracy_score(y_global_true, global_labels)
+
+    # ---------------------------
+    # 4️⃣ Prepare structured metrics dictionary
+    # ---------------------------
+    metrics_test = {
+        "device_means": [device_accs],   # wrapped as list for per-epoch compatibility
+        "device_stds": [np.std(device_accs)],
+        "edge_means": [edge_accs],
+        "edge_stds": [np.std(edge_accs)],
+        "global_accs": [global_acc],
+        "device_vs_global": [device_accs],  # for plotting vs global
+        "edge_vs_global": [edge_accs],
+        "metrics": {
+            "device": {
+                "acc": device_accs,
+                "logloss": log_losses,
+                "brier": brier_scores,
+                "topk": topk_accuracies,
+                "preds": device_preds,
+            },
+            "edge": {
+                "acc": edge_accs,
+                "preds": edge_preds,
+            },
+            "global": {
+                "acc": global_acc,
+                "pred": global_pred,
+            },
+        },
+    }
+
+    return metrics_test
 
 
 
@@ -1419,16 +1697,15 @@ def compute_multilevel_accuracy(
 #   device, edge, and global (gossip-summary) levels.
 # ============================================================
 
-def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
-                             X_finetune, y_finetune, X_test, y_test, verbose=True):
+def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes, verbose=True):
     """
     HPFL training loop with forward/backward passes and accuracy tracking.
 
     Args:
-        devices_data: list of tuples (X_train, _, y_train, _)
-        edge_groups: list of lists, devices per edge
+        d_data: list of tuples (X_train, _, y_train, _)
+        e_groups: list of lists, devices per edge
         le: LabelEncoder
-        num_classes: int
+        n_classes: int
         X_finetune, y_finetune: optional fine-tuning data
         verbose: bool
 
@@ -1439,13 +1716,40 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         metrics_history: dict with per-epoch means & stds
     """
 
-    residuals_devices = [None] * len(devices_data)
-    device_models = [None] * len(devices_data)
-    residuals_edges = [None] * len(edge_groups)
-    edge_models = [None] * len(edge_groups)
+    # -------------------------
+    # 1️⃣ Device-level splits
+    # -------------------------
+    X_trains, X_tests, y_trains, y_tests = [], [], [], []
+    X_device_finetunes, y_device_finetunes = [], []
 
-    device_embeddings = [None] * len(devices_data)
-    edge_embeddings = [None] * len(edge_groups)
+    for dev_tuple in d_data:
+        (
+            X_train, X_test, y_train, y_test,
+            X_edge_finetune, y_edge_finetune,  # ignored here, already aggregated for edges
+            X_device_finetune, y_device_finetune
+        ) = dev_tuple
+
+        X_trains.append(X_train)
+        X_tests.append(X_test)
+        y_trains.append(y_train)
+        y_tests.append(y_test)
+        X_device_finetunes.append(X_device_finetune)
+        y_device_finetunes.append(y_device_finetune)
+
+    # -------------------------
+    # 2️⃣ Aggregated edge-level finetune data
+    # -------------------------
+    X_edges_finetune, y_edges_finetune = zip(*edge_finetune_data)
+    X_edges_finetune = list(X_edges_finetune)
+    y_edges_finetune = list(y_edges_finetune)
+
+    residuals_devices = [None] * len(d_data)
+    device_models = [None] * len(d_data)
+    residuals_edges = [None] * len(e_groups)
+    edge_models = [None] * len(e_groups)
+
+    device_embeddings = [None] * len(d_data)
+    edge_embeddings = [None] * len(e_groups)
 
     num_epochs = config["epoch"]
     y_true_per_epoch = []
@@ -1475,38 +1779,62 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         # 1. Forward Pass
         # -----------------------------
 
-        """device_models, edge_models, edge_outputs, theta_global, \
+        device_models, edge_models, edge_outputs, theta_global, \
             residuals_devices, residuals_edges, y_global_pred, \
             device_embeddings, edge_embeddings, y_global_true, \
-            y_true_per_edge, global_residuals = """
-        forward_pass(
-                devices_data, edge_groups, le, num_classes,
-                X_finetune, y_finetune,
-                X_test, y_test,
-                residuals_devices=residuals_devices,
-                device_models=device_models
+            y_true_per_edge, global_residuals = forward_pass(
+            d_data, e_groups, le, n_classes,
+            X_edges_finetune,y_edges_finetune,
+            residuals_devices=residuals_devices,
+            device_models=device_models
         )
+
+        """
+        device_accs_last = plot_device_accuracies(device_models, X_tests, y_tests, le, num_classes, combine_mode="last")
+        device_accs_avg = plot_device_accuracies(device_models, X_tests, y_tests, le, num_classes, combine_mode="average")
+        device_accs_vote = plot_device_accuracies(device_models, X_tests, y_tests, le, num_classes,
+                                                  combine_mode="hard_vote")
+        device_accs_weighted = plot_device_accuracies(device_models, X_tests, y_tests, le=le,
+                                                      num_classes=num_classes,
+                                                      combine_mode="weighted", device_val_scores=device_val_scores)
+        """
+
         #y_true_per_epoch.append(y_global_true)
 
         # -----------------------------
         # 2. Compute Multi-Level Accuracy
-        """
+
         # -----------------------------
-        metrics_test = compute_multilevel_accuracy(
+
+        metrics_test = evaluate_multilevel_performance(
             device_models=device_models,
             edge_models=edge_models,
             edge_groups=edge_groups,
-            y_test=y_test,
-            X_test=X_test,
-            y_global_pred_test=y_global_pred,  # from forward pass
+            X_tests=X_tests,
+            y_tests=y_tests,
+            le=le,
             num_classes=num_classes,
+            combine_mode="average",
+            top_k=3,
+        )
+        """
+        metrics_test = compute_multilevel_accuracy(
+            device_models=device_models,
+            edge_models=edge_models,
+            edge_groups=e_groups,
+            y_test=y_tests,
+            X_test=X_tests,
+            y_global_pred_test=y_global_pred,  # from forward pass
+            num_classes=n_classes,
             verbose=True
         )
+        """
         """
 
         # -----------------------------
         # 3. Backward Pass using global residuals
         # -----------------------------
+        """
         """
         edge_models, device_models = backward_pass(
             edge_models=edge_models,
@@ -1520,10 +1848,11 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
             use_classification=True,
             verbose=True
         )  
-        
+        """
 
 
         # Update history for plotting
+        """
         history["device_means"].append(np.mean(metrics_test["device_accs"]))
         history["device_stds"].append(np.std(metrics_test["device_accs"]))
         history["edge_means"].append(np.mean(metrics_test["edge_accs"]))
@@ -1532,17 +1861,10 @@ def hpfl_train_with_accuracy(devices_data, edge_groups, le, num_classes,
         history["device_vs_global"].append(np.mean(metrics_test["device_vs_global"]))
         history["edge_vs_global"].append(np.mean(metrics_test["edge_vs_global"]))
         history["y_true_per_epoch"].append(y_test)  # optional reference
+        """
+    return metrics_test
+        
 
-    return (device_models,
-        edge_models,
-        residuals_devices,
-        residuals_edges,
-        y_global_pred,
-        y_true_per_epoch,
-        device_embeddings,
-        edge_embeddings,
-        history)
-"""
 
 """
 def evaluate_final_accuracy(devices_data, device_models, edge_groups, le, num_classes, gossip_summary=None):
@@ -1614,107 +1936,153 @@ def get_dated_save_dir(base_dir="hdpftl_plot_outputs"):
     os.makedirs(dated_dir, exist_ok=True)
     return dated_dir
 
+
+def multi_class_brier(y_true, y_prob):
+    """
+    Compute multi-class Brier score.
+    """
+    n_classes = y_prob.shape[1]
+    y_one_hot = np.zeros_like(y_prob)
+    y_one_hot[np.arange(len(y_true)), y_true] = 1
+    return np.mean(np.sum((y_prob - y_one_hot) ** 2, axis=1))
+
+
+def top_k_accuracy(y_true, y_prob, k=3):
+    """
+    Compute top-k accuracy for multi-class predictions.
+    """
+    topk = np.argsort(y_prob, axis=1)[:, -k:]
+    correct = np.any(topk == y_true[:, None], axis=1)
+    return np.mean(correct)
+
 def plot_device_accuracies(
-    d_models, X_tests, y_tests, le, num_classes,
-    combine_mode="last", model_weights=None
+        d_models,
+        X_tests, y_tests,
+        le,
+        num_classes,
+        combine_mode="last",
+        device_val_scores=None,
+        top_k=3
 ):
     """
-    Compute and plot accuracy per device using different combination strategies.
-
-    Args:
-        d_models: list of list of LightGBM models per device.
-        X_tests: list of np.ndarray test data per device.
-        y_tests: list of np.ndarray true test labels per device.
-        le: fitted LabelEncoder.
-        num_classes: int, number of classes.
-        combine_mode: str, one of ["last", "average", "weighted", "hard_vote", "stacked"].
-        model_weights: list of list, weights per model per device (only for "weighted").
+    Compute and plot Accuracy, Log Loss, Brier Score, and Top-K Accuracy per device.
     """
-    accuracies = []
+    accuracies, log_losses, brier_scores, topk_accuracies = [], [], [], []
 
-    print("\n================ Device Test Accuracies ================\n")
+    print("\n================ Device Metrics ================\n")
+
     for idx, models_per_device in enumerate(d_models):
+
         if not models_per_device:
             print(f"Device {idx}: ❌ No trained models found.")
             accuracies.append(0.0)
+            log_losses.append(np.nan)
+            brier_scores.append(np.nan)
+            topk_accuracies.append(np.nan)
             continue
 
-        X_test = X_tests[idx]
+        X_test = np.atleast_2d(X_tests[idx])
         y_test = np.atleast_1d(y_tests[idx])
         y_true = le.transform(y_test)
 
-        # Stack predictions from all models
+        # Stack predictions
         preds_list = [predict_proba_fixed(m, X_test, num_classes) for m in models_per_device]
 
-        if combine_mode == "last":
-            y_pred = np.argmax(preds_list[-1], axis=1)
-
-        elif combine_mode == "average":
-            avg_pred = np.mean(preds_list, axis=0)
-            y_pred = np.argmax(avg_pred, axis=1)
-
-        elif combine_mode == "weighted":
-            if model_weights and idx < len(model_weights):
-                w = np.array(model_weights[idx])
+        # Compute weights for "weighted" mode
+        if combine_mode == "weighted":
+            if device_val_scores and idx < len(device_val_scores):
+                w = np.array(device_val_scores[idx])
             else:
-                w = np.ones(len(preds_list)) / len(preds_list)
+                w = np.ones(len(preds_list))
             w = w / w.sum()
-            weighted_pred = np.zeros_like(preds_list[0])
-            for pi, wi in zip(preds_list, w):
-                weighted_pred += wi * pi
-            y_pred = np.argmax(weighted_pred, axis=1)
+        else:
+            w = None
 
+        # Combine predictions
+        if combine_mode == "last":
+            y_pred_probs = preds_list[-1]
+            y_pred = np.argmax(y_pred_probs, axis=1)
+        elif combine_mode == "average":
+            y_pred_probs = np.mean(preds_list, axis=0)
+            y_pred = np.argmax(y_pred_probs, axis=1)
+        elif combine_mode == "weighted":
+            y_pred_probs = np.zeros_like(preds_list[0])
+            for pi, wi in zip(preds_list, w):
+                y_pred_probs += wi * pi
+            y_pred = np.argmax(y_pred_probs, axis=1)
         elif combine_mode == "hard_vote":
             votes = np.array([np.argmax(p, axis=1) for p in preds_list])
             y_pred = np.array([np.bincount(votes[:, i], minlength=num_classes).argmax()
                                for i in range(votes.shape[1])])
-
+            y_pred_probs = np.zeros((votes.shape[1], num_classes))
+            for c in range(num_classes):
+                y_pred_probs[:, c] = np.mean(votes == c, axis=0)
         elif combine_mode == "stacked":
-            # Train simple LR on stacked probs
             X_stack = np.hstack(preds_list)
             meta = LogisticRegression(max_iter=500)
             meta.fit(X_stack, y_true)
             y_pred = meta.predict(X_stack)
-
+            y_pred_probs = meta.predict_proba(X_stack)
         else:
             raise ValueError(f"Unknown combine_mode: {combine_mode}")
 
+        # Compute metrics
         acc = accuracy_score(y_true, y_pred)
-        accuracies.append(acc)
-        print(f"✅ Device {idx}: Accuracy = {acc:.4f} ({combine_mode})")
+        try:
+            ll = log_loss(y_true, y_pred_probs)
+        except ValueError:
+            ll = np.nan
+        brier = multi_class_brier(y_true, y_pred_probs)
+        topk = top_k_accuracy(y_true, y_pred_probs, k=top_k)
 
-    # Plot per-device accuracies
-    plt.figure(figsize=(8, 5))
-    plt.bar(range(len(accuracies)), accuracies, color='skyblue')
-    plt.xlabel("Device Index")
-    plt.ylabel("Accuracy")
-    plt.title(f"Per-Device Test Accuracy ({combine_mode})")
-    plt.ylim(0, 1)
-    plt.grid(axis='y', linestyle='--', alpha=0.6)
+        accuracies.append(acc)
+        log_losses.append(ll)
+        brier_scores.append(brier)
+        topk_accuracies.append(topk)
+
+        print(f"✅ Device {idx}: Accuracy={acc:.4f}, LogLoss={ll:.4f}, "
+              f"Brier={brier:.4f}, Top-{top_k} Acc={topk:.4f} ({combine_mode})")
+
+    # Plot all metrics
+    fig, ax1 = plt.subplots(figsize=(12, 5))
+    ax1.bar(range(len(accuracies)), accuracies, color='skyblue', label='Accuracy')
+    ax1.set_xlabel("Device Index")
+    ax1.set_ylabel("Accuracy")
+    ax1.set_ylim(0, 1)
+    ax1.grid(axis='y', linestyle='--', alpha=0.6)
+
     mean_acc = np.mean(accuracies)
-    plt.axhline(mean_acc, color='red', linestyle='--', label=f"Mean = {mean_acc:.3f}")
-    plt.legend()
+    ax1.axhline(mean_acc, color='red', linestyle='--', label=f"Mean Accuracy = {mean_acc:.3f}")
+
+    ax2 = ax1.twinx()
+    safe_log_losses = [x for x in log_losses if np.isfinite(x)]
+    safe_brier_scores = [x for x in brier_scores if np.isfinite(x)]
+    ax2.plot(range(len(log_losses)), log_losses, color='orange', marker='o', label='Log Loss')
+    ax2.plot(range(len(brier_scores)), brier_scores, color='green', marker='s', label='Brier Score')
+    ax2.plot(range(len(topk_accuracies)), topk_accuracies, color='purple', marker='^', label=f'Top-{top_k} Acc')
+    max_log = max(safe_log_losses) if safe_log_losses else 0
+    max_brier = max(safe_brier_scores) if safe_brier_scores else 0
+    ax2.set_ylim(0, max(max_log, max_brier, 1.0))
+    ax2.set_ylabel("Other Metrics")
+
+    fig.legend(loc="upper right", bbox_to_anchor=(1, 1), bbox_transform=ax1.transAxes)
+    plt.title(f"Per-Device Metrics ({combine_mode})")
     plt.show()
 
-    print(f"\nOverall Mean Device Accuracy: {mean_acc:.4f}\n")
-    return accuracies
+    print(f"\nOverall Mean Accuracy: {mean_acc:.4f}")
+    print(f"Overall Mean Log Loss: {np.nanmean(log_losses):.4f}")
+    print(f"Overall Mean Brier Score: {np.nanmean(brier_scores):.4f}")
+    print(f"Overall Mean Top-{top_k} Accuracy: {np.nanmean(topk_accuracies):.4f}\n")
 
+    return accuracies, log_losses, brier_scores, topk_accuracies
 
-def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
+def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     """
-    Generate all Hierarchical PFL plots with layer-wise contributions and comparisons
-    against global accuracy.
+    Generate Hierarchical PFL plots from structured metrics dictionary.
 
     Args:
-        history (dict): Output from compute_multilevel_accuracy for each epoch, e.g.:
-            history[epoch_idx] = {
-                'device_accs': [...],
-                'edge_accs': [...],
-                'global_acc': ...,
-                'device_vs_global': [...],
-                'edge_vs_global': [...]
-            }
-        save_root_dir (str): Base directory to save plots
+        metrics_test (dict): Output from `evaluate_multilevel_performance`.
+        save_root_dir (str): Base directory to save plots.
     """
 
     # -----------------------------
@@ -1724,27 +2092,31 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
     save_dir = os.path.join(save_root_dir, f"{today_str}")
     os.makedirs(save_dir, exist_ok=True)
 
-    num_epochs = config["epoch"]
+    # -----------------------------
+    # Extract per-epoch values
+    # -----------------------------
+    device_means = metrics_test["device_means"]
+    device_stds = metrics_test["device_stds"]
+    edge_means = metrics_test["edge_means"]
+    edge_stds = metrics_test["edge_stds"]
+    global_accs = metrics_test["global_accs"]
+    device_vs_global = metrics_test["device_vs_global"]
+    edge_vs_global = metrics_test["edge_vs_global"]
+
+    num_epochs = len(global_accs)
     layers = ["Device", "Edge", "Global"]
-    colors = ['skyblue', 'orange', 'green']
+    colors = ["skyblue", "orange", "green"]
 
     # -----------------------------
-    # 1. Per-epoch stacked bar charts & comparisons
+    # 1. Per-epoch stacked contributions & comparisons
     # -----------------------------
     for epoch_idx in range(num_epochs):
-
-        device_accs = history["device_means"][epoch_idx]
-        device_stds = history["device_stds"][epoch_idx]
-        edge_accs = history["edge_means"][epoch_idx]
-        edge_stds = history["edge_stds"][epoch_idx]
-        global_acc = history["global_accs"][epoch_idx]
-        device_vs_global = history["device_vs_global"][epoch_idx]
-        edge_vs_global = history["edge_vs_global"][epoch_idx]
-
-        # -----------------------------
-        # Stacked contribution vs global
-        # -----------------------------
-        contributions = [np.mean(device_accs), np.mean(edge_accs) - np.mean(device_accs), global_acc - np.mean(edge_accs)]
+        # Contribution bars
+        contributions = [
+            np.mean(device_means[epoch_idx]),
+            np.mean(edge_means[epoch_idx]) - np.mean(device_means[epoch_idx]),
+            global_accs[epoch_idx] - np.mean(edge_means[epoch_idx]),
+        ]
         contributions = np.clip(contributions, 0, None)
 
         plt.figure(figsize=(6, 4))
@@ -1753,23 +2125,21 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
         plt.ylabel("Contribution to Final Accuracy")
         plt.title(f"Epoch {epoch_idx+1} Layer Contributions")
         for bar, val in zip(bars, contributions):
-            plt.text(bar.get_x() + bar.get_width()/2, float(val) + 0.02, f"{float(val):.3f}", ha='center', va='bottom')
-        plt.grid(axis='y', linestyle='--', alpha=0.6)
+            plt.text(bar.get_x() + bar.get_width() / 2, float(val) + 0.02, f"{float(val):.3f}", ha="center", va="bottom")
+        plt.grid(axis="y", linestyle="--", alpha=0.6)
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch_idx+1}.png"))
         plt.close()
 
-        # -----------------------------
-        # Device vs Global and Edge vs Global plots
-        # -----------------------------
+        # Device vs Global & Edge vs Global
         plt.figure(figsize=(6, 4))
-        plt.bar([f"Device vs Global", f"Edge vs Global"],
-                [np.mean(device_vs_global), np.mean(edge_vs_global)],
-                color=['skyblue', 'orange'])
+        plt.bar(["Device vs Global", "Edge vs Global"],
+                [np.mean(device_vs_global[epoch_idx]), np.mean(edge_vs_global[epoch_idx])],
+                color=["skyblue", "orange"])
         plt.ylim(0, 1)
         plt.ylabel("Accuracy compared to Global")
         plt.title(f"Epoch {epoch_idx+1} Layer vs Global Accuracy")
-        plt.grid(axis='y', linestyle='--', alpha=0.6)
+        plt.grid(axis="y", linestyle="--", alpha=0.6)
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, f"epoch_vs_global_{epoch_idx+1}.png"))
         plt.close()
@@ -1777,17 +2147,14 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
     # -----------------------------
     # 2. Accuracy trends across epochs
     # -----------------------------
-    mean_device_accs = [np.mean(history['device_means'][e]) for e in range(num_epochs)]
-    mean_edge_accs = [np.mean(history['edge_means'][e]) for e in range(num_epochs)]
-    global_accs = [history['global_accs'][e]for e in range(num_epochs)]
-    mean_device_vs_global = [np.mean(history['device_vs_global'][e]) for e in range(num_epochs)]
-    mean_edge_vs_global = [np.mean(history['edge_vs_global'][e]) for e in range(num_epochs)]
+    mean_device_accs = [np.mean(d) for d in device_means]
+    mean_edge_accs = [np.mean(e) for e in edge_means]
 
     # Layer Accuracy Trends
     plt.figure(figsize=(10, 6))
-    plt.plot(mean_device_accs, label="Device Accuracy", marker='o', color='skyblue')
-    plt.plot(mean_edge_accs, label="Edge Accuracy", marker='s', color='orange')
-    plt.plot(global_accs, label="Global Accuracy", marker='^', color='green')
+    plt.plot(mean_device_accs, label="Device Accuracy", marker="o", color="skyblue")
+    plt.plot(mean_edge_accs, label="Edge Accuracy", marker="s", color="orange")
+    plt.plot(global_accs, label="Global Accuracy", marker="^", color="green")
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
     plt.title("Hierarchical PFL Accuracy Trends")
@@ -1801,9 +2168,12 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
     plt.close()
 
     # Device/Edge vs Global Trends
+    mean_device_vs_global = [np.mean(d) for d in device_vs_global]
+    mean_edge_vs_global = [np.mean(e) for e in edge_vs_global]
+
     plt.figure(figsize=(10, 6))
-    plt.plot(mean_device_vs_global, label="Device vs Global", marker='o', color='skyblue')
-    plt.plot(mean_edge_vs_global, label="Edge vs Global", marker='s', color='orange')
+    plt.plot(mean_device_vs_global, label="Device vs Global", marker="o", color="skyblue")
+    plt.plot(mean_edge_vs_global, label="Edge vs Global", marker="s", color="orange")
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy compared to Global")
     plt.title("Device/Edge Accuracy vs Global Across Epochs")
@@ -1824,45 +2194,36 @@ def plot_hpfl_all(history, save_root_dir="hdpftl_plot_outputs"):
 # ============================================================
 
 if __name__ == "__main__":
-    folder_path = "CIC_IoT_DIAD_2024"
+    folder_path = "CIC_IoT_IDAD_Dataset_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
 
     # 1. Preprocess
-    X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test = preprocess_data_safe(
+    """, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test"""
+    X_final, y_final = preprocess_data_safe(
         log_path_str, folder_path, scaler_type='minmax'
     )
 
-    # 2. Encode labels
-    le = LabelEncoder()
-    le.fit(y_pretrain)
-    num_classes = len(np.unique(y_pretrain))
 
     # 3. Partition fine-tune data for devices & edges (non-IID)
-    devices_data, edge_groups = dirichlet_partition_for_devices_edges_non_iid(
-        X_pretrain, y_pretrain,
+    devices_data, edge_groups, edge_finetune_data = dirichlet_partition_for_devices_edges_non_iid(
+        X_final, y_final,
         num_devices=config["n_device"],
         n_edges=config["n_edges"],
         alpha=config["alpha"],
         seed=config["random_seed"]
     )
-    """
-    # 4. Train HPFL model with accuracy tracking
-    device_models, edge_models, residuals_devices, residuals_edges, \
-        y_global_pred, y_true_per_epoch, device_embeddings, edge_embeddings, \
-        history = """
-    hpfl_train_with_accuracy(
-        devices_data=devices_data,
-        edge_groups=edge_groups,
-        le=le,
-        num_classes=num_classes,
-        X_finetune=X_finetune,
-        y_finetune=y_finetune,
-        X_test = X_test,
-        y_test = y_test,
-        verbose=True
-    )
 
-    #plot_hpfl_all(history)
+    # 2. Encode labels
+    le = LabelEncoder()
+    y_all = np.concatenate([y for _, _, y, _, _, _, _, _ in devices_data])
+    le.fit(y_all)
+    num_classes = len(np.unique(y_final))
+
+    # 4. Train HPFL model with accuracy tracking
+
+    metrics_test = hpfl_train_with_accuracy(d_data=devices_data, e_groups=edge_groups, edge_finetune_data = edge_finetune_data,
+                                           le=le, n_classes=num_classes, verbose=True)
+    plot_hpfl_all(metrics_test)
 

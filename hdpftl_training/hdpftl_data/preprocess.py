@@ -931,10 +931,12 @@ def preprocess_data_safe(log_path_str, selected_folder, writer=None, scaler_type
     #    gc.collect()
 
     # --- Check minimum samples per class ---
+    """
     counts = Counter(y_final)
     for cls, cnt in counts.items():
         if cnt < min_samples_per_class:
             raise ValueError(f"Class '{cls}' has too few samples ({cnt}).")
+
 
     # --- Stratified split: test 10% ---
     sss_test = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
@@ -977,8 +979,8 @@ def preprocess_data_safe(log_path_str, selected_folder, writer=None, scaler_type
         missing = expected_classes - present_classes
         if missing:
             raise ValueError(f"{name} lost some classes! Missing: {missing}")
-
-    return X_final, y_final, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test
+    """
+    return X_final, y_final
 
 
 def fast_safe_smote_class_safe(X, y, k_neighbors=5):
