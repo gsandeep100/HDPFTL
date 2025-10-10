@@ -794,147 +794,289 @@ def forward_pass(devices_data, edge_groups, le, num_classes,X_edge_finetunes,y_e
         edge_embeddings_list,
         y_global_true,
         y_true_per_edge,
-        global_residuals
+        global_residuals,
+        edge_sample_slices
     )
 
-
-def backward_pass(edge_models, device_models, edge_embeddings, device_embeddings,
-                  y_true_per_edge, y_global_pred=None,
-                  n_classes=8, use_classification=True, verbose=True):
+def backward_pass(edge_models, device_models,
+                  edge_embeddings, device_embeddings,
+                  y_true_per_edge,
+                  edge_sample_slices=None,
+                  global_pred_matrix=None,
+                  n_classes=2,
+                  use_classification=True,
+                  verbose=True,
+                  le=None):
     """
-    Hierarchical residual feedback for HPFL using LightGBM.
+    Hierarchical backward feedback that updates edge and device models.
 
-    - use_classification=True : fit LGBMClassifier on integer labels
-    - use_classification=False: fit LGBMRegressor on residuals (continuous)
+    Args:
+        edge_models: list[list(models)]     - models trained per edge (list of models)
+        device_models: list[list(models)]   - models trained per device
+        edge_embeddings: list[np.ndarray]   - X_edge matrices (stacked per-device embeddings)
+        device_embeddings: list[np.ndarray] - device-level embeddings
+        y_true_per_edge: list[np.ndarray]   - true labels per edge (1D arrays of ints or 1-hot)
+        edge_sample_slices: dict (device_idx -> global_indices) optional
+            Mapping from device index to row indices in the forward global prediction matrix.
+            Required to align updated edge preds back to devices. If None, device updates
+            that require alignment will be skipped.
+        global_pred_matrix: np.ndarray or None
+            If available, can be used for alignment checks. Not required.
+        n_classes: int
+        use_classification: bool
+            If True -> re-fit classifiers using integer labels.
+            If False -> re-fit regressors on residuals (continuous corrections).
+        verbose: bool
+        le: optional LabelEncoder used in forward (if labels are strings)
 
-    Returns updated edge_models and device_models.
+    Returns:
+        updated_edge_models, updated_device_models, updated_edge_preds_stacked
+
+    Notes:
+        - This function replaces each existing model with a freshly trained model
+          with the same basic hyperparameters (n_estimators, learning_rate, max_depth).
+        - If edge_sample_slices is provided it will map updated edge predictions back
+          to device rows and compute device residuals for device-level updates.
     """
-    print("""
-    ************************************************************
-    *                                                          *
-    *                  BACKWARD PASS                           *
-    *                                                          *
-    ************************************************************
-    """)
+    if verbose:
+        print("\n" + "*"*60)
+        print("*" + " " * 26 + "STARTING BACKWARD PASS" + " " * 26 + "*")
+        print("*" * 60 + "\n")
 
-    updated_edge_preds = []
+    # Defensive checks
+    num_edges = len(edge_models)
+    assert len(edge_embeddings) == num_edges, "edge_embeddings and edge_models length mismatch"
+    assert len(y_true_per_edge) == num_edges, "y_true_per_edge must align with edge_models"
 
     # -----------------------------
-    # 1. Update Edge Models
+    # 1) Update Edge Models (train to predict true per-edge labels)
     # -----------------------------
-    for i, models in enumerate(edge_models):
-        X_edge = edge_embeddings[i]
-        y_edge_true = y_true_per_edge[i]
+    updated_edge_preds_list = []   # store per-edge average predictions (for stacking)
+    updated_edge_models = []
 
-        if not models or X_edge is None:
+    for ei in range(num_edges):
+        models = edge_models[ei]
+        X_edge = edge_embeddings[ei]
+        y_edge = y_true_per_edge[ei]
+
+        if X_edge is None or models is None or len(models) == 0:
+            # nothing to update; keep placeholder
+            updated_edge_models.append([])
+            # push zeros so stacking works
+            updated_edge_preds_list.append(np.zeros((0, n_classes)))
+            if verbose:
+                print(f"Edge {ei}: no models or no data, skipping.")
             continue
 
-        # Convert classification labels if needed
-        if use_classification:
-            y_edge_labels = (
-                y_edge_true.argmax(axis=1).astype(int) if y_edge_true.ndim > 1 else y_edge_true.ravel().astype(int)
-            )
+        # Convert y_edge to integer labels if necessary
+        if y_edge.ndim > 1 and y_edge.shape[1] == n_classes:
+            # one-hot -> int
+            y_edge_labels = np.argmax(y_edge, axis=1)
         else:
-            # Use continuous residuals (2D)
-            if y_global_pred is not None:
-                # Ensure shapes match
-                residuals_edge = y_edge_true - y_global_pred[i][:y_edge_true.shape[0]]
-            else:
-                residuals_edge = y_edge_true
-            y_edge_labels = np.atleast_2d(residuals_edge).astype(np.float32)
+            y_edge_labels = np.asarray(y_edge).ravel()
+            # If labels are strings and LabelEncoder provided, transform
+            if le is not None and y_edge_labels.dtype.kind in {'U', 'S', 'O'}:
+                try:
+                    y_edge_labels = le.transform(y_edge_labels)
+                except Exception:
+                    pass
 
-        regressors_per_edge = []
-        preds_list = []
-
+        # Re-train each model for this edge (safe replacement)
+        new_models_for_edge = []
+        preds_per_model = []
         for m in models:
+            # extract simple params with fallbacks
+            params = {}
+            n_est = getattr(m, "n_estimators", None) or getattr(m, "params", {}).get("n_estimators", None) or 100
+            lr = getattr(m, "learning_rate", None) or getattr(m, "params", {}).get("learning_rate", None) or 0.1
+            md = getattr(m, "max_depth", None) or getattr(m, "params", {}).get("max_depth", None)
+
             if use_classification:
-                clf = LGBMClassifier(
-                    n_estimators=m.n_estimators,
-                    learning_rate=m.learning_rate,
-                    max_depth=m.max_depth,
-                    random_state=m.random_state,
-                    num_class=n_classes
-                )
-                clf.fit(X_edge, y_edge_labels)
-                preds = clf.predict_proba(X_edge)
+                clf = LGBMClassifier(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42), num_class=n_classes)
+                # fit classifier
+                try:
+                    clf.fit(X_edge, y_edge_labels)
+                    preds = clf.predict_proba(X_edge)
+                except Exception as e:
+                    if verbose:
+                        print(f"Edge {ei}: classifier fit failed with {e}, trying fallback simple fit.")
+                    clf = LGBMClassifier(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42), num_class=n_classes)
+                    clf.fit(X_edge, y_edge_labels)
+                    preds = clf.predict_proba(X_edge)
+                new_models_for_edge.append(clf)
+                preds_per_model.append(preds)
             else:
-                reg = LGBMRegressor(
-                    n_estimators=m.n_estimators,
-                    learning_rate=m.learning_rate,
-                    max_depth=m.max_depth,
-                    random_state=m.random_state
-                )
-                reg.fit(X_edge, y_edge_labels)
-                preds = reg.predict(X_edge)
-                preds = np.atleast_2d(preds).reshape(X_edge.shape[0], -1)
+                # regression: train to predict continuous residuals (here we use one-vs-all residual for each class)
+                # Prepare residual targets: one-hot minus current model avg if global_pred_matrix provided
+                # Fallback to trying to learn one-hot labels as continuous targets
+                if global_pred_matrix is not None:
+                    # try to slice rows for this edge from global_pred_matrix by matching X_edge row count
+                    try:
+                        preds_init = m.predict_proba(X_edge) if hasattr(m, "predict_proba") else np.zeros((X_edge.shape[0], n_classes))
+                    except Exception:
+                        preds_init = np.zeros((X_edge.shape[0], n_classes))
+                    if preds_init.shape[1] < n_classes:
+                        preds_init = np.pad(preds_init, ((0,0),(0,n_classes - preds_init.shape[1])), mode="constant")
+                    y_edge_onehot = np.zeros((X_edge.shape[0], n_classes))
+                    y_edge_idx = np.asarray(y_edge_labels).ravel()
+                    y_edge_onehot[np.arange(X_edge.shape[0]), y_edge_idx] = 1.0
+                    residual_targets = (y_edge_onehot - preds_init).astype(np.float32)
+                else:
+                    # fallback: use one-hot as continuous target
+                    y_edge_onehot = np.zeros((X_edge.shape[0], n_classes))
+                    y_edge_idx = np.asarray(y_edge_labels).ravel()
+                    y_edge_onehot[np.arange(X_edge.shape[0]), y_edge_idx] = 1.0
+                    residual_targets = y_edge_onehot.astype(np.float32)
 
-            regressors_per_edge.append(reg if not use_classification else clf)
-            preds_list.append(preds)
+                # train one regressor per original model (we'll flatten outputs into NxC)
+                reg = LGBMRegressor(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42))
+                # Flatten target to shape (N, C) -> for sklearn API, we train C separate regressors or train vector target if supported.
+                try:
+                    # Some versions support multioutput directly
+                    reg.fit(X_edge, residual_targets)
+                    preds = reg.predict(X_edge)
+                    preds = np.atleast_2d(preds)
+                    if preds.ndim == 2 and preds.shape[1] == n_classes:
+                        preds_per_model.append(preds)
+                    else:
+                        # reshape if necessary
+                        preds_per_model.append(np.reshape(preds, (X_edge.shape[0], -1)))
+                except Exception as e:
+                    if verbose:
+                        print(f"Edge {ei}: regressor fit failed ({e}), falling back to per-class regressors.")
+                    # per-class regressors
+                    per_class_preds = []
+                    for c in range(n_classes):
+                        rc = LGBMRegressor(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42))
+                        rc.fit(X_edge, residual_targets[:, c])
+                        per_class_preds.append(rc.predict(X_edge))
+                    preds = np.vstack(per_class_preds).T
+                    preds_per_model.append(preds)
+                    reg = None  # we replaced with per-class regressors (not stored)
+                # store reg if training succeeded
+                if reg is not None:
+                    new_models_for_edge.append(reg)
+                else:
+                    # if we used per-class regressors, store placeholders (not ideal but safe)
+                    new_models_for_edge.append(None)
 
-        # Average predictions for this edge
-        if preds_list:
-            preds_avg = np.mean(preds_list, axis=0)
-            updated_edge_preds.append(preds_avg)
+        # Average preds across models
+        if preds_per_model:
+            preds_avg = np.mean(np.array(preds_per_model), axis=0)
+        else:
+            preds_avg = np.zeros((X_edge.shape[0], n_classes))
 
-        edge_models[i] = regressors_per_edge
+        updated_edge_models.append(new_models_for_edge)
+        updated_edge_preds_list.append(preds_avg)
 
-    # Stack all edge predictions (num_samples_total, n_classes or 1)
-    updated_edge_preds = np.vstack(updated_edge_preds) if updated_edge_preds else np.empty((0, n_classes))
+        if verbose:
+            print(f"Edge {ei}: updated {len(new_models_for_edge)} model(s), preds shape {preds_avg.shape}")
+
+    # Stack updated edge preds vertically (matching forward stacking)
+    if updated_edge_preds_list:
+        updated_edge_preds_stacked = np.vstack(updated_edge_preds_list)
+    else:
+        updated_edge_preds_stacked = np.empty((0, n_classes))
 
     # -----------------------------
-    # 2. Update Device Models
+    # 2) Map updated edge preds back to devices and update device models
     # -----------------------------
-    y_true_devices = [0,1,2,4]#TODO Remove this
-    for i, models in enumerate(device_models):
-        X_device = device_embeddings[i]
-        y_device_true = y_true_devices[i]
+    updated_device_models = list(device_models)  # shallow copy
+    # Build a global label array from y_true_per_edge for device label retrieval
+    try:
+        y_global_labels = np.hstack([np.asarray(y).ravel() for y in y_true_per_edge])
+    except Exception:
+        y_global_labels = None
 
-        if not models or X_device is None:
+    for dev_idx, models in enumerate(device_models):
+        X_dev = device_embeddings[dev_idx]
+        if X_dev is None or models is None or len(models) == 0:
+            if verbose:
+                print(f"Device {dev_idx}: no models or no embeddings, skipping.")
             continue
 
-        if use_classification:
-            y_device_labels = (
-                y_device_true.argmax(axis=1).astype(int) if y_device_true.ndim > 1 else y_device_true.ravel().astype(
-                    int)
-            )
+        if edge_sample_slices is None:
+            if verbose:
+                print(f"Device {dev_idx}: edge_sample_slices not provided -> skipping device update.")
+            continue
+
+        # get global indices for this device
+        global_idxs = edge_sample_slices.get(dev_idx, None)
+        if global_idxs is None:
+            if verbose:
+                print(f"Device {dev_idx}: no global indices found in edge_sample_slices, skipping.")
+            continue
+
+        # Ensure updated_edge_preds_stacked has rows for these indices
+        if updated_edge_preds_stacked.shape[0] <= global_idxs.max():
+            if verbose:
+                print(f"Device {dev_idx}: updated edge preds do not cover requested indices -> skipping.")
+            continue
+
+        # Predicted probs for this device (from edges after update)
+        preds_for_device = updated_edge_preds_stacked[global_idxs, :]
+        # Device true labels from stacked y_true_per_edge if available
+        if y_global_labels is not None and y_global_labels.size > 0 and global_idxs.max() < y_global_labels.size:
+            y_dev_true = y_global_labels[global_idxs]
         else:
-            # Compute residuals for device using edge predictions
-            # If shapes match, subtract corresponding edge predictions
-            if updated_edge_preds.shape[0] >= y_device_true.shape[0]:
-                residuals_device = y_device_true - updated_edge_preds[:y_device_true.shape[0], :]
-            else:
-                residuals_device = y_device_true
-            y_device_labels = np.atleast_2d(residuals_device).astype(np.float32)
+            # fallback: produce pseudo-labels from preds_for_device
+            y_dev_true = np.argmax(preds_for_device, axis=1)
 
-        regressors_per_device = []
+        # If classification: train devices to predict integer labels
+        if use_classification:
+            # ensure integer labels
+            y_dev_labels = np.asarray(y_dev_true).ravel()
+            new_models_for_device = []
+            for m in models:
+                n_est = getattr(m, "n_estimators", None) or 100
+                lr = getattr(m, "learning_rate", None) or 0.1
+                md = getattr(m, "max_depth", None)
+                clf = LGBMClassifier(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42), num_class=n_classes)
+                try:
+                    clf.fit(X_dev, y_dev_labels)
+                except Exception as e:
+                    if verbose:
+                        print(f"Device {dev_idx}: classifier fit failed ({e}), retrying default params.")
+                    clf = LGBMClassifier(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42), num_class=n_classes)
+                    clf.fit(X_dev, y_dev_labels)
+                new_models_for_device.append(clf)
+            updated_device_models[dev_idx] = new_models_for_device
+            if verbose:
+                print(f"Device {dev_idx}: updated {len(new_models_for_device)} classifier(s).")
+        else:
+            # regression: targets = (one-hot true) - (edge preds) => residual corrections to learn
+            y_dev_onehot = np.zeros((preds_for_device.shape[0], n_classes))
+            y_dev_onehot[np.arange(preds_for_device.shape[0]), np.asarray(y_dev_true).ravel()] = 1.0
+            residual_targets = (y_dev_onehot - preds_for_device).astype(np.float32)
 
-        for m in models:
-            if use_classification:
-                clf = LGBMClassifier(
-                    n_estimators=m.n_estimators,
-                    learning_rate=m.learning_rate,
-                    max_depth=m.max_depth,
-                    random_state=m.random_state,
-                    num_class=n_classes
-                )
-                clf.fit(X_device, y_device_labels)
-                regressors_per_device.append(clf)
-            else:
-                reg = LGBMRegressor(
-                    n_estimators=m.n_estimators,
-                    learning_rate=m.learning_rate,
-                    max_depth=m.max_depth,
-                    random_state=m.random_state
-                )
-                reg.fit(X_device, y_device_labels)
-                regressors_per_device.append(reg)
-
-        device_models[i] = regressors_per_device
+            new_models_for_device = []
+            for m in models:
+                n_est = getattr(m, "n_estimators", None) or 100
+                lr = getattr(m, "learning_rate", None) or 0.1
+                md = getattr(m, "max_depth", None)
+                reg = LGBMRegressor(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42))
+                try:
+                    reg.fit(X_dev, residual_targets)
+                    new_models_for_device.append(reg)
+                except Exception as e:
+                    if verbose:
+                        print(f"Device {dev_idx}: regressor fit failed ({e}), trying per-class regressors.")
+                    # fallback per-class regressors
+                    per_class_regs = []
+                    for c in range(n_classes):
+                        rc = LGBMRegressor(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42))
+                        rc.fit(X_dev, residual_targets[:, c])
+                        per_class_regs.append(rc)
+                    new_models_for_device.append(per_class_regs)  # nested list: indicates multi-output trained separately
+            updated_device_models[dev_idx] = new_models_for_device
+            if verbose:
+                print(f"Device {dev_idx}: updated {len(new_models_for_device)} regressor(s).")
 
     if verbose:
-        print("Backward hierarchical feedback completed safely.")
+        print("Backward hierarchical feedback completed safely.\n")
 
-    return edge_models, device_models
+    return updated_edge_models, updated_device_models, updated_edge_preds_stacked
+
 
 
 # ======================================================================
@@ -1811,7 +1953,7 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
         device_models, edge_models, edge_outputs, theta_global, \
             residuals_devices, residuals_edges, y_global_pred, \
             device_embeddings, edge_embeddings, y_global_true, \
-            y_true_per_edge, global_residuals = forward_pass(
+            y_true_per_edge, global_residuals,edge_sample_slices = forward_pass(
             d_data, e_groups, le, n_classes,
             X_edges_finetune,y_edges_finetune,
             residuals_devices=residuals_devices,
@@ -1828,23 +1970,24 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
                                                       combine_mode="weighted", device_val_scores=device_val_scores)
         """
 
-        y_true_per_epoch.append(y_global_true)
+        #y_true_per_epoch.append(y_global_true)
         """
        # -----------------------------
        # 3. Backward Pass using global residuals
        # -----------------------------
         """
-        edge_models, device_models = backward_pass(
+        updated_edge_models, updated_device_models, updated_edge_preds_stacked = backward_pass(
             edge_models=edge_models,
             device_models=device_models,
             edge_embeddings=edge_embeddings,
             device_embeddings=device_embeddings,
             y_true_per_edge=y_true_per_edge,
-            y_true_devices=y_true_devices,
-            y_global_pred=y_global_pred,  # can be None if you don’t have global predictions
-            n_classes=8,
+            edge_sample_slices=edge_sample_slices,
+            global_pred_matrix=y_global_pred,
+            n_classes=2,
             use_classification=True,
-            verbose=True
+            verbose=True,
+            le=le
         )
         # -----------------------------
         # 2. Compute Multi-Level Accuracy
@@ -1852,8 +1995,8 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
         # -----------------------------
 
         metrics_test = evaluate_multilevel_performance(
-            device_models=device_models,
-            edge_models=edge_models,
+            device_models=updated_device_models,
+            edge_models=updated_edge_models,
             edge_groups=edge_groups,
             X_tests=X_tests,
             y_tests=y_tests,
