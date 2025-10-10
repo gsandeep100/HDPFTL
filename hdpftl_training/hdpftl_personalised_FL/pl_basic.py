@@ -75,7 +75,8 @@ config = {
     "class_weight": "balanced",
     "lambda_l1": 1.0,
     "lambda_l2": 1.0,
-    "device": "cpu"
+    "device": "cpu",
+    "eps_threshold": 0.001,
 
 }
 
@@ -151,6 +152,7 @@ def train_lightgbm(
             "feature_fraction": config.get("feature_fraction", 1.0),
             "random_state": config.get("random_seed", 42),
             "device": config.get("device", "cpu"),
+            "max_cores": 2,
             "verbose": verbose
         }
         model = LGBMClassifier(**model_params)
@@ -299,6 +301,7 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes):
     for idx, dev_tuple in enumerate(d_data):
         X_train, _, y_train, _, _, _, X_device_finetune, y_device_finetune = dev_tuple
         n_samples = X_train.shape[0]
+        prev_y_pseudo= None
 
         # ----------------------------
         # Initialize residuals per device
@@ -317,12 +320,23 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes):
         # ----------------------------
         for t in range(config["device_boosting_rounds"]):
             # Use current residuals as pseudo-labels
-            y_pseudo = residual.argmax(axis=1)
+            y_pseudo = np.argmax(residual + 1e-9 * np.random.randn(*residual.shape), axis=1)
 
             # Stop if only a single class remains
             if len(np.unique(y_pseudo)) < 2:
                 print(f"Device {idx}, round {t}: only single class left, skipping further boosting.")
                 break
+            # Stop if residuals are below threshold
+            if np.sum(np.abs(residual)) < config["eps_threshold"]:
+                print(f"Device {idx}, round {t}: residuals below threshold, stopping.")
+                break
+            # Optional: stop if pseudo-labels are too noisy (most unchanged)
+            if prev_y_pseudo is not None:
+                changes = np.mean(prev_y_pseudo != y_pseudo)
+                if changes < 0.01:  # less than 1% labels changed
+                    print(f"Device {idx}, round {t}: pseudo-labels stabilized, stopping.")
+                    break
+            prev_y_pseudo = y_pseudo.copy()  # update for next round
 
             init_model = models_per_device[-1] if models_per_device else None
 
@@ -395,7 +409,6 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes):
     return d_residuals, d_models, device_embeddings, device_weights
 
 
-
 def edge_layer_boosting(e_groups, d_embeddings, d_residuals,
                         n_classes, X_ftune=None, y_ftune=None,
                         device_weights=None):
@@ -428,6 +441,7 @@ def edge_layer_boosting(e_groups, d_embeddings, d_residuals,
     global_offset = 0  # tracks row position in global prediction matrix
 
     for edge_idx, edge_devices in enumerate(e_groups):
+        prev_y_pseudo_edge = None  # initialize before edge boosting loop
 
         # select finetune data for this edge
         if X_ftune is not None and y_ftune is not None:
@@ -481,11 +495,24 @@ def edge_layer_boosting(e_groups, d_embeddings, d_residuals,
         # -----------------------------
         boosting_rounds = config["edge_boosting_rounds"]
         for t in range(boosting_rounds):
-            y_pseudo = np.argmax(residual_edge, axis=1)
+            # Stabilize residuals without changing magnitude scaling
+            y_pseudo = np.argmax(residual_edge + 1e-9 * np.random.randn(*residual_edge.shape), axis=1)
             unique_classes = np.unique(y_pseudo)
+
             if len(unique_classes) < 2:
                 print(f"Edge {edge_idx}, round {t}: only {len(unique_classes)} class(es), skipping boosting.")
                 break
+            if np.sum(residual_edge) < config["eps_threshold"]:
+                print(f"Edge {edge_idx}, round {t}: residuals below threshold, stopping.")
+                break
+
+            if prev_y_pseudo_edge is not None:
+                changes = np.mean(prev_y_pseudo_edge != y_pseudo)
+                if changes < 0.01:
+                    print(f"Edge {edge_idx}, round {t}: pseudo-labels stabilized, stopping.")
+                    break
+
+            prev_y_pseudo_edge = y_pseudo.copy()  # update for next round
 
             init_model = models_per_edge[-1] if models_per_edge else None
             X_valid_slice = X_valid_edge[:, :X_edge.shape[1]] if X_valid_edge is not None else None
@@ -547,7 +574,6 @@ def edge_layer_boosting(e_groups, d_embeddings, d_residuals,
         global_pred_matrix = np.empty((0, n_classes))
 
     return edge_outputs, e_models, e_residuals, edge_embeddings_list, global_pred_matrix, edge_sample_slices
-
 
 
 def global_layer_bayesian_aggregation(e_outputs, e_embeddings, e_residuals=None,
@@ -650,8 +676,6 @@ def global_layer_bayesian_aggregation(e_outputs, e_embeddings, e_residuals=None,
         print(f"Total samples: {n_samples_total}")
 
     return y_global_pred, global_residuals, theta_global
-
-
 
 # ============================================================
 # Forward pass with Device → Edge → Gossip
@@ -1804,8 +1828,24 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
                                                       combine_mode="weighted", device_val_scores=device_val_scores)
         """
 
-        #y_true_per_epoch.append(y_global_true)
-
+        y_true_per_epoch.append(y_global_true)
+        """
+       # -----------------------------
+       # 3. Backward Pass using global residuals
+       # -----------------------------
+        """
+        edge_models, device_models = backward_pass(
+            edge_models=edge_models,
+            device_models=device_models,
+            edge_embeddings=edge_embeddings,
+            device_embeddings=device_embeddings,
+            y_true_per_edge=y_true_per_edge,
+            y_true_devices=y_true_devices,
+            y_global_pred=y_global_pred,  # can be None if you don’t have global predictions
+            n_classes=8,
+            use_classification=True,
+            verbose=True
+        )
         # -----------------------------
         # 2. Compute Multi-Level Accuracy
 
@@ -1834,26 +1874,7 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
             verbose=True
         )
         """
-        """
 
-        # -----------------------------
-        # 3. Backward Pass using global residuals
-        # -----------------------------
-        """
-        """
-        edge_models, device_models = backward_pass(
-            edge_models=edge_models,
-            device_models=device_models,
-            edge_embeddings=edge_embeddings,
-            device_embeddings=device_embeddings,
-            y_true_per_edge=y_true_per_edge,
-            y_true_devices=y_true_devices,
-            y_global_pred=y_global_pred,  # can be None if you don’t have global predictions
-            n_classes=8,
-            use_classification=True,
-            verbose=True
-        )  
-        """
 
         # Update history for plotting
         metrics = metrics_test["metrics"]
@@ -2248,6 +2269,40 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     plt.close()
     plt.clf()  # clears the current figure
     plt.cla()  # clears current axes
+
+    # -----------------------------
+    # 2b. Hierarchical Contribution Evolution (stacked)
+    # -----------------------------
+    # Calculate incremental gains for each layer
+    edge_gain = np.maximum(np.array(mean_edge_accs) - np.array(mean_device_accs), 0)
+    global_gain = np.maximum(np.array(global_accs) - np.array(mean_edge_accs), 0)
+    base_device = np.array(mean_device_accs)
+
+    epochs = np.arange(1, num_epochs + 1)
+
+    plt.figure(figsize=(10, 6))
+    plt.stackplot(
+        epochs,
+        base_device,
+        edge_gain,
+        global_gain,
+        labels=["Device Base", "Edge Gain", "Global Gain"],
+        colors=[colors["Device"], colors["Edge"], colors["Global"]],
+        alpha=0.8,
+    )
+    plt.title("Hierarchical Contribution Evolution Across Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("Cumulative Accuracy")
+    plt.xticks(epochs, labels=[f"Epoch {i}" for i in epochs])
+    plt.ylim(0, 1)
+    plt.grid(True, linestyle="--", alpha=0.6)
+    plt.legend(loc="upper left")
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "hierarchical_contribution_evolution.png"))
+    plt.show()
+    plt.close()
+    plt.clf()
+    plt.cla()
 
     # -----------------------------
     # 3. Aggregate heatmaps across all epochs
