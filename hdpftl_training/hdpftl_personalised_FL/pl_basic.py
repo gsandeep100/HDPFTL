@@ -47,7 +47,7 @@ config = {
     "n_edges": 5,
     "n_device": 5,
     "device_per_edge": 1,
-    "epoch": 5,
+    "epoch": 3,
     "device_boosting_rounds": 5,
     "edge_boosting_rounds": 5,
     "num_iterations_device": 100,
@@ -390,6 +390,7 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes):
                 except ValueError:
                     loss = 1.0  # fallback for degenerate cases
                 scores_per_model.append(1.0 / (loss + 1e-7))
+
             scores_per_model = np.array(scores_per_model)
             if scores_per_model.sum() > 0:
                 scores_per_model /= scores_per_model.sum()
