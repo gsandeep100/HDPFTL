@@ -203,29 +203,30 @@ def assign_labels_numeric(df, filename):
     """
     Assign numeric multiclass labels (0–7) to df['Label']
     based on keywords found in the filename.
+
+    Works on a per-file dataframe basis.
     """
     multiclass_keywords = {
-        0: ["benign"],  # Benign
-        1: ["ddos", "botnet"],  # DDoS
-        2: ["brute", "force"],  # Brute Force
-        3: ["spoof", "fake", "MITM", "DNS"],  # Spoofing
-        4: ["dos", "denial"],  # DoS
-        5: ["recon", "scan"],  # Recon
-        6: ["web", "http", "Uploading_Attack.pcap_Flow", "XSS.pcap_Flow", "SqlInjection.pcap_Flow"],  # Web-based
-        7: ["mirai", "malware"]  # Mirai
+        0: ["benign"],
+        1: ["ddos", "botnet"],
+        2: ["brute", "force"],
+        3: ["spoof", "fake", "mitm", "dns"],
+        4: ["dos", "denial"],
+        5: ["recon", "scan"],
+        6: ["web", "http", "uploading_attack.pcap_flow", "xss.pcap_flow", "sqlinjection.pcap_flow"],
+        7: ["mirai", "malware"]
     }
 
     filename_lower = os.path.basename(filename).lower()
 
-    # Search for a matching keyword
     for numeric_label, keywords in multiclass_keywords.items():
-        if any(kw in filename_lower for kw in keywords):
-            df["Label"] = numeric_label
+        if any(kw.lower() in filename_lower for kw in keywords):
+            df["Label"] = int(numeric_label)
             print(f"[INFO] Assigned numeric label {numeric_label} based on filename: {filename}")
             return df
 
-    # Fallback if no keyword matches
-    df["Label"] = -1  # or choose a default like 0
+    # fallback
+    df["Label"] = -1
     print(f"[WARN] No keyword match for {filename} → assigned -1")
     return df
 
@@ -911,7 +912,7 @@ def preprocess_data_safe(log_path_str, selected_folder, writer=None, scaler_type
             log_path_str, os.path.join(config.OUTPUT_DATASET_ALL_DATA, selected_folder)
         )
 
-    #df = df.sample(frac=0.5, random_state=42)#TODO REMOVE
+    df = df.sample(frac=0.7, random_state=42)#TODO REMOVE
 
     features = df.columns.difference(['Label'])
     df[features] = df[features].astype(np.float32)
