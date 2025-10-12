@@ -302,8 +302,7 @@ def get_leaf_indices(model, X):
 def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, use_true_labels=False):
     """
     Device-level sequential boosting (classification version) with safe incremental boosting.
-    Optionally uses true labels for residual updates instead of pseudo-labels.
-    Includes final true-label residual correction to align residuals with real accuracy.
+    Includes final residual correction to align residuals with true labels using ensemble prediction.
 
     Args:
         d_data: list of tuples per device (X_train, _, y_train, _, _, _, X_device_finetune, y_device_finetune)
@@ -311,7 +310,7 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, use_true
         d_models: list of lists, previously trained models per device (or empty)
         le: LabelEncoder for y labels
         n_classes: number of classes
-        use_true_labels: bool, if True, use true labels instead of pseudo-labels
+        use_true_labels: bool, if True, use true labels instead of pseudo-labels (not used in device layer)
 
     Returns:
         d_residuals: final residuals per device
@@ -348,18 +347,8 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, use_true
         # Sequential boosting
         # ----------------------------
         for t in range(config["device_boosting_rounds"]):
-            #if use_true_labels:
-            y_pseudo = le.transform(y_train)  # true labels mode
-            """
-            else:
-                sample_sign = np.sign(residual.sum(axis=1))  # +1 if net positive, -1 if net negative
+            y_pseudo = le.transform(y_train)  # using true labels for pseudo-labeling
 
-                y_pseudo = np.where(
-                    sample_sign >= 0,
-                    np.argmax(residual, axis=1),
-                    np.argmin(residual, axis=1)
-                )
-            """
             if len(np.unique(y_pseudo)) < 2:
                 print(f"Device {idx}, round {t}: only single class left, skipping further boosting.")
                 break
@@ -391,28 +380,27 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, use_true
             residual = np.clip(residual, -1 + eps_residual, 1 - eps_residual)
 
             if models_per_device:
-                models_per_device[-1] = model  # update last one
+                models_per_device[-1] = model
             else:
                 models_per_device.append(model)
 
         # ----------------------------
-        # ✅ Final residual correction using true labels
+        # ✅ Final residual correction using ensemble of all models
         # ----------------------------
         if y_train is not None and len(models_per_device) > 0:
             y_true_enc = le.transform(y_train)
-            y_onehot = np.zeros_like(residual)
-            y_onehot[np.arange(len(y_true_enc)), y_true_enc] = 1.0
+            y_onehot = np.zeros((n_samples, n_classes), dtype=float)
+            y_onehot[np.arange(n_samples), y_true_enc] = 1.0
 
-            # Predictions from final model
-            y_pred_proba_final = predict_proba_fixed(models_per_device[-1], X_train, n_classes)
+            # Sum predictions from all models for this device
+            y_pred_proba_total = sum(predict_proba_fixed(m, X_train, n_classes) for m in models_per_device)
 
-            alpha = 0.5  # correction strength (0.0 = off, 1.0 = full overwrite)
-            res_before = np.linalg.norm(residual)
-            residual = (1 - alpha) * residual + alpha * (y_onehot - y_pred_proba_final)
+            # Compute residual correctly
+            residual = y_onehot - y_pred_proba_total
             residual = np.clip(residual, -1 + eps_residual, 1 - eps_residual)
-            res_after = np.linalg.norm(residual)
 
-            print(f"Device {idx}: residual norm before={res_before:.4f}, after true-label correction={res_after:.4f}")
+            res_after = np.linalg.norm(residual)
+            print(f"Device {idx}: residual norm after true-label correction={res_after:.4f}")
 
         # Save residuals & models
         d_residuals[idx] = residual
@@ -878,6 +866,7 @@ def forward_pass(devices_data, edge_groups, le, num_classes,X_edge_finetunes,y_e
         edge_sample_slices
     )
 
+
 def backward_pass(edge_models, device_models,
                   edge_embeddings, device_embeddings,
                   y_true_per_edge,
@@ -890,273 +879,151 @@ def backward_pass(edge_models, device_models,
     """
     Hierarchical backward feedback that updates edge and device models.
 
-    Args:
-        edge_models: list[list(models)]     - models trained per edge (list of models)
-        device_models: list[list(models)]   - models trained per device
-        edge_embeddings: list[np.ndarray]   - X_edge matrices (stacked per-device embeddings)
-        device_embeddings: list[np.ndarray] - device-level embeddings
-        y_true_per_edge: list[np.ndarray]   - true labels per edge (1D arrays of ints or 1-hot)
-        edge_sample_slices: dict (device_idx -> global_indices) optional
-            Mapping from device index to row indices in the forward global prediction matrix.
-            Required to align updated edge preds back to devices. If None, device updates
-            that require alignment will be skipped.
-        global_pred_matrix: np.ndarray or None
-            If available, can be used for alignment checks. Not required.
-        n_classes: int
-        use_classification: bool
-            If True -> re-fit classifiers using integer labels.
-            If False -> re-fit regressors on residuals (continuous corrections).
-        verbose: bool
-        le: optional LabelEncoder used in forward (if labels are strings)
-
-    Returns:
-        updated_edge_models, updated_device_models, updated_edge_preds_stacked
-
-    Notes:
-        - This function replaces each existing model with a freshly trained model
-          with the same basic hyperparameters (n_estimators, learning_rate, max_depth).
-        - If edge_sample_slices is provided it will map updated edge predictions back
-          to device rows and compute device residuals for device-level updates.
+    Updated for single model per edge/device (no list-of-lists).
     """
     if verbose:
-        print("\n" + "*"*60)
+        print("\n" + "*" * 60)
         print("*" + " " * 26 + "STARTING BACKWARD PASS" + " " * 26 + "*")
         print("*" * 60 + "\n")
 
-    # Defensive checks
     num_edges = len(edge_models)
     assert len(edge_embeddings) == num_edges, "edge_embeddings and edge_models length mismatch"
     assert len(y_true_per_edge) == num_edges, "y_true_per_edge must align with edge_models"
 
     # -----------------------------
-    # 1) Update Edge Models (train to predict true per-edge labels)
+    # 1) Update Edge Models
     # -----------------------------
-    updated_edge_preds_list = []   # store per-edge average predictions (for stacking)
+    updated_edge_preds_list = []
     updated_edge_models = []
 
     for ei in range(num_edges):
-        models = edge_models[ei]
+        model = edge_models[ei]
         X_edge = edge_embeddings[ei]
         y_edge = y_true_per_edge[ei]
 
-        if X_edge is None or models is None or len(models) == 0:
-            # nothing to update; keep placeholder
-            updated_edge_models.append([])
-            # push zeros so stacking works
+        if X_edge is None or model is None:
+            updated_edge_models.append(None)
             updated_edge_preds_list.append(np.zeros((0, n_classes)))
             if verbose:
-                print(f"Edge {ei}: no models or no data, skipping.")
+                print(f"Edge {ei}: no model or data, skipping.")
             continue
 
-        # Convert y_edge to integer labels if necessary
+        # Convert y_edge to integer labels if needed
         if y_edge.ndim > 1 and y_edge.shape[1] == n_classes:
-            # one-hot -> int
             y_edge_labels = np.argmax(y_edge, axis=1)
         else:
             y_edge_labels = np.asarray(y_edge).ravel()
-            # If labels are strings and LabelEncoder provided, transform
             if le is not None and y_edge_labels.dtype.kind in {'U', 'S', 'O'}:
-                try:
-                    y_edge_labels = le.transform(y_edge_labels)
-                except Exception:
-                    pass
+                y_edge_labels = le.transform(y_edge_labels)
 
-        # Re-train each model for this edge (safe replacement)
-        new_models_for_edge = []
-        preds_per_model = []
-        for m in models:
-            # extract simple params with fallbacks
-            params = {}
-            n_est = getattr(m, "n_estimators", None) or getattr(m, "params", {}).get("n_estimators", None) or 100
-            lr = getattr(m, "learning_rate", None) or getattr(m, "params", {}).get("learning_rate", None) or 0.1
-            md = getattr(m, "max_depth", None) or getattr(m, "params", {}).get("max_depth", None)
+        # Extract simple hyperparameters
+        n_est = getattr(model, "n_estimators", 100)
+        lr = getattr(model, "learning_rate", 0.1)
+        md = getattr(model, "max_depth", None)
+        rnd = getattr(model, "random_state", 42)
 
-            if use_classification:
-                clf = LGBMClassifier(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42), num_class=n_classes)
-                # fit classifier
-                try:
-                    clf.fit(X_edge, y_edge_labels)
-                    preds = clf.predict_proba(X_edge)
-                except Exception as e:
-                    if verbose:
-                        print(f"Edge {ei}: classifier fit failed with {e}, trying fallback simple fit.")
-                    clf = LGBMClassifier(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42), num_class=n_classes)
-                    clf.fit(X_edge, y_edge_labels)
-                    preds = clf.predict_proba(X_edge)
-                new_models_for_edge.append(clf)
-                preds_per_model.append(preds)
-            else:
-                # regression: train to predict continuous residuals (here we use one-vs-all residual for each class)
-                # Prepare residual targets: one-hot minus current model avg if global_pred_matrix provided
-                # Fallback to trying to learn one-hot labels as continuous targets
-                if global_pred_matrix is not None:
-                    # try to slice rows for this edge from global_pred_matrix by matching X_edge row count
-                    try:
-                        preds_init = m.predict_proba(X_edge) if hasattr(m, "predict_proba") else np.zeros((X_edge.shape[0], n_classes))
-                    except Exception:
-                        preds_init = np.zeros((X_edge.shape[0], n_classes))
-                    if preds_init.shape[1] < n_classes:
-                        preds_init = np.pad(preds_init, ((0,0),(0,n_classes - preds_init.shape[1])), mode="constant")
-                    y_edge_onehot = np.zeros((X_edge.shape[0], n_classes))
-                    y_edge_idx = np.asarray(y_edge_labels).ravel()
-                    y_edge_onehot[np.arange(X_edge.shape[0]), y_edge_idx] = 1.0
-                    residual_targets = (y_edge_onehot - preds_init).astype(np.float32)
-                else:
-                    # fallback: use one-hot as continuous target
-                    y_edge_onehot = np.zeros((X_edge.shape[0], n_classes))
-                    y_edge_idx = np.asarray(y_edge_labels).ravel()
-                    y_edge_onehot[np.arange(X_edge.shape[0]), y_edge_idx] = 1.0
-                    residual_targets = y_edge_onehot.astype(np.float32)
-
-                # train one regressor per original model (we'll flatten outputs into NxC)
-                reg = LGBMRegressor(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42))
-                # Flatten target to shape (N, C) -> for sklearn API, we train C separate regressors or train vector target if supported.
-                try:
-                    # Some versions support multioutput directly
-                    reg.fit(X_edge, residual_targets)
-                    preds = reg.predict(X_edge)
-                    preds = np.atleast_2d(preds)
-                    if preds.ndim == 2 and preds.shape[1] == n_classes:
-                        preds_per_model.append(preds)
-                    else:
-                        # reshape if necessary
-                        preds_per_model.append(np.reshape(preds, (X_edge.shape[0], -1)))
-                except Exception as e:
-                    if verbose:
-                        print(f"Edge {ei}: regressor fit failed ({e}), falling back to per-class regressors.")
-                    # per-class regressors
-                    per_class_preds = []
-                    for c in range(n_classes):
-                        rc = LGBMRegressor(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42))
-                        rc.fit(X_edge, residual_targets[:, c])
-                        per_class_preds.append(rc.predict(X_edge))
-                    preds = np.vstack(per_class_preds).T
-                    preds_per_model.append(preds)
-                    reg = None  # we replaced with per-class regressors (not stored)
-                # store reg if training succeeded
-                if reg is not None:
-                    new_models_for_edge.append(reg)
-                else:
-                    # if we used per-class regressors, store placeholders (not ideal but safe)
-                    new_models_for_edge.append(None)
-
-        # Average preds across models
-        if preds_per_model:
-            preds_avg = np.mean(np.array(preds_per_model), axis=0)
+        # Train new edge model
+        if use_classification:
+            clf = LGBMClassifier(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=rnd,
+                                 num_class=n_classes)
+            clf.fit(X_edge, y_edge_labels)
+            preds = clf.predict_proba(X_edge)
+            updated_edge_models.append(clf)
         else:
-            preds_avg = np.zeros((X_edge.shape[0], n_classes))
+            # regression on residuals
+            y_edge_onehot = np.zeros((X_edge.shape[0], n_classes))
+            y_edge_onehot[np.arange(X_edge.shape[0]), y_edge_labels] = 1.0
+            if hasattr(model, "predict_proba"):
+                preds_init = model.predict_proba(X_edge)
+                if preds_init.shape[1] < n_classes:
+                    preds_init = np.pad(preds_init, ((0, 0), (0, n_classes - preds_init.shape[1])), mode="constant")
+                residual_targets = (y_edge_onehot - preds_init).astype(np.float32)
+            else:
+                residual_targets = y_edge_onehot.astype(np.float32)
+            reg = LGBMRegressor(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=rnd)
+            reg.fit(X_edge, residual_targets)
+            preds = reg.predict(X_edge)
+            if preds.ndim == 1:
+                preds = preds[:, np.newaxis]
+            updated_edge_models.append(reg)
 
-        updated_edge_models.append(new_models_for_edge)
-        updated_edge_preds_list.append(preds_avg)
-
+        updated_edge_preds_list.append(preds)
         if verbose:
-            print(f"Edge {ei}: updated {len(new_models_for_edge)} model(s), preds shape {preds_avg.shape}")
+            print(f"Edge {ei}: updated {len(updated_edge_preds_list)} model(s), preds shape {preds.shape}")
 
-    # Stack updated edge preds vertically (matching forward stacking)
+    # Stack updated edge predictions
     if updated_edge_preds_list:
-        updated_edge_preds_stacked = np.vstack(updated_edge_preds_list)
+        max_dim = max(pred.shape[1] for pred in updated_edge_preds_list if pred.size > 0)
+        aligned_preds = []
+        for ei, pred in enumerate(updated_edge_preds_list):
+            if pred.size == 0:
+                aligned_preds.append(np.zeros((0, max_dim)))
+                continue
+            if pred.shape[1] < max_dim:
+                pred = np.pad(pred, ((0, 0), (0, max_dim - pred.shape[1])), mode='constant')
+            elif pred.shape[1] > max_dim:
+                pred = pred[:, :max_dim]
+            aligned_preds.append(pred)
+        updated_edge_preds_stacked = np.vstack(aligned_preds)
     else:
         updated_edge_preds_stacked = np.empty((0, n_classes))
 
     # -----------------------------
-    # 2) Map updated edge preds back to devices and update device models
+    # 2) Update Device Models
     # -----------------------------
-    updated_device_models = list(device_models)  # shallow copy
-    # Build a global label array from y_true_per_edge for device label retrieval
+    updated_device_models = []
     try:
         y_global_labels = np.hstack([np.asarray(y).ravel() for y in y_true_per_edge])
     except Exception:
         y_global_labels = None
 
-    for dev_idx, models in enumerate(device_models):
+    for dev_idx, model in enumerate(device_models):
         X_dev = device_embeddings[dev_idx]
-        if X_dev is None or models is None or len(models) == 0:
+        if X_dev is None or model is None:
+            updated_device_models.append(None)
             if verbose:
-                print(f"Device {dev_idx}: no models or no embeddings, skipping.")
+                print(f"Device {dev_idx}: no model or embeddings, skipping.")
             continue
 
         if edge_sample_slices is None:
-            if verbose:
-                print(f"Device {dev_idx}: edge_sample_slices not provided -> skipping device update.")
+            updated_device_models.append(model)
             continue
 
-        # get global indices for this device
         global_idxs = edge_sample_slices.get(dev_idx, None)
-        if global_idxs is None:
-            if verbose:
-                print(f"Device {dev_idx}: no global indices found in edge_sample_slices, skipping.")
+        if global_idxs is None or updated_edge_preds_stacked.shape[0] <= global_idxs.max():
+            updated_device_models.append(model)
             continue
 
-        # Ensure updated_edge_preds_stacked has rows for these indices
-        if updated_edge_preds_stacked.shape[0] <= global_idxs.max():
-            if verbose:
-                print(f"Device {dev_idx}: updated edge preds do not cover requested indices -> skipping.")
-            continue
-
-        # Predicted probs for this device (from edges after update)
         preds_for_device = updated_edge_preds_stacked[global_idxs, :]
-        # Device true labels from stacked y_true_per_edge if available
         if y_global_labels is not None and y_global_labels.size > 0 and global_idxs.max() < y_global_labels.size:
             y_dev_true = y_global_labels[global_idxs]
         else:
-            # fallback: produce pseudo-labels from preds_for_device
             y_dev_true = np.argmax(preds_for_device, axis=1)
 
-        # If classification: train devices to predict integer labels
+        n_est = getattr(model, "n_estimators", 100)
+        lr = getattr(model, "learning_rate", 0.1)
+        md = getattr(model, "max_depth", None)
+        rnd = getattr(model, "random_state", 42)
+
         if use_classification:
-            # ensure integer labels
-            y_dev_labels = np.asarray(y_dev_true).ravel()
-            new_models_for_device = []
-            for m in models:
-                n_est = getattr(m, "n_estimators", None) or 100
-                lr = getattr(m, "learning_rate", None) or 0.1
-                md = getattr(m, "max_depth", None)
-                clf = LGBMClassifier(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42), num_class=n_classes)
-                try:
-                    clf.fit(X_dev, y_dev_labels)
-                except Exception as e:
-                    if verbose:
-                        print(f"Device {dev_idx}: classifier fit failed ({e}), retrying default params.")
-                    clf = LGBMClassifier(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42), num_class=n_classes)
-                    clf.fit(X_dev, y_dev_labels)
-                new_models_for_device.append(clf)
-            updated_device_models[dev_idx] = new_models_for_device
-            if verbose:
-                print(f"Device {dev_idx}: updated {len(new_models_for_device)} classifier(s).")
+            clf = LGBMClassifier(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=rnd,
+                                 num_class=n_classes)
+            clf.fit(X_dev, y_dev_true)
+            updated_device_models.append(clf)
         else:
-            # regression: targets = (one-hot true) - (edge preds) => residual corrections to learn
             y_dev_onehot = np.zeros((preds_for_device.shape[0], n_classes))
-            y_dev_onehot[np.arange(preds_for_device.shape[0]), np.asarray(y_dev_true).ravel()] = 1.0
+            y_dev_onehot[np.arange(preds_for_device.shape[0]), y_dev_true] = 1.0
             residual_targets = (y_dev_onehot - preds_for_device).astype(np.float32)
+            reg = LGBMRegressor(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=rnd)
+            reg.fit(X_dev, residual_targets)
+            updated_device_models.append(reg)
 
-            new_models_for_device = []
-            for m in models:
-                n_est = getattr(m, "n_estimators", None) or 100
-                lr = getattr(m, "learning_rate", None) or 0.1
-                md = getattr(m, "max_depth", None)
-                reg = LGBMRegressor(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42))
-                try:
-                    reg.fit(X_dev, residual_targets)
-                    new_models_for_device.append(reg)
-                except Exception as e:
-                    if verbose:
-                        print(f"Device {dev_idx}: regressor fit failed ({e}), trying per-class regressors.")
-                    # fallback per-class regressors
-                    per_class_regs = []
-                    for c in range(n_classes):
-                        rc = LGBMRegressor(n_estimators=n_est, learning_rate=lr, max_depth=md, random_state=getattr(m, "random_state", 42))
-                        rc.fit(X_dev, residual_targets[:, c])
-                        per_class_regs.append(rc)
-                    new_models_for_device.append(per_class_regs)  # nested list: indicates multi-output trained separately
-            updated_device_models[dev_idx] = new_models_for_device
-            if verbose:
-                print(f"Device {dev_idx}: updated {len(new_models_for_device)} regressor(s).")
-
+        if verbose:
+            print(f"Device {dev_idx}: updated {len(updated_device_models)} regressor(s).")
     if verbose:
         print("Backward hierarchical feedback completed safely.\n")
 
     return updated_edge_models, updated_device_models, updated_edge_preds_stacked
-
 
 
 # ======================================================================
@@ -1903,7 +1770,10 @@ def evaluate_multilevel_performance(
         y_true = le.transform(y_test)
 
         # Stack predictions
-        preds_list = [predict_proba_fixed(m, X_test, num_classes) for m in models_per_device]
+        if isinstance(models_per_device, list):
+            preds_list = [predict_proba_fixed(m, X_test, num_classes) for m in models_per_device]
+        else:
+            preds_list = [predict_proba_fixed(models_per_device, X_test, num_classes)]
 
         # Compute weights
         if combine_mode == "weighted":
@@ -1972,20 +1842,14 @@ def evaluate_multilevel_performance(
         for wi, dp in zip(w_devices, device_edge_preds):
             device_mix_pred += wi * dp
 
-        edge_models_list = edge_models[edge_idx] if edge_idx < len(edge_models) else []
-        edge_model_preds = []
-        for mdl in edge_models_list:
-            p = predict_proba_fixed(mdl, X_edge, num_classes)
+        if edge_idx < len(edge_models):
+            mdl = edge_models[edge_idx]  # single model per edge
+            edge_pred_accum = predict_proba_fixed(mdl, X_edge, num_classes)
             if calibrate:
-                p = calibrate_probs(y_edge_true, p)
-            edge_model_preds.append(p)
-
-        if len(edge_model_preds) > 0:
-            edge_pred_accum = np.mean(edge_model_preds, axis=0)
+                edge_pred_accum = calibrate_probs(y_edge_true, edge_pred_accum)
             pred_accum = 0.5 * (edge_pred_accum + device_mix_pred)
         else:
             pred_accum = device_mix_pred
-
         edge_preds.append(pred_accum)
         edge_accs.append(accuracy_score(y_edge_true, pred_accum.argmax(axis=1)))
 
@@ -2440,163 +2304,39 @@ def plot_device_accuracies(
 
     return accuracies, log_losses, brier_scores, topk_accuracies
 
-def plot_hpfl_full(metrics_test, save_root_dir="hdpftl_plot_outputs"):
+def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     """
-    Full HPFL plotting: all accuracy trends, backward-pass improvements,
-    per-epoch contributions, heatmaps, and hierarchical contributions.
-    Keeps all plots from both original methods unchanged.
+    Generate Hierarchical PFL plots from structured metrics dictionary.
+    Includes per-epoch stacked contributions, device/edge vs global,
+    overall accuracy trends, and per-device/edge heatmaps.
+
+    Args:
+        metrics_test (dict): Output metrics dictionary per epoch.
+        save_root_dir (str): Base directory to save plots.
     """
 
+    # -----------------------------
+    # Create dated folder automatically
+    # -----------------------------
     today_str = datetime.now().strftime("%Y-%m-%d")
     save_dir = os.path.join(save_root_dir, today_str)
     os.makedirs(save_dir, exist_ok=True)
 
     # -----------------------------
-    # Extract metrics
+    # Extract per-epoch values
     # -----------------------------
-    device_accs = metrics_test["device_accs_per_epoch"]
-    edge_accs = metrics_test["edge_accs_per_epoch"]
-    global_accs = metrics_test["global_accs"]
-    device_vs_global = metrics_test.get("device_vs_global", [])
-    edge_vs_global = metrics_test.get("edge_vs_global", [])
+    device_accs = metrics_test["device_accs_per_epoch"]  # list of lists
+    edge_accs = metrics_test["edge_accs_per_epoch"]      # list of lists
+    global_accs = metrics_test["global_accs"]            # list of scalars
+    device_vs_global = metrics_test["device_vs_global"]  # list of lists
+    edge_vs_global = metrics_test["edge_vs_global"]      # list of lists
 
     num_epochs = len(global_accs)
     colors = {"Device": "skyblue", "Edge": "orange", "Global": "green"}
 
-    # ================================================================
-    # FIGURES 1-4 — Accuracy trends per layer
-    # ================================================================
-    mean_device_acc = [np.mean(acc) for acc in device_accs]
-    mean_edge_acc = [np.mean(acc) for acc in edge_accs]
-
-    # Figure 1: Device
-    plt.figure(figsize=(10, 5))
-    plt.plot(range(num_epochs), mean_device_acc, color=colors["Device"], marker="o")
-    plt.title("Figure 1: Device-Level Mean Accuracy Across Epochs")
-    plt.xlabel("Epoch")
-    plt.ylabel("Mean Device Accuracy")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "figure1_device_accuracy_trend.png"))
-    plt.show()
-    plt.close()
-
-    # Figure 2: Edge
-    plt.figure(figsize=(10, 5))
-    plt.plot(range(num_epochs), mean_edge_acc, color=colors["Edge"], marker="s")
-    plt.title("Figure 2: Edge-Level Mean Accuracy Across Epochs")
-    plt.xlabel("Epoch")
-    plt.ylabel("Mean Edge Accuracy")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "figure2_edge_accuracy_trend.png"))
-    plt.show()
-    plt.close()
-
-    # Figure 3: Global
-    plt.figure(figsize=(10, 5))
-    plt.plot(range(num_epochs), global_accs, color=colors["Global"], marker="^")
-    plt.title("Figure 3: Global Accuracy Trend (Bayesian Aggregation Outcome)")
-    plt.xlabel("Epoch")
-    plt.ylabel("Global Accuracy")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "figure3_global_accuracy_trend.png"))
-    plt.show()
-    plt.close()
-
-    # Figure 4: Comparative
-    plt.figure(figsize=(10, 6))
-    plt.plot(range(num_epochs), mean_device_acc, label="Device", marker="o", color=colors["Device"])
-    plt.plot(range(num_epochs), mean_edge_acc, label="Edge", marker="s", color=colors["Edge"])
-    plt.plot(range(num_epochs), global_accs, label="Global", marker="^", color=colors["Global"])
-    plt.title("Figure 4: Comparative Layer-Wise Accuracy Across Epochs")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "figure4_layerwise_accuracy_comparison.png"))
-    plt.show()
-    plt.close()
-
-    # ================================================================
-    # FIGURES 10-13 — Δ accuracy per layer (backward pass)
-    # ================================================================
-    device_improvements = [np.mean(np.array(device_accs[i]) - np.array(device_accs[i-1]))
-                           for i in range(1, num_epochs)]
-    edge_improvements = [np.mean(np.array(edge_accs[i]) - np.array(edge_accs[i-1]))
-                         for i in range(1, num_epochs)]
-    global_improve = np.diff(global_accs)
-
-    # Figure 10: Device Δ
-    plt.figure(figsize=(10, 5))
-    bars = plt.bar(np.arange(1, num_epochs), device_improvements, color=colors["Device"])
-    plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
-    plt.xlabel("Epoch")
-    plt.ylabel("Δ Device Accuracy (Post-Backward Pass)")
-    plt.title("Figure 10: Mean Device Accuracy Improvement After Each Backward Pass")
-    plt.grid(axis="y", linestyle="--", alpha=0.6)
-    for idx, bar in enumerate(bars):
-        val = device_improvements[idx]
-        pct = (val / mean_device_acc[idx]) * 100 if mean_device_acc[idx] != 0 else 0
-        plt.text(bar.get_x()+bar.get_width()/2, bar.get_height(),
-                 f"+{val:.3f}\n({pct:+.1f}%)", ha="center", va="bottom", fontsize=9)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "figure10_device_accuracy_improvement.png"))
-    plt.show()
-    plt.close()
-
-    # Figure 11: Edge Δ
-    plt.figure(figsize=(10, 5))
-    bars = plt.bar(np.arange(1, num_epochs), edge_improvements, color=colors["Edge"])
-    plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
-    plt.xlabel("Epoch")
-    plt.ylabel("Δ Edge Accuracy (Post-Backward Pass)")
-    plt.title("Figure 11: Mean Edge Accuracy Improvement After Each Backward Pass")
-    plt.grid(axis="y", linestyle="--", alpha=0.6)
-    for idx, bar in enumerate(bars):
-        val = edge_improvements[idx]
-        pct = (val / mean_edge_acc[idx]) * 100 if mean_edge_acc[idx] != 0 else 0
-        plt.text(bar.get_x()+bar.get_width()/2, bar.get_height(),
-                 f"+{val:.3f}\n({pct:+.1f}%)", ha="center", va="bottom", fontsize=9)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "figure11_edge_accuracy_improvement.png"))
-    plt.show()
-    plt.close()
-
-    # Figure 12: Global Δ
-    plt.figure(figsize=(10, 5))
-    plt.plot(np.arange(1, num_epochs), global_improve, marker="^", color=colors["Global"])
-    plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
-    plt.xlabel("Epoch")
-    plt.ylabel("Δ Global Aggregated Accuracy")
-    plt.title("Figure 12: Global Accuracy Improvement (Bayesian Aggregation)")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "figure12_global_accuracy_improvement.png"))
-    plt.show()
-    plt.close()
-
-    # Figure 13: Combined Δ
-    plt.figure(figsize=(10, 6))
-    plt.plot(np.arange(1, num_epochs), device_improvements, label="Device Δ Accuracy", marker="o", color=colors["Device"])
-    plt.plot(np.arange(1, num_epochs), edge_improvements, label="Edge Δ Accuracy", marker="s", color=colors["Edge"])
-    plt.plot(np.arange(1, num_epochs), global_improve, label="Global Δ Accuracy", marker="^", color=colors["Global"])
-    plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
-    plt.xlabel("Epoch")
-    plt.ylabel("Δ Accuracy per Backward Pass")
-    plt.title("Figure 13: Layer-wise Improvement Trend Across Backward Passes")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "figure13_combined_improvement_trend.png"))
-    plt.show()
-    plt.close()
-
-    # ================================================================
-    # Per-epoch contributions, device vs global, edge vs global, heatmaps
-    # ================================================================
+    # -----------------------------
+    # 1. Per-epoch stacked contributions & comparisons
+    # -----------------------------
     for epoch_idx in range(num_epochs):
         mean_device = np.mean(device_accs[epoch_idx]) if device_accs[epoch_idx] else 0
         mean_edge = np.mean(edge_accs[epoch_idx]) if edge_accs[epoch_idx] else 0
@@ -2609,125 +2349,180 @@ def plot_hpfl_full(metrics_test, save_root_dir="hdpftl_plot_outputs"):
             max(global_acc - mean_edge, 0),
         ]
         layers = ["Device", "Edge", "Global"]
+
         plt.figure(figsize=(6, 4))
         bars = plt.bar(layers, contributions, color=[colors[l] for l in layers])
         plt.ylim(0, 1)
         plt.ylabel("Contribution to Final Accuracy")
         plt.title(f"Epoch {epoch_idx+1} Layer Contributions")
         for bar, val in zip(bars, contributions):
-            plt.text(bar.get_x()+bar.get_width()/2, float(val)+0.02, f"{val:.3f}", ha="center", va="bottom")
+            plt.text(bar.get_x() + bar.get_width()/2, float(val)+0.02, f"{val:.3f}",
+                     ha="center", va="bottom")
         plt.grid(axis="y", linestyle="--", alpha=0.6)
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch_idx+1}.png"))
         plt.close()
+        plt.clf()  # clears the current figure
+        plt.cla()  # clears current axes
 
         # Device vs Global & Edge vs Global
-        mean_dev_vs_glob = np.mean(device_vs_global[epoch_idx]) if device_vs_global else None
-        mean_edge_vs_glob = np.mean(edge_vs_global[epoch_idx]) if edge_vs_global else None
-        if mean_dev_vs_glob is not None:
-            plt.figure(figsize=(6, 4))
-            plt.bar(["Device vs Global"], [mean_dev_vs_glob], color=colors["Device"])
-            plt.title(f"Epoch {epoch_idx+1}: Device vs Global Δ")
-            plt.ylabel("Δ Accuracy")
-            plt.ylim(0, 1)
-            plt.tight_layout()
-            plt.savefig(os.path.join(save_dir, f"epoch_device_vs_global_{epoch_idx+1}.png"))
-            plt.close()
-        if mean_edge_vs_glob is not None:
-            plt.figure(figsize=(6, 4))
-            plt.bar(["Edge vs Global"], [mean_edge_vs_glob], color=colors["Edge"])
-            plt.title(f"Epoch {epoch_idx+1}: Edge vs Global Δ")
-            plt.ylabel("Δ Accuracy")
-            plt.ylim(0, 1)
-            plt.tight_layout()
-            plt.savefig(os.path.join(save_dir, f"epoch_edge_vs_global_{epoch_idx+1}.png"))
-            plt.close()
+        mean_dev_vs_glob = np.mean(device_vs_global[epoch_idx]) if device_vs_global[epoch_idx] else 0
+        mean_edge_vs_glob = np.mean(edge_vs_global[epoch_idx]) if edge_vs_global[epoch_idx] else 0
 
-        # Device heatmap
+        plt.figure(figsize=(6, 4))
+        plt.bar(["Device vs Global", "Edge vs Global"],
+                [mean_dev_vs_glob, mean_edge_vs_glob],
+                color=[colors["Device"], colors["Edge"]])
+        plt.ylim(0, 1)
+        plt.ylabel("Accuracy compared to Global")
+        plt.title(f"Epoch {epoch_idx+1} Layer vs Global Accuracy")
+        plt.grid(axis="y", linestyle="--", alpha=0.6)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"epoch_vs_global_{epoch_idx+1}.png"))
+        plt.close()
+        plt.clf()  # clears the current figure
+        plt.cla()  # clears current axes
+        # -----------------------------
+        # 1b. Device-level heatmap
+        # -----------------------------
         if device_accs[epoch_idx]:
             plt.figure(figsize=(max(6, len(device_accs[epoch_idx])*0.5), 4))
-            sns.heatmap(np.array([device_accs[epoch_idx]]), annot=True, cmap="Blues", cbar=True, vmin=0, vmax=1)
-            plt.title(f"Epoch {epoch_idx+1} Device Accuracies")
+            sns.heatmap(np.array([device_accs[epoch_idx]]), annot=True, cmap="Blues",
+                        cbar=True, vmin=0, vmax=1)
             plt.xlabel("Device Index")
             plt.ylabel("Epoch")
+            plt.title(f"Epoch {epoch_idx+1} Device Accuracies")
             plt.tight_layout()
             plt.savefig(os.path.join(save_dir, f"epoch_device_heatmap_{epoch_idx+1}.png"))
             plt.close()
-
-        # Edge heatmap
+            plt.clf()  # clears the current figure
+            plt.cla()  # clears current axes
+        # -----------------------------
+        # 1c. Edge-level heatmap
+        # -----------------------------
         if edge_accs[epoch_idx]:
             plt.figure(figsize=(max(6, len(edge_accs[epoch_idx])*0.5), 4))
-            sns.heatmap(np.array([edge_accs[epoch_idx]]), annot=True, cmap="Oranges", cbar=True, vmin=0, vmax=1)
-            plt.title(f"Epoch {epoch_idx+1} Edge Accuracies")
+            sns.heatmap(np.array([edge_accs[epoch_idx]]), annot=True, cmap="Oranges",
+                        cbar=True, vmin=0, vmax=1)
             plt.xlabel("Edge Index")
             plt.ylabel("Epoch")
+            plt.title(f"Epoch {epoch_idx+1} Edge Accuracies")
             plt.tight_layout()
             plt.savefig(os.path.join(save_dir, f"epoch_edge_heatmap_{epoch_idx+1}.png"))
             plt.close()
+            plt.clf()  # clears the current figure
+            plt.cla()  # clears current axes
 
-    # Aggregate heatmaps
-    device_matrix = np.array([d if d else [0]*len(device_accs[0]) for d in device_accs])
-    edge_matrix = np.array([e if e else [0]*len(edge_accs[0]) for e in edge_accs])
+    # -----------------------------
+    # 2. Accuracy trends across epochs
+    # -----------------------------
+    mean_device_accs = [np.mean(d) if d else 0 for d in device_accs]
+    mean_edge_accs = [np.mean(e) if e else 0 for e in edge_accs]
 
-    plt.figure(figsize=(max(8, device_matrix.shape[1]*0.5), max(6, device_matrix.shape[0]*0.5)))
-    sns.heatmap(device_matrix, annot=True, cmap="Blues", cbar=True, vmin=0, vmax=1)
-    plt.title("Device Accuracies Across All Epochs")
-    plt.xlabel("Device Index")
-    plt.ylabel("Epoch")
+    plt.figure(figsize=(10, 6))
+    plt.plot(mean_device_accs, label="Device Accuracy", marker="o", color=colors["Device"])
+    plt.plot(mean_edge_accs, label="Edge Accuracy", marker="s", color=colors["Edge"])
+    plt.plot(global_accs, label="Global Accuracy", marker="^", color=colors["Global"])
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.title("Hierarchical PFL Accuracy Trends")
+    plt.ylim(0, 1)
+    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
+    plt.legend()
+    plt.grid(True)
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "all_epochs_device_heatmap.png"))
+    plt.savefig(os.path.join(save_dir, "overall_accuracy_trends.png"))
+    plt.show()
     plt.close()
+    plt.clf()  # clears the current figure
+    plt.cla()  # clears current axes
 
-    plt.figure(figsize=(max(8, edge_matrix.shape[1]*0.5), max(6, edge_matrix.shape[0]*0.5)))
-    sns.heatmap(edge_matrix, annot=True, cmap="Oranges", cbar=True, vmin=0, vmax=1)
-    plt.title("Edge Accuracies Across All Epochs")
-    plt.xlabel("Edge Index")
-    plt.ylabel("Epoch")
+    # Device/Edge vs Global trends
+    mean_device_vs_global = [np.mean(d) if d else 0 for d in device_vs_global]
+    mean_edge_vs_global = [np.mean(e) if e else 0 for e in edge_vs_global]
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(mean_device_vs_global, label="Device vs Global", marker="o", color=colors["Device"])
+    plt.plot(mean_edge_vs_global, label="Edge vs Global", marker="s", color=colors["Edge"])
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy compared to Global")
+    plt.title("Device/Edge Accuracy vs Global Across Epochs")
+    plt.ylim(0, 1)
+    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
+    plt.legend()
+    plt.grid(True)
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "all_epochs_edge_heatmap.png"))
+    plt.savefig(os.path.join(save_dir, "device_edge_vs_global_trends.png"))
+    plt.show()
     plt.close()
+    plt.clf()  # clears the current figure
+    plt.cla()  # clears current axes
 
-    # ================================================================
-    # Hierarchical contribution stacked plot
-    # ================================================================
-    edge_gain = np.maximum(np.array(mean_edge_acc) - np.array(mean_device_acc), 0)
-    global_gain = np.maximum(np.array(global_accs) - np.array(mean_edge_acc), 0)
-    base_device = np.array(mean_device_acc)
+    # -----------------------------
+    # 2b. Hierarchical Contribution Evolution (stacked)
+    # -----------------------------
+    # Calculate incremental gains for each layer
+    edge_gain = np.maximum(np.array(mean_edge_accs) - np.array(mean_device_accs), 0)
+    global_gain = np.maximum(np.array(global_accs) - np.array(mean_edge_accs), 0)
+    base_device = np.array(mean_device_accs)
+
+    epochs = np.arange(1, num_epochs + 1)
 
     plt.figure(figsize=(10, 6))
     plt.stackplot(
-        np.arange(1, num_epochs+1),
+        epochs,
         base_device,
         edge_gain,
         global_gain,
         labels=["Device Base", "Edge Gain", "Global Gain"],
         colors=[colors["Device"], colors["Edge"], colors["Global"]],
-        alpha=0.8
+        alpha=0.8,
     )
+    plt.title("Hierarchical Contribution Evolution Across Epochs")
     plt.xlabel("Epoch")
     plt.ylabel("Cumulative Accuracy")
-    plt.title("Hierarchical Contribution Evolution (Device → Edge → Global)")
-    plt.legend(loc="upper left")
+    plt.xticks(epochs, labels=[f"Epoch {i}" for i in epochs])
+    plt.ylim(0, 1)
     plt.grid(True, linestyle="--", alpha=0.6)
+    plt.legend(loc="upper left")
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "hierarchical_contribution.png"))
+    plt.savefig(os.path.join(save_dir, "hierarchical_contribution_evolution.png"))
+    plt.show()
     plt.close()
+    plt.clf()
+    plt.cla()
 
-    # ================================================================
-    # Print summary
-    # ================================================================
-    print("\n📊 HPFL Full Improvement Summary:")
-    for layer, mean_acc, mean_imp in [
-        ("Device", mean_device_acc, [0]+device_improvements),
-        ("Edge", mean_edge_acc, [0]+edge_improvements),
-        ("Global", global_accs, [0]+list(global_improve))
-    ]:
-        total_gain = np.sum(mean_imp)
-        pct_gain = (total_gain / mean_acc[0]) * 100 if mean_acc[0] != 0 else 0
-        print(f"  • {layer} → Total gain: +{total_gain:.3f} ({pct_gain:+.2f}%)")
+    # -----------------------------
+    # 3. Aggregate heatmaps across all epochs
+    # -----------------------------
 
-    print(f"\n✅ All HPFL plots saved in: {save_dir}")
+    # Device accuracy heatmap across epochs
+    device_matrix = np.array([d if d else [0] * len(device_accs[0]) for d in device_accs])
+    plt.figure(figsize=(max(8, device_matrix.shape[1] * 0.5), max(6, device_matrix.shape[0] * 0.5)))
+    sns.heatmap(device_matrix, annot=True, cmap="Blues", cbar=True, vmin=0, vmax=1)
+    plt.xlabel("Device Index")
+    plt.ylabel("Epoch")
+    plt.title("Device Accuracies Across Epochs")
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "all_epochs_device_heatmap.png"))
+    plt.close()
+    plt.clf()  # clears the current figure
+    plt.cla()  # clears current axes
 
+    # Edge accuracy heatmap across epochs
+    edge_matrix = np.array([e if e else [0] * len(edge_accs[0]) for e in edge_accs])
+    plt.figure(figsize=(max(8, edge_matrix.shape[1] * 0.5), max(6, edge_matrix.shape[0] * 0.5)))
+    sns.heatmap(edge_matrix, annot=True, cmap="Oranges", cbar=True, vmin=0, vmax=1)
+    plt.xlabel("Edge Index")
+    plt.ylabel("Epoch")
+    plt.title("Edge Accuracies Across Epochs")
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "all_epochs_edge_heatmap.png"))
+    plt.close()
+    plt.clf()  # clears the current figure
+    plt.cla()  # clears current axes
+
+    print(f"All plots saved to folder: {save_dir}")
 
 # ============================================================
 #                     Main
@@ -2757,13 +2552,22 @@ if __name__ == "__main__":
 
     # 2. Encode labels
     le = LabelEncoder()
-    y_all = np.concatenate([y for _, _, y, _, _, _, _, _ in devices_data])
-    le.fit(y_all)
+    # Collect all labels safely
+    y_all = np.concatenate([
+        y for _, _, y, _, _, _, _, _ in devices_data
+        if y is not None and len(y) > 0
+    ])
+
+    # Fit LabelEncoder only if there are labels
+    if len(y_all) > 0:
+        le.fit(y_all)
+    else:
+        print("⚠️ Warning: No true labels found to fit LabelEncoder.")
     num_classes = len(np.unique(y_final))
 
     # 4. Train HPFL model with accuracy tracking
 
     history = hpfl_train_with_accuracy(d_data=devices_data, e_groups=edge_groups, edge_finetune_data = edge_finetune_data,
                                            le=le, n_classes=num_classes, verbose=True)
-    plot_hpfl_full(history)
+    plot_hpfl_all(history)
 

@@ -682,9 +682,6 @@ def log_transform_skewed_features(
     return df_safe
 
 
-
-
-
 """
 def load_and_label_all_parallel(log_path_str, folder_path,
                                 benign_keywords=None,
@@ -790,80 +787,113 @@ def load_and_label_all_parallel(
         folder_path,
         drop_columns=None,
         max_workers=4,
-        cache_parquet=True,
+        cache_parquet=False,
         parquet_file="cached_preprocessed.parquet",
         skew_threshold=2.0
 ):
     """
-    Load multiple CSV, JSON, or PCAP files in parallel, extract all possible features,
-    label them, drop unsafe columns, normalize skewed numeric features, convert Protocol
-    to categorical, and cache to parquet.
+    Load multiple CSV, JSON, or PCAP files in parallel, extract features, label them,
+    drop unsafe columns immediately, normalize skewed numeric features, convert Protocol
+    to categorical, and optionally cache to Parquet. If no files are found, an empty DataFrame is returned
+    and cached.
     """
+
     if drop_columns is None:
         drop_columns = [
-            'Flow ID',
-            'Src IP',
-            'Dst IP',
-            'Timestamp',
-            'Src Port',
-            'Dst Port'
+            'Flow ID', 'Src IP', 'Dst IP', 'Timestamp', 'Src Port', 'Dst Port'
         ]
 
-    # Collect CSV, JSON, and PCAP files
+    # Collect all files
     csv_files = glob(os.path.join(folder_path, "*.csv")) + glob(os.path.join(folder_path, "*.CSV"))
     json_files = glob(os.path.join(folder_path, "*.json")) + glob(os.path.join(folder_path, "*.JSON"))
     pcap_files = glob(os.path.join(folder_path, "*.pcap")) + glob(os.path.join(folder_path, "*.PCAP"))
-
     all_files = csv_files + json_files + pcap_files
-    if not all_files:
-        raise FileNotFoundError(f"No CSV, JSON, or PCAP files found in: {os.path.abspath(folder_path)}")
 
     parquet_path = os.path.join(log_path_str, parquet_file)
+
+    # Try loading cached Parquet if available
     if cache_parquet and os.path.exists(parquet_path):
-        log_util.safe_log(f"📦 Using cached parquet file: {parquet_path}")
-        return pd.read_parquet(parquet_path)
+        try:
+            df = pd.read_parquet(parquet_path, engine="pyarrow")
+            log_util.safe_log(f"📦 Using cached parquet file: {parquet_path}")
+            return df
+        except Exception as e:
+            log_util.safe_log(f"⚠️ Cached parquet unreadable ({e}), regenerating...")
 
-    log_util.safe_log(f"🧵 Loading {len(all_files)} files with ThreadPoolExecutor...")
+    # No files found: initialize empty DF and cache
+    if not all_files:
+        log_util.safe_log(f"⚠️ No CSV, JSON, or PCAP files found in {folder_path}, creating empty DataFrame.")
+        empty_df = pd.DataFrame()
+        if cache_parquet:
+            try:
+                empty_df.to_parquet(parquet_path, index=False, engine="fastparquet", compression='BROTLI')
+                log_util.safe_log(f"📝 Cached empty DataFrame to parquet: {parquet_path}")
+            except Exception as e:
+                log_util.safe_log(f"❌ Failed to cache empty DataFrame: {e}")
+        return empty_df
 
-    def process_file_auto(file_path, drop_columns):
+    log_util.safe_log(f"🧵 Loading {len(all_files)} files in parallel...")
+
+    # -----------------------------
+    # File processing function
+    # -----------------------------
+    def process_file_auto(file_path):
         ext = os.path.splitext(file_path)[1].lower()
-        if ext in ['.csv']:
-            return process_single_file(file_path, drop_columns)
-        elif ext in ['.json']:
-            return process_single_json(file_path, drop_columns)  # fully flattened/exploded
-        elif ext in ['.pcap']:
-            return process_single_pcap(file_path, drop_columns)  # all-layer dynamic extraction
-        else:
-            log_util.safe_log(f"⚠️ Unsupported file type: {file_path}")
-            return None
+        df = None
+        try:
+            if ext == ".csv":
+                df = process_single_file(file_path, drop_columns)
+            elif ext == ".json":
+                df = process_single_json(file_path, drop_columns)
+            elif ext == ".pcap":
+                df = process_single_pcap(file_path, drop_columns)
+            else:
+                log_util.safe_log(f"⚠️ Unsupported file type: {file_path}")
+                return None
+
+            # Drop unsafe columns immediately after reading
+            if df is not None:
+                df = df.drop(columns=[c for c in drop_columns if c in df.columns], errors='ignore')
+        except Exception as e:
+            log_util.safe_log(f"❌ Error processing {file_path}: {e}")
+            df = None
+        return df
 
     all_data = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(process_file_auto, file, drop_columns): file for file in all_files}
+        futures = {executor.submit(process_file_auto, f): f for f in all_files}
         for i, future in enumerate(as_completed(futures), 1):
             file = futures[future]
             try:
                 df = future.result()
-                if df is not None:
+                if df is not None and not df.empty:
                     all_data.append(df)
                     log_util.safe_log(f"[{i}/{len(all_files)}] ✅ Processed: {file}")
                 else:
-                    log_util.safe_log(f"[{i}/{len(all_files)}] ⚠️ Skipped: {file}")
+                    log_util.safe_log(f"[{i}/{len(all_files)}] ⚠️ Skipped or empty: {file}")
             except Exception as e:
                 log_util.safe_log(f"[{i}/{len(all_files)}] ❌ Exception for {file}: {e}")
 
+    # If all files failed, fallback to empty DF
     if not all_data:
-        raise ValueError("❌ No usable labeled data found in any files.")
+        log_util.safe_log("❌ No usable labeled data found in any files, returning empty DataFrame.")
+        empty_df = pd.DataFrame()
+        if cache_parquet:
+            try:
+                empty_df.to_parquet(parquet_path, index=False, engine="fastparquet", compression='BROTLI')
+                log_util.safe_log(f"📝 Cached empty DataFrame to parquet: {parquet_path}")
+            except Exception as e:
+                log_util.safe_log(f"❌ Failed to cache empty DataFrame: {e}")
+        return empty_df
 
     final_df = pd.concat(all_data, ignore_index=True)
 
     # -----------------------------
     # 1️⃣ Log-transform highly skewed numeric features
     # -----------------------------
-    target = "Label"
     final_df = log_transform_skewed_features(
         df=final_df,
-        target_col=target,
+        target_col="Label",
         skew_threshold=skew_threshold,
         extreme_skew_threshold=1000,
         clip_threshold=1e6,
@@ -876,14 +906,14 @@ def load_and_label_all_parallel(
     )
 
     # -----------------------------
-    # 2️⃣ Protocol as categorical
+    # 2️⃣ Convert 'Protocol' to categorical
     # -----------------------------
     if 'Protocol' in final_df.columns:
         final_df['Protocol'] = final_df['Protocol'].astype('category')
         log_util.safe_log("🔄 Converted 'Protocol' to categorical")
 
     # -----------------------------
-    # 3️⃣ Convert any remaining object columns to string
+    # 3️⃣ Convert remaining object columns to string
     # -----------------------------
     object_cols = final_df.select_dtypes(include='object').columns
     for col in object_cols:
@@ -892,9 +922,6 @@ def load_and_label_all_parallel(
             log_util.safe_log(f"🔄 Converted '{col}' to string")
         except Exception as e:
             log_util.safe_log(f"❌ Could not convert column '{col}': {e}")
-
-    log_util.safe_log("✅ All file processing completed.")
-    log_util.safe_log(f"✅ Final shape: ({int(final_df.shape[0])}, {int(final_df.shape[1])})")
 
     # -----------------------------
     # 4️⃣ Cache to parquet
@@ -906,7 +933,13 @@ def load_and_label_all_parallel(
         except Exception as e:
             log_util.safe_log(f"❌ Failed to cache to parquet: {e}")
 
+    log_util.safe_log("✅ All file processing completed.")
+    log_util.safe_log(f"✅ Final shape: {final_df.shape}")
+
     return final_df
+
+
+
 
 
 
@@ -1089,7 +1122,7 @@ def preprocess_data_safe(log_path_str, selected_folder, writer=None, scaler_type
             log_path_str, os.path.join(config.OUTPUT_DATASET_ALL_DATA, selected_folder)
         )
 
-    df = df.sample(frac=0.5, random_state=42)#TODO REMOVE
+    df = df.sample(frac=0.6, random_state=42)#TODO REMOVE
 
     features = df.columns.difference(['Label'])
     df[features] = df[features].astype(np.float32)
