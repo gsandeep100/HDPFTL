@@ -344,12 +344,13 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, use_true
 
         models_per_device = d_models[idx] if d_models[idx] else []
 
-        # ----------------------------[44144
+        # ----------------------------
         # Sequential boosting
         # ----------------------------
         for t in range(config["device_boosting_rounds"]):
-            if use_true_labels:
-                y_pseudo = le.transform(y_train)  # true labels mode
+            #if use_true_labels:
+            y_pseudo = le.transform(y_train)  # true labels mode
+            """
             else:
                 sample_sign = np.sign(residual.sum(axis=1))  # +1 if net positive, -1 if net negative
 
@@ -358,7 +359,7 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, use_true
                     np.argmax(residual, axis=1),
                     np.argmin(residual, axis=1)
                 )
-
+            """
             if len(np.unique(y_pseudo)) < 2:
                 print(f"Device {idx}, round {t}: only single class left, skipping further boosting.")
                 break
@@ -2029,8 +2030,6 @@ def evaluate_multilevel_performance(
     return metrics_test
 
 
-
-
 # ============================================================
 #                  HPFL TRAINING AND EVALUATION
 # ============================================================
@@ -2735,7 +2734,7 @@ def plot_hpfl_full(metrics_test, save_root_dir="hdpftl_plot_outputs"):
 # ============================================================
 
 if __name__ == "__main__":
-    folder_path = "CIC_IoT_DIAD_2024"
+    folder_path = "CIC_IoT_IDAD_Dataset_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
