@@ -25,7 +25,7 @@ from pymc import logit
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 import lightgbm as lgb
-
+import joblib
 from lightgbm import early_stopping, LGBMClassifier, LGBMRegressor, log_evaluation
 from sklearn.metrics import accuracy_score, log_loss
 from sklearn.model_selection import train_test_split
@@ -66,8 +66,8 @@ config = {
     "alpha": 1.0,
     "min_child_samples": 10,
     "learning_rate_device": 0.01,
-    "learning_rate_edge": 0.1,
-    "learning_rate_backward": 0.1,
+    "learning_rate_edge": 0.01,
+    "learning_rate_backward": 0.01,
     "max_depth": -1,
     "feature_fraction": 0.8,
     "early_stopping_rounds_device": 20,
@@ -77,7 +77,7 @@ config = {
     "lambda_l1": 1.0,
     "lambda_l2": 1.0,
     "device": "cpu",
-    "eps_threshold": 0.001,
+    "eps_threshold": 1e-4
 
 }
 
@@ -206,7 +206,7 @@ def train_lightgbm(
 # Predict probabilities safely, filling missing classes
 # ============================================================
 
-def predict_proba_fixed(model, X, num_classes):
+def predict_proba_fixed(model, X, n_classes):
     """
     Universal safe prediction wrapper for LightGBM / sklearn models.
     Handles:
@@ -247,11 +247,11 @@ def predict_proba_fixed(model, X, num_classes):
     pred = np.clip(pred, eps, 1 - eps)
 
     # Align with total number of classes
-    full = np.zeros((pred.shape[0], num_classes))
+    full = np.zeros((pred.shape[0], n_classes))
     model_classes = np.asarray(getattr(model, "classes_", np.arange(pred.shape[1]))).astype(int)
 
     for i, cls in enumerate(model_classes):
-        if 0 <= cls < num_classes:
+        if 0 <= cls < n_classes:
             full[:, cls] = pred[:, i]
 
     # Normalize rows
@@ -599,7 +599,10 @@ def edge_layer_boosting(e_groups, d_embeddings, d_residuals,
             residual_edge = residual_edge - config["learning_rate_edge"] * pred_proba
             residual_edge = np.clip(residual_edge, -1 + eps_residual, 1 - eps_residual)
 
-            models_per_edge.append(model)
+            if models_per_edge:
+                models_per_edge[-1] = model  # update last one
+            else:
+                models_per_edge.append(model)
 
         # -----------------------------
         # 3. Store results
@@ -1346,6 +1349,104 @@ def make_edge_groups(n_devices: int, n_edges: int, random_state: int = 42) -> Li
     return [list(g) for g in np.array_split(idxs, n_edges)]
 
 
+# ==========================================================
+# SAVE FUNCTION
+# ==========================================================
+def save_hpfl_models(device_models, edge_models, epoch,
+                     y_global_pred=None, global_residuals=None, theta_global=None,
+                     save_root="trained_models"):
+    """
+    Save all device and edge models, along with Bayesian global outputs for a given epoch.
+
+    Args:
+        device_models (list): List of trained device-level models.
+        edge_models (list): List of trained edge-level models.
+        epoch (int): Current epoch number (0-indexed).
+        y_global_pred (np.ndarray, optional): Global aggregated predictions.
+        global_residuals (np.ndarray, optional): Global residual feedback matrix.
+        theta_global (np.ndarray, optional): Bayesian parameters or global distribution statistics.
+        save_root (str): Base directory for saving model files.
+    """
+    epoch_dir = os.path.join(save_root, f"epoch_{epoch + 1}")
+    os.makedirs(epoch_dir, exist_ok=True)
+
+    # ---- Save Device Models ----
+    for idx, model in enumerate(device_models):
+        joblib.dump(model, os.path.join(epoch_dir, f"device_model_{idx}.pkl"))
+
+    # ---- Save Edge Models ----
+    for idx, model in enumerate(edge_models):
+        joblib.dump(model, os.path.join(epoch_dir, f"edge_model_{idx}.pkl"))
+
+    # ---- Save Bayesian Global Outputs (if available) ----
+    if y_global_pred is not None:
+        np.save(os.path.join(epoch_dir, "y_global_pred.npy"), y_global_pred)
+    if global_residuals is not None:
+        np.save(os.path.join(epoch_dir, "global_residuals.npy"), global_residuals)
+    if theta_global is not None:
+        np.save(os.path.join(epoch_dir, "theta_global.npy"), theta_global)
+
+    print(f"✅ HPFL epoch {epoch + 1} saved → {epoch_dir}")
+
+
+# ==========================================================
+# LOAD FUNCTION
+# ==========================================================
+def load_hpfl_models(epoch, num_devices, num_edges, save_root="trained_models"):
+    """
+    Load all device, edge models, and Bayesian global outputs for a given epoch.
+
+    Args:
+        epoch (int): Epoch number to load (0-indexed).
+        num_devices (int): Number of device models expected.
+        num_edges (int): Number of edge models expected.
+        save_root (str): Base directory where models were saved.
+
+    Returns:
+        tuple:
+            (
+                loaded_device_models,
+                loaded_edge_models,
+                y_global_pred,
+                global_residuals,
+                theta_global
+            )
+    """
+    epoch_dir = os.path.join(save_root, f"epoch_{epoch + 1}")
+
+    if not os.path.exists(epoch_dir):
+        raise FileNotFoundError(f"❌ Epoch directory not found: {epoch_dir}")
+
+    # ---- Load Device Models ----
+    loaded_device_models = []
+    for idx in range(num_devices):
+        path = os.path.join(epoch_dir, f"device_model_{idx}.pkl")
+        if os.path.exists(path):
+            loaded_device_models.append(joblib.load(path))
+        else:
+            print(f"⚠️ Missing device model {idx} at epoch {epoch + 1}")
+
+    # ---- Load Edge Models ----
+    loaded_edge_models = []
+    for idx in range(num_edges):
+        path = os.path.join(epoch_dir, f"edge_model_{idx}.pkl")
+        if os.path.exists(path):
+            loaded_edge_models.append(joblib.load(path))
+        else:
+            print(f"⚠️ Missing edge model {idx} at epoch {epoch + 1}")
+
+    # ---- Load Bayesian Global Outputs ----
+    def safe_load_npy(file_path):
+        return np.load(file_path) if os.path.exists(file_path) else None
+
+    y_global_pred = safe_load_npy(os.path.join(epoch_dir, "y_global_pred.npy"))
+    global_residuals = safe_load_npy(os.path.join(epoch_dir, "global_residuals.npy"))
+    theta_global = safe_load_npy(os.path.join(epoch_dir, "theta_global.npy"))
+
+    print(f"✅ HPFL epoch {epoch + 1} loaded ← {epoch_dir}")
+    return loaded_device_models, loaded_edge_models, y_global_pred, global_residuals, theta_global
+
+
 # ============================================================
 # Dirichlet Partitioning
 # ============================================================
@@ -1743,7 +1844,7 @@ def evaluate_multilevel_performance(
     device_val_scores=None,
     edge_val_scores=None,
     calibrate=True,
-    device_weight_mode="samples",
+    device_weight_mode="weighted",
     top_k=3,
 ):
     """
@@ -2081,6 +2182,14 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
             combine_mode="weighted",
             top_k=3,
         )
+
+        save_hpfl_models(
+            device_models, edge_models, epoch,
+            y_global_pred=y_global_pred,
+            global_residuals=global_residuals,
+            theta_global=theta_global
+        )
+
         """
         metrics_test = compute_multilevel_accuracy(
             device_models=device_models,
@@ -2122,7 +2231,6 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
         history["y_true_per_epoch"].append(y_tests)
 
     return history
-        
 
 
 """
@@ -2195,7 +2303,6 @@ def get_dated_save_dir(base_dir="hdpftl_plot_outputs"):
     os.makedirs(dated_dir, exist_ok=True)
     return dated_dir
 
-
 def multi_class_brier(y_true, y_prob):
     """
     Compute multi-class Brier score.
@@ -2204,7 +2311,6 @@ def multi_class_brier(y_true, y_prob):
     y_one_hot = np.zeros_like(y_prob)
     y_one_hot[np.arange(len(y_true)), y_true] = 1
     return np.mean(np.sum((y_prob - y_one_hot) ** 2, axis=1))
-
 
 def top_k_accuracy(y_true, y_prob, k=3):
     """
@@ -2335,39 +2441,163 @@ def plot_device_accuracies(
 
     return accuracies, log_losses, brier_scores, topk_accuracies
 
-def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
+def plot_hpfl_full(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     """
-    Generate Hierarchical PFL plots from structured metrics dictionary.
-    Includes per-epoch stacked contributions, device/edge vs global,
-    overall accuracy trends, and per-device/edge heatmaps.
-
-    Args:
-        metrics_test (dict): Output metrics dictionary per epoch.
-        save_root_dir (str): Base directory to save plots.
+    Full HPFL plotting: all accuracy trends, backward-pass improvements,
+    per-epoch contributions, heatmaps, and hierarchical contributions.
+    Keeps all plots from both original methods unchanged.
     """
 
-    # -----------------------------
-    # Create dated folder automatically
-    # -----------------------------
     today_str = datetime.now().strftime("%Y-%m-%d")
     save_dir = os.path.join(save_root_dir, today_str)
     os.makedirs(save_dir, exist_ok=True)
 
     # -----------------------------
-    # Extract per-epoch values
+    # Extract metrics
     # -----------------------------
-    device_accs = metrics_test["device_accs_per_epoch"]  # list of lists
-    edge_accs = metrics_test["edge_accs_per_epoch"]      # list of lists
-    global_accs = metrics_test["global_accs"]            # list of scalars
-    device_vs_global = metrics_test["device_vs_global"]  # list of lists
-    edge_vs_global = metrics_test["edge_vs_global"]      # list of lists
+    device_accs = metrics_test["device_accs_per_epoch"]
+    edge_accs = metrics_test["edge_accs_per_epoch"]
+    global_accs = metrics_test["global_accs"]
+    device_vs_global = metrics_test.get("device_vs_global", [])
+    edge_vs_global = metrics_test.get("edge_vs_global", [])
 
     num_epochs = len(global_accs)
     colors = {"Device": "skyblue", "Edge": "orange", "Global": "green"}
 
-    # -----------------------------
-    # 1. Per-epoch stacked contributions & comparisons
-    # -----------------------------
+    # ================================================================
+    # FIGURES 1-4 — Accuracy trends per layer
+    # ================================================================
+    mean_device_acc = [np.mean(acc) for acc in device_accs]
+    mean_edge_acc = [np.mean(acc) for acc in edge_accs]
+
+    # Figure 1: Device
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(num_epochs), mean_device_acc, color=colors["Device"], marker="o")
+    plt.title("Figure 1: Device-Level Mean Accuracy Across Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("Mean Device Accuracy")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "figure1_device_accuracy_trend.png"))
+    plt.show()
+    plt.close()
+
+    # Figure 2: Edge
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(num_epochs), mean_edge_acc, color=colors["Edge"], marker="s")
+    plt.title("Figure 2: Edge-Level Mean Accuracy Across Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("Mean Edge Accuracy")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "figure2_edge_accuracy_trend.png"))
+    plt.show()
+    plt.close()
+
+    # Figure 3: Global
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(num_epochs), global_accs, color=colors["Global"], marker="^")
+    plt.title("Figure 3: Global Accuracy Trend (Bayesian Aggregation Outcome)")
+    plt.xlabel("Epoch")
+    plt.ylabel("Global Accuracy")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "figure3_global_accuracy_trend.png"))
+    plt.show()
+    plt.close()
+
+    # Figure 4: Comparative
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(num_epochs), mean_device_acc, label="Device", marker="o", color=colors["Device"])
+    plt.plot(range(num_epochs), mean_edge_acc, label="Edge", marker="s", color=colors["Edge"])
+    plt.plot(range(num_epochs), global_accs, label="Global", marker="^", color=colors["Global"])
+    plt.title("Figure 4: Comparative Layer-Wise Accuracy Across Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "figure4_layerwise_accuracy_comparison.png"))
+    plt.show()
+    plt.close()
+
+    # ================================================================
+    # FIGURES 10-13 — Δ accuracy per layer (backward pass)
+    # ================================================================
+    device_improvements = [np.mean(np.array(device_accs[i]) - np.array(device_accs[i-1]))
+                           for i in range(1, num_epochs)]
+    edge_improvements = [np.mean(np.array(edge_accs[i]) - np.array(edge_accs[i-1]))
+                         for i in range(1, num_epochs)]
+    global_improve = np.diff(global_accs)
+
+    # Figure 10: Device Δ
+    plt.figure(figsize=(10, 5))
+    bars = plt.bar(np.arange(1, num_epochs), device_improvements, color=colors["Device"])
+    plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+    plt.xlabel("Epoch")
+    plt.ylabel("Δ Device Accuracy (Post-Backward Pass)")
+    plt.title("Figure 10: Mean Device Accuracy Improvement After Each Backward Pass")
+    plt.grid(axis="y", linestyle="--", alpha=0.6)
+    for idx, bar in enumerate(bars):
+        val = device_improvements[idx]
+        pct = (val / mean_device_acc[idx]) * 100 if mean_device_acc[idx] != 0 else 0
+        plt.text(bar.get_x()+bar.get_width()/2, bar.get_height(),
+                 f"+{val:.3f}\n({pct:+.1f}%)", ha="center", va="bottom", fontsize=9)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "figure10_device_accuracy_improvement.png"))
+    plt.show()
+    plt.close()
+
+    # Figure 11: Edge Δ
+    plt.figure(figsize=(10, 5))
+    bars = plt.bar(np.arange(1, num_epochs), edge_improvements, color=colors["Edge"])
+    plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+    plt.xlabel("Epoch")
+    plt.ylabel("Δ Edge Accuracy (Post-Backward Pass)")
+    plt.title("Figure 11: Mean Edge Accuracy Improvement After Each Backward Pass")
+    plt.grid(axis="y", linestyle="--", alpha=0.6)
+    for idx, bar in enumerate(bars):
+        val = edge_improvements[idx]
+        pct = (val / mean_edge_acc[idx]) * 100 if mean_edge_acc[idx] != 0 else 0
+        plt.text(bar.get_x()+bar.get_width()/2, bar.get_height(),
+                 f"+{val:.3f}\n({pct:+.1f}%)", ha="center", va="bottom", fontsize=9)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "figure11_edge_accuracy_improvement.png"))
+    plt.show()
+    plt.close()
+
+    # Figure 12: Global Δ
+    plt.figure(figsize=(10, 5))
+    plt.plot(np.arange(1, num_epochs), global_improve, marker="^", color=colors["Global"])
+    plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+    plt.xlabel("Epoch")
+    plt.ylabel("Δ Global Aggregated Accuracy")
+    plt.title("Figure 12: Global Accuracy Improvement (Bayesian Aggregation)")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "figure12_global_accuracy_improvement.png"))
+    plt.show()
+    plt.close()
+
+    # Figure 13: Combined Δ
+    plt.figure(figsize=(10, 6))
+    plt.plot(np.arange(1, num_epochs), device_improvements, label="Device Δ Accuracy", marker="o", color=colors["Device"])
+    plt.plot(np.arange(1, num_epochs), edge_improvements, label="Edge Δ Accuracy", marker="s", color=colors["Edge"])
+    plt.plot(np.arange(1, num_epochs), global_improve, label="Global Δ Accuracy", marker="^", color=colors["Global"])
+    plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+    plt.xlabel("Epoch")
+    plt.ylabel("Δ Accuracy per Backward Pass")
+    plt.title("Figure 13: Layer-wise Improvement Trend Across Backward Passes")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "figure13_combined_improvement_trend.png"))
+    plt.show()
+    plt.close()
+
+    # ================================================================
+    # Per-epoch contributions, device vs global, edge vs global, heatmaps
+    # ================================================================
     for epoch_idx in range(num_epochs):
         mean_device = np.mean(device_accs[epoch_idx]) if device_accs[epoch_idx] else 0
         mean_edge = np.mean(edge_accs[epoch_idx]) if edge_accs[epoch_idx] else 0
@@ -2380,180 +2610,124 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
             max(global_acc - mean_edge, 0),
         ]
         layers = ["Device", "Edge", "Global"]
-
         plt.figure(figsize=(6, 4))
         bars = plt.bar(layers, contributions, color=[colors[l] for l in layers])
         plt.ylim(0, 1)
         plt.ylabel("Contribution to Final Accuracy")
         plt.title(f"Epoch {epoch_idx+1} Layer Contributions")
         for bar, val in zip(bars, contributions):
-            plt.text(bar.get_x() + bar.get_width()/2, float(val)+0.02, f"{val:.3f}",
-                     ha="center", va="bottom")
+            plt.text(bar.get_x()+bar.get_width()/2, float(val)+0.02, f"{val:.3f}", ha="center", va="bottom")
         plt.grid(axis="y", linestyle="--", alpha=0.6)
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch_idx+1}.png"))
         plt.close()
-        plt.clf()  # clears the current figure
-        plt.cla()  # clears current axes
 
         # Device vs Global & Edge vs Global
-        mean_dev_vs_glob = np.mean(device_vs_global[epoch_idx]) if device_vs_global[epoch_idx] else 0
-        mean_edge_vs_glob = np.mean(edge_vs_global[epoch_idx]) if edge_vs_global[epoch_idx] else 0
+        mean_dev_vs_glob = np.mean(device_vs_global[epoch_idx]) if device_vs_global else None
+        mean_edge_vs_glob = np.mean(edge_vs_global[epoch_idx]) if edge_vs_global else None
+        if mean_dev_vs_glob is not None:
+            plt.figure(figsize=(6, 4))
+            plt.bar(["Device vs Global"], [mean_dev_vs_glob], color=colors["Device"])
+            plt.title(f"Epoch {epoch_idx+1}: Device vs Global Δ")
+            plt.ylabel("Δ Accuracy")
+            plt.ylim(0, 1)
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"epoch_device_vs_global_{epoch_idx+1}.png"))
+            plt.close()
+        if mean_edge_vs_glob is not None:
+            plt.figure(figsize=(6, 4))
+            plt.bar(["Edge vs Global"], [mean_edge_vs_glob], color=colors["Edge"])
+            plt.title(f"Epoch {epoch_idx+1}: Edge vs Global Δ")
+            plt.ylabel("Δ Accuracy")
+            plt.ylim(0, 1)
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"epoch_edge_vs_global_{epoch_idx+1}.png"))
+            plt.close()
 
-        plt.figure(figsize=(6, 4))
-        plt.bar(["Device vs Global", "Edge vs Global"],
-                [mean_dev_vs_glob, mean_edge_vs_glob],
-                color=[colors["Device"], colors["Edge"]])
-        plt.ylim(0, 1)
-        plt.ylabel("Accuracy compared to Global")
-        plt.title(f"Epoch {epoch_idx+1} Layer vs Global Accuracy")
-        plt.grid(axis="y", linestyle="--", alpha=0.6)
-        plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, f"epoch_vs_global_{epoch_idx+1}.png"))
-        plt.close()
-        plt.clf()  # clears the current figure
-        plt.cla()  # clears current axes
-        # -----------------------------
-        # 1b. Device-level heatmap
-        # -----------------------------
+        # Device heatmap
         if device_accs[epoch_idx]:
             plt.figure(figsize=(max(6, len(device_accs[epoch_idx])*0.5), 4))
-            sns.heatmap(np.array([device_accs[epoch_idx]]), annot=True, cmap="Blues",
-                        cbar=True, vmin=0, vmax=1)
+            sns.heatmap(np.array([device_accs[epoch_idx]]), annot=True, cmap="Blues", cbar=True, vmin=0, vmax=1)
+            plt.title(f"Epoch {epoch_idx+1} Device Accuracies")
             plt.xlabel("Device Index")
             plt.ylabel("Epoch")
-            plt.title(f"Epoch {epoch_idx+1} Device Accuracies")
             plt.tight_layout()
             plt.savefig(os.path.join(save_dir, f"epoch_device_heatmap_{epoch_idx+1}.png"))
             plt.close()
-            plt.clf()  # clears the current figure
-            plt.cla()  # clears current axes
-        # -----------------------------
-        # 1c. Edge-level heatmap
-        # -----------------------------
+
+        # Edge heatmap
         if edge_accs[epoch_idx]:
             plt.figure(figsize=(max(6, len(edge_accs[epoch_idx])*0.5), 4))
-            sns.heatmap(np.array([edge_accs[epoch_idx]]), annot=True, cmap="Oranges",
-                        cbar=True, vmin=0, vmax=1)
+            sns.heatmap(np.array([edge_accs[epoch_idx]]), annot=True, cmap="Oranges", cbar=True, vmin=0, vmax=1)
+            plt.title(f"Epoch {epoch_idx+1} Edge Accuracies")
             plt.xlabel("Edge Index")
             plt.ylabel("Epoch")
-            plt.title(f"Epoch {epoch_idx+1} Edge Accuracies")
             plt.tight_layout()
             plt.savefig(os.path.join(save_dir, f"epoch_edge_heatmap_{epoch_idx+1}.png"))
             plt.close()
-            plt.clf()  # clears the current figure
-            plt.cla()  # clears current axes
 
-    # -----------------------------
-    # 2. Accuracy trends across epochs
-    # -----------------------------
-    mean_device_accs = [np.mean(d) if d else 0 for d in device_accs]
-    mean_edge_accs = [np.mean(e) if e else 0 for e in edge_accs]
+    # Aggregate heatmaps
+    device_matrix = np.array([d if d else [0]*len(device_accs[0]) for d in device_accs])
+    edge_matrix = np.array([e if e else [0]*len(edge_accs[0]) for e in edge_accs])
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(mean_device_accs, label="Device Accuracy", marker="o", color=colors["Device"])
-    plt.plot(mean_edge_accs, label="Edge Accuracy", marker="s", color=colors["Edge"])
-    plt.plot(global_accs, label="Global Accuracy", marker="^", color=colors["Global"])
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.title("Hierarchical PFL Accuracy Trends")
-    plt.ylim(0, 1)
-    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
-    plt.legend()
-    plt.grid(True)
+    plt.figure(figsize=(max(8, device_matrix.shape[1]*0.5), max(6, device_matrix.shape[0]*0.5)))
+    sns.heatmap(device_matrix, annot=True, cmap="Blues", cbar=True, vmin=0, vmax=1)
+    plt.title("Device Accuracies Across All Epochs")
+    plt.xlabel("Device Index")
+    plt.ylabel("Epoch")
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "overall_accuracy_trends.png"))
-    plt.show()
+    plt.savefig(os.path.join(save_dir, "all_epochs_device_heatmap.png"))
     plt.close()
-    plt.clf()  # clears the current figure
-    plt.cla()  # clears current axes
 
-    # Device/Edge vs Global trends
-    mean_device_vs_global = [np.mean(d) if d else 0 for d in device_vs_global]
-    mean_edge_vs_global = [np.mean(e) if e else 0 for e in edge_vs_global]
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(mean_device_vs_global, label="Device vs Global", marker="o", color=colors["Device"])
-    plt.plot(mean_edge_vs_global, label="Edge vs Global", marker="s", color=colors["Edge"])
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy compared to Global")
-    plt.title("Device/Edge Accuracy vs Global Across Epochs")
-    plt.ylim(0, 1)
-    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
-    plt.legend()
-    plt.grid(True)
+    plt.figure(figsize=(max(8, edge_matrix.shape[1]*0.5), max(6, edge_matrix.shape[0]*0.5)))
+    sns.heatmap(edge_matrix, annot=True, cmap="Oranges", cbar=True, vmin=0, vmax=1)
+    plt.title("Edge Accuracies Across All Epochs")
+    plt.xlabel("Edge Index")
+    plt.ylabel("Epoch")
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "device_edge_vs_global_trends.png"))
-    plt.show()
+    plt.savefig(os.path.join(save_dir, "all_epochs_edge_heatmap.png"))
     plt.close()
-    plt.clf()  # clears the current figure
-    plt.cla()  # clears current axes
 
-    # -----------------------------
-    # 2b. Hierarchical Contribution Evolution (stacked)
-    # -----------------------------
-    # Calculate incremental gains for each layer
-    edge_gain = np.maximum(np.array(mean_edge_accs) - np.array(mean_device_accs), 0)
-    global_gain = np.maximum(np.array(global_accs) - np.array(mean_edge_accs), 0)
-    base_device = np.array(mean_device_accs)
-
-    epochs = np.arange(1, num_epochs + 1)
+    # ================================================================
+    # Hierarchical contribution stacked plot
+    # ================================================================
+    edge_gain = np.maximum(np.array(mean_edge_acc) - np.array(mean_device_acc), 0)
+    global_gain = np.maximum(np.array(global_accs) - np.array(mean_edge_acc), 0)
+    base_device = np.array(mean_device_acc)
 
     plt.figure(figsize=(10, 6))
     plt.stackplot(
-        epochs,
+        np.arange(1, num_epochs+1),
         base_device,
         edge_gain,
         global_gain,
         labels=["Device Base", "Edge Gain", "Global Gain"],
         colors=[colors["Device"], colors["Edge"], colors["Global"]],
-        alpha=0.8,
+        alpha=0.8
     )
-    plt.title("Hierarchical Contribution Evolution Across Epochs")
     plt.xlabel("Epoch")
     plt.ylabel("Cumulative Accuracy")
-    plt.xticks(epochs, labels=[f"Epoch {i}" for i in epochs])
-    plt.ylim(0, 1)
-    plt.grid(True, linestyle="--", alpha=0.6)
+    plt.title("Hierarchical Contribution Evolution (Device → Edge → Global)")
     plt.legend(loc="upper left")
+    plt.grid(True, linestyle="--", alpha=0.6)
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "hierarchical_contribution_evolution.png"))
-    plt.show()
+    plt.savefig(os.path.join(save_dir, "hierarchical_contribution.png"))
     plt.close()
-    plt.clf()
-    plt.cla()
 
-    # -----------------------------
-    # 3. Aggregate heatmaps across all epochs
-    # -----------------------------
+    # ================================================================
+    # Print summary
+    # ================================================================
+    print("\n📊 HPFL Full Improvement Summary:")
+    for layer, mean_acc, mean_imp in [
+        ("Device", mean_device_acc, [0]+device_improvements),
+        ("Edge", mean_edge_acc, [0]+edge_improvements),
+        ("Global", global_accs, [0]+list(global_improve))
+    ]:
+        total_gain = np.sum(mean_imp)
+        pct_gain = (total_gain / mean_acc[0]) * 100 if mean_acc[0] != 0 else 0
+        print(f"  • {layer} → Total gain: +{total_gain:.3f} ({pct_gain:+.2f}%)")
 
-    # Device accuracy heatmap across epochs
-    device_matrix = np.array([d if d else [0] * len(device_accs[0]) for d in device_accs])
-    plt.figure(figsize=(max(8, device_matrix.shape[1] * 0.5), max(6, device_matrix.shape[0] * 0.5)))
-    sns.heatmap(device_matrix, annot=True, cmap="Blues", cbar=True, vmin=0, vmax=1)
-    plt.xlabel("Device Index")
-    plt.ylabel("Epoch")
-    plt.title("Device Accuracies Across Epochs")
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "all_epochs_device_heatmap.png"))
-    plt.close()
-    plt.clf()  # clears the current figure
-    plt.cla()  # clears current axes
-
-    # Edge accuracy heatmap across epochs
-    edge_matrix = np.array([e if e else [0] * len(edge_accs[0]) for e in edge_accs])
-    plt.figure(figsize=(max(8, edge_matrix.shape[1] * 0.5), max(6, edge_matrix.shape[0] * 0.5)))
-    sns.heatmap(edge_matrix, annot=True, cmap="Oranges", cbar=True, vmin=0, vmax=1)
-    plt.xlabel("Edge Index")
-    plt.ylabel("Epoch")
-    plt.title("Edge Accuracies Across Epochs")
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "all_epochs_edge_heatmap.png"))
-    plt.close()
-    plt.clf()  # clears the current figure
-    plt.cla()  # clears current axes
-
-    print(f"All plots saved to folder: {save_dir}")
+    print(f"\n✅ All HPFL plots saved in: {save_dir}")
 
 
 # ============================================================
@@ -2561,7 +2735,7 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
 # ============================================================
 
 if __name__ == "__main__":
-    folder_path = "CIC_IoT_IDAD_Dataset_2024"
+    folder_path = "CIC_IoT_DIAD_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
@@ -2592,5 +2766,5 @@ if __name__ == "__main__":
 
     history = hpfl_train_with_accuracy(d_data=devices_data, e_groups=edge_groups, edge_finetune_data = edge_finetune_data,
                                            le=le, n_classes=num_classes, verbose=True)
-    plot_hpfl_all(history)
+    plot_hpfl_full(history)
 

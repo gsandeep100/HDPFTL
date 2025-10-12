@@ -15,6 +15,8 @@ import glob
 import hashlib
 import os
 import warnings
+import pyshark
+from pandas import json_normalize
 from collections import Counter
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from contextlib import nullcontext
@@ -352,6 +354,176 @@ def process_single_file(file,
     df = df.infer_objects()
     return df
 
+def process_single_pcap(file, drop_columns=None):
+    """
+    Extract all possible features from a PCAP file using PyShark.
+    Each field in every layer becomes a column.
+    Also computes packet inter-arrival times.
+    """
+
+
+    try:
+        cap = pyshark.FileCapture(file)
+        records = []
+
+        for pkt in cap:
+            pkt_dict = {}
+            try:
+                # Top-level packet info
+                pkt_dict['Timestamp'] = float(pkt.sniff_timestamp) if hasattr(pkt, 'sniff_timestamp') else np.nan
+                pkt_dict['Length'] = int(pkt.length) if hasattr(pkt, 'length') else np.nan
+                pkt_dict['Protocol'] = pkt.highest_layer
+
+                # Dynamically extract all layer fields
+                for layer in pkt.layers:
+                    layer_name = layer.layer_name
+                    for field_name in layer.field_names:
+                        try:
+                            val = getattr(layer, field_name, None)
+                            col_name = f"{layer_name}_{field_name}"
+                            pkt_dict[col_name] = val
+                        except Exception:
+                            pkt_dict[col_name] = None
+
+                records.append(pkt_dict)
+            except Exception as e:
+                log_util.safe_log(f"⚠️ Skipping packet in {file}: {e}")
+
+        cap.close()
+
+        if not records:
+            log_util.safe_log(f"❌ No valid packets in {file}")
+            return None
+
+        df = pd.DataFrame(records)
+
+        # Sort by timestamp
+        df = df.sort_values('Timestamp')
+        df['InterArrival'] = df['Timestamp'].diff().fillna(0)
+
+    except Exception as e:
+        log_util.safe_log(f"⚠️ Error reading PCAP {file}: {e}")
+        return None
+
+    # Assign labels
+    df = assign_labels_numeric(df, file)
+
+    # Convert Label to numeric
+    df['Label'] = pd.to_numeric(df['Label'], errors='coerce')
+    df.dropna(subset=['Label'], inplace=True)
+    if df.empty:
+        log_util.safe_log(f"❌ Skipping PCAP {file}: No valid labels after conversion.")
+        return None
+    df['Label'] = df['Label'].astype(int)
+
+    # Clean
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    df.dropna(inplace=True)
+    df.drop_duplicates(inplace=True)
+    if drop_columns:
+        df.drop(drop_columns, axis=1, inplace=True, errors='ignore')
+
+    # Convert numeric fields where possible
+    for col in df.columns:
+        try:
+            df[col] = pd.to_numeric(df[col], errors='ignore')
+        except Exception:
+            continue
+
+    df = df.convert_dtypes()
+    df = df.infer_objects()
+    return df
+
+
+def process_single_json(file, drop_columns=None):
+    """
+    Extract all possible features from a JSON file, including nested objects
+    and arrays. Flatten everything into a DataFrame suitable for ML.
+    """
+    def flatten_json(data, sep="."):
+        """
+        Recursively flatten nested JSON objects into a dict of column paths.
+        """
+        if isinstance(data, dict):
+            items = {}
+            for k, v in data.items():
+                for sub_k, sub_v in flatten_json(v, sep=sep).items():
+                    items[f"{k}{sep}{sub_k}" if sub_k else k] = sub_v
+            return items
+        elif isinstance(data, list):
+            # If list of dicts, keep as list to explode later
+            if all(isinstance(i, dict) for i in data):
+                return {"": data}
+            else:
+                return {"": data}  # Keep non-dict lists as-is
+        else:
+            return {"": data}
+
+    try:
+        raw = pd.read_json(file)
+    except Exception as e:
+        log_util.safe_log(f"⚠️ Error reading JSON {file}: {e}")
+        return None
+
+    # Flatten each row
+    records = []
+    for idx, row in raw.iterrows():
+        flat_row = flatten_json(row.to_dict())
+        # If any column contains a list of dicts, explode it
+        exploded = {}
+        for k, v in flat_row.items():
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                # Explode each dict in the list as separate rows
+                for i, subdict in enumerate(v):
+                    for sub_k, sub_v in flatten_json(subdict).items():
+                        exploded[f"{k}_{i}_{sub_k}" if sub_k else f"{k}_{i}"] = sub_v
+            else:
+                exploded[k] = v
+        records.append(exploded)
+
+    if not records:
+        log_util.safe_log(f"❌ No valid data in JSON {file}")
+        return None
+
+    df = pd.DataFrame(records)
+
+    # Strip column names
+    df.columns = df.columns.str.strip()
+
+    # Assign labels
+    df = assign_labels_numeric(df, file)
+    df['Label'] = pd.to_numeric(df['Label'], errors='coerce')
+    df.dropna(subset=['Label'], inplace=True)
+    if df.empty:
+        log_util.safe_log(f"❌ Skipping JSON {file}: No valid labels after conversion.")
+        return None
+    df['Label'] = df['Label'].astype(int)
+
+    # Drop unwanted columns
+    if drop_columns:
+        df.drop(drop_columns, axis=1, inplace=True, errors='ignore')
+
+    # Replace inf/-inf
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    df.dropna(inplace=True)
+    df.drop_duplicates(inplace=True)
+
+    # Convert numeric columns where possible
+    for col in df.columns:
+        try:
+            df[col] = pd.to_numeric(df[col], errors='ignore')
+        except Exception:
+            continue
+
+    df = df.convert_dtypes()
+    df = df.infer_objects()
+
+    if df.empty:
+        log_util.safe_log(f"❌ Skipping JSON {file}: Cleaned DataFrame is empty.")
+        return None
+
+    return df
+
 
 def plot_skewed_features_log_transform(df, features_per_fig=10):
     """
@@ -623,11 +795,10 @@ def load_and_label_all_parallel(
         skew_threshold=2.0
 ):
     """
-    Load multiple CSVs in parallel, label them, drop unsafe columns,
-    normalize skewed numeric features (via log_transform_skewed_features),
-    convert Protocol to categorical, and cache to parquet.
+    Load multiple CSV, JSON, or PCAP files in parallel, extract all possible features,
+    label them, drop unsafe columns, normalize skewed numeric features, convert Protocol
+    to categorical, and cache to parquet.
     """
-
     if drop_columns is None:
         drop_columns = [
             'Flow ID',
@@ -638,67 +809,72 @@ def load_and_label_all_parallel(
             'Dst Port'
         ]
 
+    # Collect CSV, JSON, and PCAP files
     csv_files = glob(os.path.join(folder_path, "*.csv")) + glob(os.path.join(folder_path, "*.CSV"))
-    if not csv_files:
-        raise FileNotFoundError(f"No CSV files found in: {os.path.abspath(folder_path)}")
+    json_files = glob(os.path.join(folder_path, "*.json")) + glob(os.path.join(folder_path, "*.JSON"))
+    pcap_files = glob(os.path.join(folder_path, "*.pcap")) + glob(os.path.join(folder_path, "*.PCAP"))
+
+    all_files = csv_files + json_files + pcap_files
+    if not all_files:
+        raise FileNotFoundError(f"No CSV, JSON, or PCAP files found in: {os.path.abspath(folder_path)}")
 
     parquet_path = os.path.join(log_path_str, parquet_file)
     if cache_parquet and os.path.exists(parquet_path):
         log_util.safe_log(f"📦 Using cached parquet file: {parquet_path}")
         return pd.read_parquet(parquet_path)
 
-    log_util.safe_log(f"🧵 Loading {len(csv_files)} CSVs with ThreadPoolExecutor...")
+    log_util.safe_log(f"🧵 Loading {len(all_files)} files with ThreadPoolExecutor...")
+
+    def process_file_auto(file_path, drop_columns):
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext in ['.csv']:
+            return process_single_file(file_path, drop_columns)
+        elif ext in ['.json']:
+            return process_single_json(file_path, drop_columns)  # fully flattened/exploded
+        elif ext in ['.pcap']:
+            return process_single_pcap(file_path, drop_columns)  # all-layer dynamic extraction
+        else:
+            log_util.safe_log(f"⚠️ Unsupported file type: {file_path}")
+            return None
 
     all_data = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(
-                process_single_file,
-                file,
-                drop_columns
-            ): file
-            for file in csv_files
-        }
-
+        futures = {executor.submit(process_file_auto, file, drop_columns): file for file in all_files}
         for i, future in enumerate(as_completed(futures), 1):
             file = futures[future]
             try:
                 df = future.result()
                 if df is not None:
                     all_data.append(df)
-                    log_util.safe_log(f"[{i}/{len(csv_files)}] ✅ Processed: {file}")
+                    log_util.safe_log(f"[{i}/{len(all_files)}] ✅ Processed: {file}")
                 else:
-                    log_util.safe_log(f"[{i}/{len(csv_files)}] ⚠️ Skipped: {file}")
+                    log_util.safe_log(f"[{i}/{len(all_files)}] ⚠️ Skipped: {file}")
             except Exception as e:
-                log_util.safe_log(f"[{i}/{len(csv_files)}] ❌ Exception for {file}: {e}")
+                log_util.safe_log(f"[{i}/{len(all_files)}] ❌ Exception for {file}: {e}")
 
     if not all_data:
-        raise ValueError("❌ No usable labeled data found in any CSV files.")
+        raise ValueError("❌ No usable labeled data found in any files.")
 
     final_df = pd.concat(all_data, ignore_index=True)
 
     # -----------------------------
-    # 1️⃣ Log-transform highly skewed numeric features using modular function
+    # 1️⃣ Log-transform highly skewed numeric features
     # -----------------------------
     target = "Label"
-
-    # Apply log-transform and skew correction on final_df
     final_df = log_transform_skewed_features(
-        df=final_df,  # explicitly pass df
-        target_col=target,  # exclude target column
-        skew_threshold=2.0,  # threshold to log-transform skewed cols
-        extreme_skew_threshold=1000,  # drop if still extremely skewed
-        clip_threshold=1e6,  # clip extreme numeric values
-        top_n=20,  # only transform top 20 skewed features
-        scale_method='standard',  # scale using StandardScaler
-        remove_constant=True,  # drop near-constant features
-        constant_threshold=1e-6,  # variance cutoff for constant features
-        verbose=True,  # print debugging info
-        report_top_n=10  # report top 10 skewed features before/after
+        df=final_df,
+        target_col=target,
+        skew_threshold=skew_threshold,
+        extreme_skew_threshold=1000,
+        clip_threshold=1e6,
+        top_n=20,
+        scale_method='standard',
+        remove_constant=True,
+        constant_threshold=1e-6,
+        verbose=True,
+        report_top_n=10
     )
 
-    y = df[target].values  # keep target untouched
-    #plot_skewed_features_log_transform(final_df)
     # -----------------------------
     # 2️⃣ Protocol as categorical
     # -----------------------------
@@ -725,12 +901,13 @@ def load_and_label_all_parallel(
     # -----------------------------
     if cache_parquet:
         try:
-            # final_df.to_parquet(parquet_path, index=False, engine="fastparquet", compression='BROTLI')
+            final_df.to_parquet(parquet_path, index=False, engine="fastparquet", compression='BROTLI')
             log_util.safe_log(f"📝 Cached to parquet: {parquet_path}")
         except Exception as e:
             log_util.safe_log(f"❌ Failed to cache to parquet: {e}")
 
     return final_df
+
 
 
 def safe_clean_dataframe(df: pd.DataFrame,
@@ -912,7 +1089,7 @@ def preprocess_data_safe(log_path_str, selected_folder, writer=None, scaler_type
             log_path_str, os.path.join(config.OUTPUT_DATASET_ALL_DATA, selected_folder)
         )
 
-    df = df.sample(frac=0.7, random_state=42)#TODO REMOVE
+    #df = df.sample(frac=0.5, random_state=42)#TODO REMOVE
 
     features = df.columns.difference(['Label'])
     df[features] = df[features].astype(np.float32)
