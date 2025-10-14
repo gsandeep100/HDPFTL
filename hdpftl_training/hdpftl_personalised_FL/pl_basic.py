@@ -197,15 +197,21 @@ def train_lightgbm(
         current_logloss = None
 
     # --- Logloss control across edges ---
-    if prev_best_logloss is not None and current_logloss is not None:
-        if current_logloss > prev_best_logloss:
-            # Revert to previous model if degradation detected
-            print(f"⚠️ Logloss worsened ({current_logloss:.4f} > {prev_best_logloss:.4f}), reverting to previous model")
-            return init_model, prev_best_logloss
+    if prev_best_logloss is not None and current_logloss is not None and current_logloss > prev_best_logloss:
+        # Revert to previous model
+        if isinstance(init_model, tuple):
+            prev_model = init_model[0]
         else:
-            print(f"✅ Improved logloss: {current_logloss:.4f} (prev: {prev_best_logloss:.4f})")
+            prev_model = init_model
+        model_to_return = prev_model
+        log_util.safe_log(
+            f"⚠️ Logloss worsened ({current_logloss:.4f} > {prev_best_logloss:.4f}), reverting to previous model")
+    else:
+        model_to_return = model
+        if current_logloss is not None and prev_best_logloss is not None:
+            log_util.safe_log(f"✅ Improved logloss: {current_logloss:.4f} (prev: {prev_best_logloss:.4f})")
 
-    return model, current_logloss
+    return model_to_return, (current_logloss if current_logloss is not None else prev_best_logloss)
 
 
 # ============================================================
@@ -306,11 +312,6 @@ def get_leaf_indices(model, X):
 # ============================================================
 
 def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_params, use_true_labels=False):
-    """
-    Threaded version of device_layer_boosting.
-    Devices under one edge run simultaneously.
-    All original functionality preserved with monotonic logloss enforcement.
-    """
 
     log_util.safe_log("\n" + "*" * 60)
     log_util.safe_log("*" + " " * 28 + "STARTING DEVICE LAYER " + " " * 28 + "*")
@@ -470,10 +471,6 @@ def edge_layer_boosting(
         X_ftune=None, y_ftune=None, device_weights=None,
         chunk_size=5000, n_random_trials=5
 ):
-    """
-    Memory-safe edge-level boosting with optional random search hyperparameter tuning.edge_layer_boosting
-    Handles sparse/dense embeddings, weighted residuals, and returns per-edge + global predictions.
-    """
 
     log_util.safe_log("""
     ************************************************************
@@ -1274,6 +1271,7 @@ def random_search_boosting_params(
 ):
     """
     Random search for optimal LightGBM hyperparameters for sequential boosting.
+    Incorporates monotonic logloss check to avoid degrading performance.
 
     Args:
         X_train, y_train : training data
@@ -1287,7 +1285,6 @@ def random_search_boosting_params(
         best_params : dictionary of best hyperparameters
     """
 
-
     best_score = np.inf
     best_params = None
 
@@ -1296,6 +1293,8 @@ def random_search_boosting_params(
 
     y_train_enc = encode_labels_safe(le, y_train, n_classes)
     y_valid_enc = encode_labels_safe(le, y_valid, n_classes)
+
+    prev_best_logloss = np.inf  # monotonic logloss baseline
 
     for trial in range(n_trials):
         # Sample random hyperparameters
@@ -1315,24 +1314,22 @@ def random_search_boosting_params(
         }
 
         # Train model with sampled hyperparameters
-        model = train_lightgbm(
+        model, current_logloss = train_lightgbm(
             X_train, y_train_enc,
             X_valid=X_valid, y_valid=y_valid_enc,
             best_params=None,
             **params
         )
 
-        # Evaluate log-loss on validation set, specifying all possible classes
+        # Evaluate log-loss on validation set
         y_pred = predict_proba_fixed(model, X_valid, n_classes)
         score = log_loss(y_valid_enc, y_pred, labels=all_classes)
 
-        #if verbose:
-        #    log_util.safe_log(f"[Trial {trial+1}/{n_trials}] log_loss={score:.4f} | params={params}")
-
-        # Keep best performing hyperparameters
-        if score < best_score:
+        # Only accept trial if it improves or maintains monotonic logloss
+        if score <= prev_best_logloss:
             best_score = score
             best_params = params
+            prev_best_logloss = score
 
         # Free memory
         del model, y_pred
@@ -1342,6 +1339,7 @@ def random_search_boosting_params(
         log_util.safe_log(f"Best params selected: {best_params} (val loss={best_score:.4f})")
 
     return best_params
+
 
 
 def encode_labels_safe(le, y, n_classes):
@@ -2843,7 +2841,7 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
 # ============================================================
 
 if __name__ == "__main__":
-    folder_path = "CIC_IoT_IDAD_Dataset_2024"
+    folder_path = "CIC_IoT_DIAD_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
