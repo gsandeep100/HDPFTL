@@ -77,7 +77,9 @@ config = {
     "lambda_l1": 1.0,
     "lambda_l2": 1.0,
     "device": "cpu",
-    "eps_threshold": 1e-4
+    "eps_threshold": 1e-4,
+    "max_no_improve_edge": 5,
+    "max_no_improve_device": 5
 }
 
 rng = np.random.default_rng(config["random_seed"])
@@ -314,7 +316,11 @@ def get_leaf_indices(model, X):
 # Device Layer Boosting with missing-class safe probabilities
 # ============================================================
 
-def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_params, use_true_labels=False):
+def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_params):
+    """
+    Device-level sequential boosting with residual updates, model stacking,
+    and logloss-based monotonic improvement control.
+    """
 
     log_util.safe_log("\n" + "*" * 60)
     log_util.safe_log("*" + " " * 28 + "STARTING DEVICE LAYER " + " " * 28 + "*")
@@ -322,8 +328,8 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
 
     device_embeddings = [None] * len(d_data)
     device_val_scores = [None] * len(d_data)
-
     eps_residual = 1e-6  # stability epsilon
+    num_devices = len(d_data)
 
     def process_device(idx, dev_tuple):
         X_train, _, y_train, _, _, _, X_device_finetune, y_device_finetune = dev_tuple
@@ -339,17 +345,18 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
             residual = d_residuals[idx].astype(np.float32).copy()
 
         models_per_device = d_models[idx] if d_models[idx] else []
-
         boosting_rounds = best_params.get("num_boost_round", 100)
 
-        # --- Track monotonic logloss per device ---
         prev_best_logloss = None
+        no_improve_rounds = 0
+        max_no_improve = config.get("max_no_improve_device", 3)
 
         # --- Sequential boosting loop (per device) ---
         for t in range(boosting_rounds):
             y_pseudo = le.transform(y_train)
             log_util.safe_log(f"[Boosting round {t+1}/{boosting_rounds}] devices={idx}/{num_devices}")
 
+            # Early stopping checks
             if len(np.unique(y_pseudo)) < 2:
                 log_util.safe_log(f"Device {idx}, round {t}: only single class left, stopping.")
                 break
@@ -377,14 +384,20 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
                 verbose=-1
             )
 
-            # Only keep model if logloss improved
+            # --- Logloss-based acceptance ---
             if prev_best_logloss is None or (current_logloss is not None and current_logloss <= prev_best_logloss):
                 prev_best_logloss = current_logloss
-                if models_per_device is None:
-                    models_per_device = [model]
-                else:
-                    models_per_device.append(model)
+                models_per_device.append(model)
+                no_improve_rounds = 0  # reset counter
+            else:
+                no_improve_rounds += 1
+                log_util.safe_log(f"Device {idx}, round {t}: no improvement ({no_improve_rounds}/{max_no_improve}).")
+                if no_improve_rounds >= max_no_improve:
+                    log_util.safe_log(f"Device {idx}: early stop after {no_improve_rounds} non-improving rounds.")
+                    break
+                continue
 
+            # --- Update residuals ---
             pred_proba = predict_proba_fixed(model, X_train, n_classes).astype(np.float32)
             residual -= pred_proba
             residual = np.clip(residual, -1 + eps_residual, 1 - eps_residual)
@@ -422,7 +435,7 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
             device_embeddings[idx] = np.zeros((n_samples, 1), dtype=np.float32)
         gc.collect()
 
-        # --- Validation weights ---
+        # --- Validation scores ---
         if X_device_finetune is not None and y_device_finetune is not None and models_per_device:
             y_val_encoded = le.transform(np.atleast_1d(y_device_finetune))
             scores_per_model = []
@@ -454,7 +467,6 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
         gc.collect()
 
     # --- Run all devices in parallel ---
-    num_devices = len(d_data)
     with ThreadPoolExecutor(max_workers=num_devices) as executor:
         executor.map(lambda args: process_device(*args), enumerate(d_data))
 
@@ -474,7 +486,6 @@ def edge_layer_boosting(
         X_ftune=None, y_ftune=None, device_weights=None,
         chunk_size=5000, n_random_trials=5
 ):
-
     log_util.safe_log("""
     ************************************************************
     *                  STARTING EDGE LAYER                     *
@@ -483,7 +494,6 @@ def edge_layer_boosting(
     """)
 
     def process_edge_data(d_embeddings, d_residuals, device_weights, edge_devices, eps_residual, n_classes):
-        """Internal helper: gather embeddings + weighted residuals for an edge."""
         embeddings_list = [d_embeddings[i] for i in edge_devices]
         residual_list = [
             (d_residuals[i].astype(np.float32) if d_residuals[i] is not None else
@@ -498,7 +508,7 @@ def edge_layer_boosting(
             weights = np.array([device_weights[i] for i in edge_devices], dtype=float)
         weights = weights / weights.sum() if weights.sum() > 0 else np.ones_like(weights) / len(weights)
 
-        # Sparse/dense padding & stacking
+        # Pad embeddings
         any_sparse = any(sparse.issparse(e) for e in embeddings_list)
         max_cols = max(int(e.shape[1]) for e in embeddings_list)
         if any_sparse:
@@ -514,7 +524,6 @@ def edge_layer_boosting(
                 padded_embeddings.append(e_fixed)
             X_edge = sparse.vstack(padded_embeddings, format="csr")
             del csr_list
-            gc.collect()
         else:
             def _safe_pad_dense(a, width):
                 a = np.asarray(a, dtype=np.float32)
@@ -523,13 +532,12 @@ def edge_layer_boosting(
                 elif a.shape[1] > width:
                     a = a[:, :width]
                 return a
-
             padded_embeddings = [_safe_pad_dense(e, max_cols) for e in embeddings_list]
             X_edge = np.vstack(padded_embeddings).astype(np.float32)
             del padded_embeddings
-            gc.collect()
+        gc.collect()
 
-        # Align residuals -> weighted stacking
+        # Weighted residual stacking
         weighted_rows = []
         for emb, r, w in zip(embeddings_list, residual_list, weights):
             n_rows = int(emb.shape[0])
@@ -549,17 +557,11 @@ def edge_layer_boosting(
         gc.collect()
         return residual_edge, X_edge
 
-    # -----------------------------
-    # Initialize storage
-    # -----------------------------
     e_models, e_residuals, edge_embeddings_list = [], [], []
     edge_outputs, global_pred_blocks, edge_sample_slices = [], [], {}
     global_offset = 0
     eps_residual = 1e-6
 
-    # -----------------------------
-    # Process each edge
-    # -----------------------------
     for edge_idx, edge_devices in enumerate(e_groups):
         prev_y_pseudo_edge = None
         X_valid_edge = X_ftune[edge_idx] if X_ftune is not None else None
@@ -578,11 +580,9 @@ def edge_layer_boosting(
         )
 
         models_per_edge = []
-        best_logloss_edge = None  # Track best logloss for monotonic control
+        best_logloss_edge = None
 
-        # -----------------------------
-        # Hyperparameter tuning
-        # -----------------------------
+        # Hyperparam tuning
         if (
             X_valid_edge is not None and y_valid_edge is not None
             and residual_edge is not None
@@ -605,10 +605,9 @@ def edge_layer_boosting(
 
         boosting_rounds = best_param_edge.get("num_boost_round", config.get("num_boost_round", 5))
         learning_rate = best_param_edge.get("learning_rate", config.get("learning_rate", 0.01))
+        max_no_improve = config.get("max_no_improve_edge", 3)
+        no_improve_count = 0
 
-        # -----------------------------
-        # Sequential boosting loop with monotonic logloss
-        # -----------------------------
         for t in range(boosting_rounds):
             log_util.safe_log(f"[Boosting round {t+1}/{boosting_rounds}] edges={edge_idx}/{len(e_groups)} ")
 
@@ -619,11 +618,14 @@ def edge_layer_boosting(
             if prev_y_pseudo_edge is not None and np.mean(prev_y_pseudo_edge != y_pseudo) < config.get("eps_threshold", 1e-3):
                 break
             prev_y_pseudo_edge = y_pseudo.copy()
-            init_model = models_per_edge[-1] if models_per_edge else None
-            X_valid_slice = (X_valid_edge[:, :X_edge.shape[1]] if (X_valid_edge is not None and X_valid_edge.ndim == 2)
-                             else X_valid_edge)
 
-            # --- Train edge model with logloss check ---
+            init_model = models_per_edge[-1] if models_per_edge else None
+            X_valid_slice = (
+                X_valid_edge[:, :X_edge.shape[1]]
+                if (X_valid_edge is not None and X_valid_edge.ndim == 2)
+                else X_valid_edge
+            )
+
             model, current_logloss = train_lightgbm(
                 X_edge, y_pseudo,
                 X_valid=X_valid_slice,
@@ -634,15 +636,23 @@ def edge_layer_boosting(
                 verbose=-1
             )
 
-            # Only update models_per_edge if logloss improved
+            # logloss monotonicity check with early stopping
             if best_logloss_edge is None or (current_logloss is not None and current_logloss <= best_logloss_edge):
                 best_logloss_edge = current_logloss
                 if models_per_edge is None:
                     models_per_edge = [model]
                 else:
                     models_per_edge.append(model)
+                no_improve_count = 0
+            else:
+                no_improve_count += 1
+                if no_improve_count >= max_no_improve:
+                    log_util.safe_log(f"Edge {edge_idx}: stopped early after {no_improve_count} non-improving rounds.")
+                    break
+                else:
+                    continue  # skip model update, continue to next round
 
-            # Chunked predict_proba
+            # Predict & update residual
             num_rows = X_edge.shape[0]
             if num_rows <= chunk_size:
                 pred_proba = predict_proba_fixed(model, X_edge, n_classes).astype(np.float32)
@@ -654,21 +664,16 @@ def edge_layer_boosting(
                     parts.append(predict_proba_fixed(model, X_slice, n_classes).astype(np.float32))
                 pred_proba = np.vstack(parts)
                 del parts
-                gc.collect()
-
-            residual_edge = residual_edge - learning_rate * pred_proba
+            residual_edge -= learning_rate * pred_proba
             residual_edge = np.clip(residual_edge, -1 + eps_residual, 1 - eps_residual)
             del pred_proba, X_valid_slice
             gc.collect()
 
-        # -----------------------------
         # Store edge results
-        # -----------------------------
         e_models.append(models_per_edge)
         e_residuals.append(residual_edge.copy())
         edge_embeddings_list.append(X_edge)
 
-        # Average predictions
         model_preds_sum = np.zeros((X_edge.shape[0], n_classes), dtype=np.float32)
         for m in models_per_edge:
             if X_edge.shape[0] <= chunk_size:
@@ -678,10 +683,10 @@ def edge_layer_boosting(
                     end = min(start + chunk_size, X_edge.shape[0])
                     X_slice = X_edge[start:end] if not sparse.issparse(X_edge) else X_edge[start:end]
                     model_preds_sum[start:end] += predict_proba_fixed(m, X_slice, n_classes).astype(np.float32)
+
         e_pred_avg = (model_preds_sum / max(1, len(models_per_edge))).astype(np.float32)
         edge_outputs.append(e_pred_avg)
 
-        # Global indices per device
         row_start = 0
         for dev_idx in edge_devices:
             n_dev = int(d_embeddings[dev_idx].shape[0])
@@ -693,9 +698,7 @@ def edge_layer_boosting(
         del residual_edge, models_per_edge, e_pred_avg
         gc.collect()
 
-    # -----------------------------
-    # Global prediction matrix
-    # -----------------------------
+    # Global aggregation
     if global_pred_blocks:
         padded_blocks = []
         for block in global_pred_blocks:
