@@ -34,6 +34,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import time
 import psutil
+from concurrent.futures import ThreadPoolExecutor
+import hdpftl_utility.log as log_util
 
 warnings.filterwarnings("ignore", category=UserWarning, module="lightgbm")
 
@@ -52,7 +54,7 @@ config = {
     "n_edges": 5,
     "n_device": 20,
     "device_per_edge": 4,
-    "epoch": 1,
+    "epoch": 5,
     "num_boost_round": 5,
     "num_iterations": 100,
     "variance_prune": True,
@@ -96,29 +98,32 @@ def train_lightgbm(
     y_valid=None,
     best_params=None,
     init_model=None,
+    prev_best_logloss=None,
     verbose=-1,
     **kwargs
 ):
     """
-    Train a LightGBM classifier with optional validation, continuation, and best_params override.
+    Train a LightGBM classifier with validation, continuation, and logloss control.
 
     Args:
         X_train, y_train : training data
-        X_valid, y_valid : optional validation data
-        best_params : dict, tuned hyperparameters (from random search)
-        init_model : existing LGBMClassifier to continue training
-        verbose : verbosity level (-1 to suppress)
+        X_valid, y_valid : validation data
+        best_params : tuned hyperparameters
+        init_model : existing model for continued training
+        prev_best_logloss : previous best logloss (across edges)
+        verbose : verbosity level
 
     Returns:
-        Trained LGBMClassifier
+        model : trained model
+        best_logloss : best validation logloss
     """
-    # --- Safe conversion ---
+
+    # --- Convert safely ---
     X_train = np.array(X_train)
     y_train = np.array(y_train)
     X_valid = np.array(X_valid) if X_valid is not None else None
     y_valid = np.array(y_valid) if y_valid is not None else None
 
-    # --- Handle one-hot encoded labels ---
     if y_train.ndim > 1 and y_train.shape[1] > 1:
         y_train = np.argmax(y_train, axis=1)
     if y_valid is not None and y_valid.ndim > 1 and y_valid.shape[1] > 1:
@@ -151,16 +156,14 @@ def train_lightgbm(
 
     # --- Merge tuned parameters if available ---
     if best_params is not None:
-        #print("🔹 Using best_params for training (device/edge layer).")
         model_params = {**base_params, **best_params}
     else:
-        #print("⚙️ Using static config parameters (random search mode).")
         model_params = base_params
 
     # --- Initialize model ---
     model = LGBMClassifier(**model_params)
 
-    # --- Prepare validation and early stopping ---
+    # --- Validation setup ---
     fit_kwargs = {}
     if X_valid is not None and y_valid is not None and config.get("early_stopping_rounds", 0):
         mask = np.isin(y_valid, np.unique(y_train))
@@ -174,26 +177,36 @@ def train_lightgbm(
             "eval_metric": "multi_logloss" if num_classes > 2 else "logloss",
             "eval_names": ["train", "valid"],
             "callbacks": [
-                early_stopping(config.get("early_stopping_rounds", 0)),
+                early_stopping(config.get("early_stopping_rounds", 100)),
                 log_evaluation(10)
             ]
         })
 
-    # --- Handle continuation from previous model safely ---
+    # --- Continue from previous model ---
     if init_model is not None:
-        train_classes = np.unique(y_train)
-        model_classes = init_model.classes_
-        if len(train_classes) == len(model_classes) and np.all(np.isin(train_classes, model_classes)):
-            fit_kwargs["init_model"] = init_model
-        else:
-            print(f"⚠️ Skipping init_model: class mismatch (train={train_classes}, model={model_classes})")
+        fit_kwargs["init_model"] = init_model
 
-    # --- Train model ---
-    #if best_params is None:
-    #    print(f"🚀 Training LightGBM | classes={num_classes} | params source={best_params if best_params else config}")
+    # --- Train ---
     model.fit(X_train, y_train, **fit_kwargs)
 
-    return model
+    # --- Compute validation logloss ---
+    if X_valid is not None and y_valid is not None:
+        y_pred = model.predict_proba(X_valid)
+        current_logloss = log_loss(y_valid, y_pred)
+    else:
+        current_logloss = None
+
+    # --- Logloss control across edges ---
+    if prev_best_logloss is not None and current_logloss is not None:
+        if current_logloss > prev_best_logloss:
+            # Revert to previous model if degradation detected
+            print(f"⚠️ Logloss worsened ({current_logloss:.4f} > {prev_best_logloss:.4f}), reverting to previous model")
+            return init_model, prev_best_logloss
+        else:
+            print(f"✅ Improved logloss: {current_logloss:.4f} (prev: {prev_best_logloss:.4f})")
+
+    return model, current_logloss
+
 
 # ============================================================
 # Predict probabilities safely, filling missing classes
@@ -294,19 +307,21 @@ def get_leaf_indices(model, X):
 
 def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_params, use_true_labels=False):
     """
-    Device-level sequential boosting with random search hyperparameter tuning.
-    Includes final residual correction and per-device embedding generation.
+    Threaded version of device_layer_boosting.
+    Devices under one edge run simultaneously.
+    All original functionality preserved with monotonic logloss enforcement.
     """
 
-    print("\n" + "*" * 60)
-    print("*" + " " * 28 + "STARTING DEVICE LAYER" + " " * 28 + "*")
-    print("*" * 60 + "\n")
+    log_util.safe_log("\n" + "*" * 60)
+    log_util.safe_log("*" + " " * 28 + "STARTING DEVICE LAYER " + " " * 28 + "*")
+    log_util.safe_log("*" * 60 + "\n")
 
-    device_embeddings = []
-    device_val_scores = []
+    device_embeddings = [None] * len(d_data)
+    device_val_scores = [None] * len(d_data)
+
     eps_residual = 1e-6  # stability epsilon
 
-    for idx, dev_tuple in enumerate(d_data):
+    def process_device(idx, dev_tuple):
         X_train, _, y_train, _, _, _, X_device_finetune, y_device_finetune = dev_tuple
         n_samples = X_train.shape[0]
         prev_y_pseudo = None
@@ -323,49 +338,54 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
 
         boosting_rounds = best_params.get("num_boost_round", 100)
 
-        # --- Sequential boosting loop ---
+        # --- Track monotonic logloss per device ---
+        prev_best_logloss = None
+
+        # --- Sequential boosting loop (per device) ---
         for t in range(boosting_rounds):
             y_pseudo = le.transform(y_train)
-            print(f"[Boosting round {t+1}/{boosting_rounds}] idx={idx:} ")
+            log_util.safe_log(f"[Boosting round {t+1}/{boosting_rounds}] devices={idx}/{num_devices}")
 
             if len(np.unique(y_pseudo)) < 2:
-                print(f"Device {idx}, round {t}: only single class left, stopping.")
+                log_util.safe_log(f"Device {idx}, round {t}: only single class left, stopping.")
                 break
 
             if np.sum(np.abs(residual)) < 1e-5:
-                print(f"Device {idx}, round {t}: residuals below threshold, stopping.")
+                log_util.safe_log(f"Device {idx}, round {t}: residuals below threshold, stopping.")
                 break
 
             if prev_y_pseudo is not None:
                 changes = np.mean(prev_y_pseudo != y_pseudo)
                 if changes < config["eps_threshold"]:
-                    print(f"Device {idx}, round {t}: labels stabilized, stopping.")
+                    log_util.safe_log(f"Device {idx}, round {t}: labels stabilized, stopping.")
                     break
             prev_y_pseudo = y_pseudo.copy()
 
             init_model = models_per_device[-1] if models_per_device else None
 
-
-            model = train_lightgbm(
+            model, current_logloss = train_lightgbm(
                 X_train, y_pseudo,
                 X_valid=X_device_finetune[:, :X_train.shape[1]] if y_device_finetune is not None else None,
                 y_valid=y_device_finetune,
                 best_params=best_params,
                 init_model=init_model,
+                prev_best_logloss=prev_best_logloss,
                 verbose=-1
             )
+
+            # Only keep model if logloss improved
+            if prev_best_logloss is None or (current_logloss is not None and current_logloss <= prev_best_logloss):
+                prev_best_logloss = current_logloss
+                if models_per_device is None:
+                    models_per_device = [model]
+                else:
+                    models_per_device.append(model)
 
             pred_proba = predict_proba_fixed(model, X_train, n_classes).astype(np.float32)
             residual -= pred_proba
             residual = np.clip(residual, -1 + eps_residual, 1 - eps_residual)
-
             del pred_proba
             gc.collect()
-
-            if models_per_device:
-                models_per_device[-1] = model
-            else:
-                models_per_device.append(model)
 
         # --- True-label correction ---
         if y_train is not None and len(models_per_device) > 0:
@@ -378,13 +398,10 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
                 for m in models_per_device
             )
             residual = np.clip(y_onehot - y_pred_proba_total, -1 + eps_residual, 1 - eps_residual)
-            print(f"Device {idx}: residual norm after true-label correction={np.linalg.norm(residual):.4f}")
+            log_util.safe_log(f"Device {idx}: residual norm after true-label correction={np.linalg.norm(residual):.4f}")
 
             del y_onehot, y_pred_proba_total, y_true_enc
             gc.collect()
-
-        d_residuals[idx] = residual
-        d_models[idx] = models_per_device
 
         # --- Device embeddings ---
         leaf_indices_list = [get_leaf_indices(mdl, X_train) for mdl in models_per_device]
@@ -395,10 +412,10 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
                 dtype=np.float32
             )
             leaf_embeddings[np.arange(n_samples)[:, None], leaf_indices_concat] = 1.0
-            device_embeddings.append(leaf_embeddings)
+            device_embeddings[idx] = leaf_embeddings
             del leaf_indices_list, leaf_indices_concat
         else:
-            device_embeddings.append(np.zeros((n_samples, 1), dtype=np.float32))
+            device_embeddings[idx] = np.zeros((n_samples, 1), dtype=np.float32)
         gc.collect()
 
         # --- Validation weights ---
@@ -418,16 +435,24 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
 
             scores_per_model = np.array(scores_per_model, dtype=np.float32)
             scores_per_model /= scores_per_model.sum() if scores_per_model.sum() > 0 else 1.0
-            device_val_scores.append(scores_per_model)
+            device_val_scores[idx] = scores_per_model
             del y_val_encoded, scores_per_model
         else:
-            device_val_scores.append(
+            device_val_scores[idx] = (
                 np.ones(len(models_per_device), dtype=np.float32) / len(models_per_device)
                 if models_per_device else np.array([1.0], dtype=np.float32)
             )
 
+        d_residuals[idx] = residual
+        d_models[idx] = models_per_device
+
         del X_train, y_train, X_device_finetune, y_device_finetune, models_per_device, residual
         gc.collect()
+
+    # --- Run all devices in parallel ---
+    num_devices = len(d_data)
+    with ThreadPoolExecutor(max_workers=num_devices) as executor:
+        executor.map(lambda args: process_device(*args), enumerate(d_data))
 
     # --- Aggregate weights ---
     device_weights = np.array([
@@ -450,7 +475,7 @@ def edge_layer_boosting(
     Handles sparse/dense embeddings, weighted residuals, and returns per-edge + global predictions.
     """
 
-    print("""
+    log_util.safe_log("""
     ************************************************************
     *                  STARTING EDGE LAYER                     *
     *   Devices -> Edge-level boosted ensemble -> Edge output  *
@@ -541,7 +566,7 @@ def edge_layer_boosting(
         y_valid_edge = y_ftune[edge_idx] if y_ftune is not None else None
 
         if len(edge_devices) == 0:
-            print(f"Edge {edge_idx}: no devices, skipping.")
+            log_util.safe_log(f"Edge {edge_idx}: no devices, skipping.")
             e_models.append([])
             e_residuals.append(None)
             edge_embeddings_list.append(None)
@@ -553,6 +578,7 @@ def edge_layer_boosting(
         )
 
         models_per_edge = []
+        best_logloss_edge = None  # Track best logloss for monotonic control
 
         # -----------------------------
         # Hyperparameter tuning
@@ -581,10 +607,10 @@ def edge_layer_boosting(
         learning_rate = best_param_edge.get("learning_rate", config.get("learning_rate", 0.01))
 
         # -----------------------------
-        # Sequential boosting loop
+        # Sequential boosting loop with monotonic logloss
         # -----------------------------
         for t in range(boosting_rounds):
-            print(f"[Boosting round {t+1}/{boosting_rounds}] edge_idx={edge_idx:} ")
+            log_util.safe_log(f"[Boosting round {t+1}/{boosting_rounds}] edges={edge_idx}/{len(e_groups)} ")
 
             y_pseudo = np.argmax(residual_edge + 1e-9 * np.random.randn(*residual_edge.shape), axis=1)
             unique_classes = np.unique(y_pseudo)
@@ -597,14 +623,24 @@ def edge_layer_boosting(
             X_valid_slice = (X_valid_edge[:, :X_edge.shape[1]] if (X_valid_edge is not None and X_valid_edge.ndim == 2)
                              else X_valid_edge)
 
-            model = train_lightgbm(
+            # --- Train edge model with logloss check ---
+            model, current_logloss = train_lightgbm(
                 X_edge, y_pseudo,
                 X_valid=X_valid_slice,
                 y_valid=y_valid_edge,
                 best_params=best_param_edge,
                 init_model=init_model,
+                prev_best_logloss=best_logloss_edge,
                 verbose=-1
             )
+
+            # Only update models_per_edge if logloss improved
+            if best_logloss_edge is None or (current_logloss is not None and current_logloss <= best_logloss_edge):
+                best_logloss_edge = current_logloss
+                if models_per_edge is None:
+                    models_per_edge = [model]
+                else:
+                    models_per_edge.append(model)
 
             # Chunked predict_proba
             num_rows = X_edge.shape[0]
@@ -624,8 +660,6 @@ def edge_layer_boosting(
             residual_edge = np.clip(residual_edge, -1 + eps_residual, 1 - eps_residual)
             del pred_proba, X_valid_slice
             gc.collect()
-
-            models_per_edge.append(model)
 
         # -----------------------------
         # Store edge results
@@ -675,6 +709,7 @@ def edge_layer_boosting(
     return edge_outputs, e_models, e_residuals, edge_embeddings_list, global_pred_matrix, edge_sample_slices
 
 
+
 def global_layer_bayesian_aggregation(
     e_outputs,
     e_embeddings,
@@ -687,43 +722,11 @@ def global_layer_bayesian_aggregation(
     verbose=True,
 ):
     """
-    Global Bayesian Aggregation Layer
-    ---------------------------------
+    Global Bayesian Aggregation Layer with memory management.
     Combines edge-level predictions using reliability weighting and Bayesian fusion.
-    Priors and noise parameters are tuned automatically using validation-based random sampling.
-
-    Parameters
-    ----------
-    e_outputs : list of np.ndarray
-        List of edge-level prediction arrays (each shape: [n_samples_edge, n_classes])
-    e_embeddings : list of np.ndarray
-        List of edge-level embeddings (used to filter valid edges)
-    e_residuals : list of np.ndarray, optional
-        Residuals per edge for reliability weighting
-    y_val : np.ndarray, optional
-        Validation labels (class indices or one-hot). If None, pseudo-labels are used.
-    n_classes : int, default=2
-        Number of output classes.
-    n_random_samples : int, default=30
-        Number of random hyperparameter samples for Bayesian tuning.
-    prior_var_range : tuple(float, float)
-        Search range for prior variance.
-    noise_var_range : tuple(float, float)
-        Search range for noise variance.
-    verbose : bool, default=True
-        Print progress information.
-
-    Returns
-    -------
-    y_global_pred : np.ndarray
-        Final global predictions (softmax probabilities)
-    global_residuals : np.ndarray
-        Residuals between pseudo-labels and predictions
-    theta_out : dict
-        Dictionary with learned Bayesian parameters (alpha, beta, prior_var, noise_var)
     """
 
-    print("""
+    log_util.safe_log("""
     ************************************************************
     *                  STARTING GLOBAL LAYER                   *
     *  Edges -> Bayesian fusion (weighted) -> Global ensemble  *
@@ -752,7 +755,10 @@ def global_layer_bayesian_aggregation(
             out = np.pad(out, ((0, 0), (0, n_classes - out.shape[1])), mode='constant')
         edge_preds.append(out)
 
-    H_global = np.vstack(edge_preds)
+    H_global = np.vstack(edge_preds).astype(np.float32)
+    del edge_preds
+    gc.collect()
+
     n_samples_total = H_global.shape[0]
 
     # --------------------------------------------------------
@@ -763,7 +769,7 @@ def global_layer_bayesian_aggregation(
         for i in valid_edges:
             r = e_residuals[i]
             if r is None:
-                weights.append(np.ones(edge_preds[len(weights)].shape[0]) * eps)
+                weights.append(np.ones(H_global.shape[0]) * eps)
                 continue
             if r.shape[1] < n_classes:
                 r = np.pad(r, ((0, 0), (0, n_classes - r.shape[1])), mode="constant")
@@ -773,6 +779,8 @@ def global_layer_bayesian_aggregation(
             reliability = np.clip(1.0 / (per_sample_mse + eps), a_min=eps, a_max=1e6)
             weights.append(reliability)
         edge_weights = np.hstack(weights)
+        del weights, r, per_sample_mse, reliability
+        gc.collect()
     else:
         edge_weights = np.ones(n_samples_total, dtype=float)
 
@@ -782,9 +790,11 @@ def global_layer_bayesian_aggregation(
     # 4. Generate pseudo-labels (if y_val not provided)
     # --------------------------------------------------------
     y_pseudo_global = np.argmax(H_global, axis=1)
-    y_pseudo_onehot = np.zeros((n_samples_total, n_classes))
+    y_pseudo_onehot = np.zeros((n_samples_total, n_classes), dtype=np.float32)
     y_pseudo_onehot[np.arange(n_samples_total), y_pseudo_global] = 1
     global_residuals = y_pseudo_onehot - H_global
+    del y_pseudo_global
+    gc.collect()
 
     # --------------------------------------------------------
     # 5. Create validation subset
@@ -793,7 +803,9 @@ def global_layer_bayesian_aggregation(
         n_samples_total, size=max(10, n_samples_total // 5), replace=False
     )
     H_val = H_global[val_indices]
-    y_val_internal = y_val if y_val is not None else y_pseudo_global[val_indices]
+    y_val_internal = y_val if y_val is not None else y_pseudo_onehot[val_indices]
+    del val_indices
+    gc.collect()
 
     # --------------------------------------------------------
     # 6. Random sampling for Bayesian tuning
@@ -801,14 +813,12 @@ def global_layer_bayesian_aggregation(
     best_score, best_params = -np.inf, None
 
     for _ in range(n_random_samples):
-        # Random log-uniform sampling
         prior_var = np.exp(np.random.uniform(np.log(prior_var_range[0]), np.log(prior_var_range[1])))
         noise_var = np.exp(np.random.uniform(np.log(noise_var_range[0]), np.log(noise_var_range[1])))
 
         precision_prior = 1.0 / prior_var
         precision_noise = 1.0 / noise_var
 
-        # Weighted Bayesian mean
         alpha = np.sum(H_global * edge_weights[:, None], axis=0)
         theta_global = (precision_noise * alpha) / (precision_prior + precision_noise)
 
@@ -816,7 +826,6 @@ def global_layer_bayesian_aggregation(
         exp_logits = np.exp(theta_global - np.max(theta_global))
         y_pred = exp_logits / np.sum(exp_logits)
 
-        # Compute validation log-likelihood
         if y_val_internal.ndim == 1:
             log_likelihood = np.mean(np.log(y_pred[y_val_internal % len(y_pred)] + eps))
         else:
@@ -826,8 +835,11 @@ def global_layer_bayesian_aggregation(
             best_score = log_likelihood
             best_params = {"prior_var": prior_var, "noise_var": noise_var}
 
+        del exp_logits, y_pred
+        gc.collect()
+
     if verbose:
-        print(f"\n[Bayesian Tuning] Best params: {best_params} | Validation score: {best_score:.6f}\n")
+        log_util.safe_log(f"\n[Bayesian Tuning] Best params: {best_params} | Validation score: {best_score:.6f}\n")
 
     # --------------------------------------------------------
     # 7. Final Bayesian fusion using best hyperparameters
@@ -839,10 +851,12 @@ def global_layer_bayesian_aggregation(
     beta = np.sum(global_residuals * edge_weights[:, None], axis=0)
     theta_global = (precision_noise * (alpha + beta)) / (precision_prior + precision_noise)
 
-    # Final softmax aggregation
     logits = H_global + beta
     exp_logits = np.exp(logits - np.max(logits, axis=1, keepdims=True))
     y_global_pred = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
+
+    del logits, exp_logits
+    gc.collect()
 
     theta_out = {
         "alpha": alpha,
@@ -852,9 +866,9 @@ def global_layer_bayesian_aggregation(
     }
 
     if verbose:
-        print(f"Final α: {alpha}")
-        print(f"Final β: {beta}")
-        print(f"Samples: {n_samples_total}")
+        log_util.safe_log(f"Final α: {alpha}")
+        log_util.safe_log(f"Final β: {beta}")
+        log_util.safe_log(f"Samples: {n_samples_total}")
 
     return y_global_pred, global_residuals, theta_out
 
@@ -1067,9 +1081,9 @@ def backward_pass(edge_models, device_models,
     now with explicit memory management.
     """
     if verbose:
-        print("\n" + "*" * 60)
-        print("*" + " " * 20 + "STARTING BACKWARD PASS" + " " * 20 + "*")
-        print("*" * 60 + "\n")
+        log_util.safe_log("\n" + "*" * 60)
+        log_util.safe_log("*" + " " * 20 + "STARTING BACKWARD PASS" + " " * 20 + "*")
+        log_util.safe_log("*" * 60 + "\n")
 
     num_edges = len(edge_models)
     assert len(edge_embeddings) == num_edges, "edge_embeddings and edge_models length mismatch"
@@ -1090,7 +1104,7 @@ def backward_pass(edge_models, device_models,
             updated_edge_models.append(None)
             updated_edge_preds_list.append(np.zeros((0, n_classes), dtype=np.float32))
             if verbose:
-                print(f"Edge {ei}: no model or data, skipping.")
+                log_util.safe_log(f"Edge {ei}: no model or data, skipping.")
             continue
 
         if le is not None:
@@ -1140,7 +1154,7 @@ def backward_pass(edge_models, device_models,
         gc.collect()
 
         if verbose:
-            print(f"Edge {ei}: updated model, preds shape {updated_edge_preds_list[-1].shape}")
+            log_util.safe_log(f"Edge {ei}: updated model, preds shape {updated_edge_preds_list[-1].shape}")
 
     # -----------------------------
     # Align and stack edge predictions
@@ -1176,7 +1190,7 @@ def backward_pass(edge_models, device_models,
         if X_dev is None or model is None:
             updated_device_models.append(None)
             if verbose:
-                print(f"Device {dev_idx}: no model or embeddings, skipping.")
+                log_util.safe_log(f"Device {dev_idx}: no model or embeddings, skipping.")
             continue
 
         if edge_sample_slices is None:
@@ -1225,10 +1239,10 @@ def backward_pass(edge_models, device_models,
         gc.collect()
 
         if verbose:
-            print(f"Device {dev_idx}: updated model.")
+            log_util.safe_log(f"Device {dev_idx}: updated model.")
 
     if verbose:
-        print("\nBackward hierarchical feedback completed safely.\n")
+        log_util.safe_log("\nBackward hierarchical feedback completed safely.\n")
 
     return updated_edge_models, updated_device_models, updated_edge_preds_stacked
 
@@ -1267,7 +1281,7 @@ def random_search_boosting_params(
         le : LabelEncoder for encoding y labels
         n_classes : total number of classes in the problem
         n_trials : number of random trials
-        verbose : print trial info
+        verbose : log_util.safe_log trial info
 
     Returns:
         best_params : dictionary of best hyperparameters
@@ -1313,7 +1327,7 @@ def random_search_boosting_params(
         score = log_loss(y_valid_enc, y_pred, labels=all_classes)
 
         #if verbose:
-        #    print(f"[Trial {trial+1}/{n_trials}] log_loss={score:.4f} | params={params}")
+        #    log_util.safe_log(f"[Trial {trial+1}/{n_trials}] log_loss={score:.4f} | params={params}")
 
         # Keep best performing hyperparameters
         if score < best_score:
@@ -1325,7 +1339,7 @@ def random_search_boosting_params(
         gc.collect()
 
     if verbose:
-        print(f"Best params selected: {best_params} (val loss={best_score:.4f})")
+        log_util.safe_log(f"Best params selected: {best_params} (val loss={best_score:.4f})")
 
     return best_params
 
@@ -1509,11 +1523,11 @@ def  compute_accuracy(y_true, y_pred):
     y_pred_np = np.array(y_pred).flatten()
 
     # Debug info
-    print("DEBUG compute_accuracy:")
-    print(f"  y_true shape: {y_true_np.shape}")
-    print(f"  y_pred shape: {y_pred_np.shape}")
-    print(f"  y_true sample: {y_true_np[:10]}")
-    print(f"  y_pred sample: {y_pred_np[:10]}")
+    log_util.safe_log("DEBUG compute_accuracy:")
+    log_util.safe_log(f"  y_true shape: {y_true_np.shape}")
+    log_util.safe_log(f"  y_pred shape: {y_pred_np.shape}")
+    log_util.safe_log(f"  y_true sample: {y_true_np[:10]}")
+    log_util.safe_log(f"  y_pred sample: {y_pred_np[:10]}")
 
     # Ensure same length
     if y_true_np.shape[0] != y_pred_np.shape[0]:
@@ -1578,7 +1592,7 @@ def save_hpfl_models(device_models, edge_models, epoch,
     if theta_global is not None:
         np.save(os.path.join(epoch_dir, "theta_global.npy"), theta_global)
 
-    print(f"✅ HPFL epoch {epoch + 1} saved → {epoch_dir}")
+    log_util.safe_log(f"✅ HPFL epoch {epoch + 1} saved → {epoch_dir}")
 
 
 # ==========================================================
@@ -1616,7 +1630,7 @@ def load_hpfl_models(epoch, num_devices, num_edges, save_root="trained_models"):
         if os.path.exists(path):
             loaded_device_models.append(joblib.load(path))
         else:
-            print(f"⚠️ Missing device model {idx} at epoch {epoch + 1}")
+            log_util.safe_log(f"⚠️ Missing device model {idx} at epoch {epoch + 1}")
 
     # ---- Load Edge Models ----
     loaded_edge_models = []
@@ -1625,7 +1639,7 @@ def load_hpfl_models(epoch, num_devices, num_edges, save_root="trained_models"):
         if os.path.exists(path):
             loaded_edge_models.append(joblib.load(path))
         else:
-            print(f"⚠️ Missing edge model {idx} at epoch {epoch + 1}")
+            log_util.safe_log(f"⚠️ Missing edge model {idx} at epoch {epoch + 1}")
 
     # ---- Load Bayesian Global Outputs ----
     def safe_load_npy(file_path):
@@ -1635,7 +1649,7 @@ def load_hpfl_models(epoch, num_devices, num_edges, save_root="trained_models"):
     global_residuals = safe_load_npy(os.path.join(epoch_dir, "global_residuals.npy"))
     theta_global = safe_load_npy(os.path.join(epoch_dir, "theta_global.npy"))
 
-    print(f"✅ HPFL epoch {epoch + 1} loaded ← {epoch_dir}")
+    log_util.safe_log(f"✅ HPFL epoch {epoch + 1} loaded ← {epoch_dir}")
     return loaded_device_models, loaded_edge_models, y_global_pred, global_residuals, theta_global
 
 
@@ -2002,7 +2016,7 @@ def compute_multilevel_accuracy(
         idx_offset += n_samples_edge
 
     if verbose:
-        print(f"Device mean acc: {np.mean(device_accs):.4f}, "
+        log_util.safe_log(f"Device mean acc: {np.mean(device_accs):.4f}, "
               f"Edge mean acc: {np.mean(edge_accs):.4f}, "
               f"Global acc: {global_acc:.4f}")
 
@@ -2143,7 +2157,7 @@ def evaluate_multilevel_performance(
         except ValueError:
             log_losses.append(np.nan)
         brier_scores.append(multi_class_brier(y_true, y_pred_probs))
-        print("Per-device logloss:", log_losses)
+        log_util.safe_log("Per-device logloss:", log_losses)
         topk_accuracies.append(top_k_accuracy(y_true, y_pred_probs, k=top_k))
 
     # ---------------------------
@@ -2303,7 +2317,7 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
         best_param_device = {"learning_rate": config["learning_rate"], "num_boost_round": config["num_boost_round"]}
 
     for epoch in range(num_epochs):
-        print(f"""
+        log_util.safe_log(f"""
         ************************************************************
         *                                                          *
         *                  === Epoch {epoch + 1}/{num_epochs} ===  *
@@ -2327,7 +2341,7 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
             device_models=device_models,
             track_profile=True
         )
-        print("Profile:", profile)
+        log_util.safe_log("Profile:", profile)
 
         # -----------------------------
         # 2. Backward Pass
@@ -2495,12 +2509,12 @@ def plot_device_accuracies(
     """
     accuracies, log_losses, brier_scores, topk_accuracies = [], [], [], []
 
-    print("\n================ Device Metrics ================\n")
+    log_util.safe_log("\n================ Device Metrics ================\n")
 
     for idx, models_per_device in enumerate(d_models):
 
         if not models_per_device:
-            print(f"Device {idx}: ❌ No trained models found.")
+            log_util.safe_log(f"Device {idx}: ❌ No trained models found.")
             accuracies.append(0.0)
             log_losses.append(np.nan)
             brier_scores.append(np.nan)
@@ -2566,7 +2580,7 @@ def plot_device_accuracies(
         brier_scores.append(brier)
         topk_accuracies.append(topk)
 
-        print(f"✅ Device {idx}: Accuracy={acc:.4f}, LogLoss={ll:.4f}, "
+        log_util.safe_log(f"✅ Device {idx}: Accuracy={acc:.4f}, LogLoss={ll:.4f}, "
               f"Brier={brier:.4f}, Top-{top_k} Acc={topk:.4f} ({combine_mode})")
 
     # Plot all metrics
@@ -2595,10 +2609,10 @@ def plot_device_accuracies(
     plt.title(f"Per-Device Metrics ({combine_mode})")
     plt.show()
 
-    print(f"\nOverall Mean Accuracy: {mean_acc:.4f}")
-    print(f"Overall Mean Log Loss: {np.nanmean(log_losses):.4f}")
-    print(f"Overall Mean Brier Score: {np.nanmean(brier_scores):.4f}")
-    print(f"Overall Mean Top-{top_k} Accuracy: {np.nanmean(topk_accuracies):.4f}\n")
+    log_util.safe_log(f"\nOverall Mean Accuracy: {mean_acc:.4f}")
+    log_util.safe_log(f"Overall Mean Log Loss: {np.nanmean(log_losses):.4f}")
+    log_util.safe_log(f"Overall Mean Brier Score: {np.nanmean(brier_scores):.4f}")
+    log_util.safe_log(f"Overall Mean Top-{top_k} Accuracy: {np.nanmean(topk_accuracies):.4f}\n")
 
     return accuracies, log_losses, brier_scores, topk_accuracies
 
@@ -2716,8 +2730,8 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     # -----------------------------
     mean_device_accs = [np.mean(d) if d else 0 for d in device_accs]
     mean_edge_accs = [np.mean(e) if e else 0 for e in edge_accs]
-    print("Device accs:", device_accs)
-    print("Mean device accs:", mean_device_accs)
+    log_util.safe_log("Device accs:", device_accs)
+    log_util.safe_log("Mean device accs:", mean_device_accs)
 
     plt.figure(figsize=(10, 6))
     plt.plot(mean_device_accs, label="Device Accuracy", marker="o", color=colors["Device"])
@@ -2822,18 +2836,18 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     plt.clf()  # clears the current figure
     plt.cla()  # clears current axes
 
-    print(f"All plots saved to folder: {save_dir}")
+    log_util.safe_log(f"All plots saved to folder: {save_dir}")
 
 # ============================================================
 #                     Main
 # ============================================================
 
 if __name__ == "__main__":
-    folder_path = "CIC_IoT_DIAD_2024"
+    folder_path = "CIC_IoT_IDAD_Dataset_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
-
+    log_util.setup_logging(log_path_str)
     # 1. Preprocess
     """, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test"""
     X_final, y_final = preprocess_data_safe(
@@ -2863,7 +2877,7 @@ if __name__ == "__main__":
     if len(y_all) > 0:
         le.fit(y_all)
     else:
-        print("⚠️ Warning: No true labels found to fit LabelEncoder.")
+        log_util.safe_log("⚠️ Warning: No true labels found to fit LabelEncoder.")
     num_classes = len(np.unique(y_final))
 
     # 4. Train HPFL model with accuracy tracking
