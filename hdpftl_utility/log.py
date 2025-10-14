@@ -18,9 +18,15 @@ def setup_logging(log_path, log_to_file=True):
     """
     Set up logging to both console and a file.
     """
-    # Ensure log directory exists
+    today_str = datetime.now().strftime("%Y-%m-%d")
     os.makedirs(log_path, exist_ok=True)
-    log_file = os.path.join(log_path, "hdpftl_run.log")
+
+    # Subfolder with today's date inside log_path_str
+    sub_log_path = os.path.join(log_path, today_str)
+    os.makedirs(sub_log_path, exist_ok=True)
+
+    # Ensure log directory exists
+    log_file = os.path.join(sub_log_path, "hdpftl_run.log")
 
     # Get the root logger
     logger = logging.getLogger()
@@ -93,12 +99,13 @@ def safe_log(message, extra="", level="info"):
         logging.info(full_msg)  # default
 
     # Optional: memory tracking
+    """
     if "log_memory" in globals():
         try:
             log_memory(message)
         except Exception as e:
             logging.debug(f"log_memory() failed: {e}")
-
+    """
     # Helper: convert numpy objects to JSON-safe format
     def make_json_safe(obj):
         if isinstance(obj, (np.int64, np.int32, np.integer)):

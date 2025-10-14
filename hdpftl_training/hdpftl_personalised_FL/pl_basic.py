@@ -188,18 +188,17 @@ def train_lightgbm(
     # --- Train ---
     model.fit(X_train, y_train, **fit_kwargs)
 
-    # --- Compute validation logloss safely ---
+    # --- Align validation features safely ---
     if X_valid is not None and y_valid is not None:
-        # Align features with model
-        n_features_model = getattr(model, "n_features_in_", X_valid.shape[1])
-        if X_valid.shape[1] > n_features_model:
-            X_valid_aligned = X_valid[:, :n_features_model]
-        elif X_valid.shape[1] < n_features_model:
-            X_valid_aligned = np.pad(X_valid, ((0, 0), (0, n_features_model - X_valid.shape[1])), mode="constant")
-        else:
-            X_valid_aligned = X_valid
+        X_valid = np.atleast_2d(np.asarray(X_valid, dtype=np.float32))
+        n_features_model = X_train.shape[1]
+        n_features_valid = X_valid.shape[1]
+        if n_features_valid < n_features_model:
+            X_valid = np.pad(X_valid, ((0, 0), (0, n_features_model - n_features_valid)), mode="constant")
+        elif n_features_valid > n_features_model:
+            X_valid = X_valid[:, :n_features_model]
 
-        y_pred = model.predict_proba(X_valid_aligned)
+        y_pred = model.predict_proba(X_valid)
         current_logloss = log_loss(y_valid, y_pred)
     else:
         current_logloss = None
@@ -341,6 +340,8 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
             residual = np.zeros((n_samples, n_classes), dtype=np.float32)
             y_encoded = le.transform(y_train)
             residual[np.arange(n_samples), y_encoded] = 1.0
+            del y_encoded
+            gc.collect()
         else:
             residual = d_residuals[idx].astype(np.float32).copy()
 
@@ -357,20 +358,25 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
             log_util.safe_log(f"[Boosting round {t+1}/{boosting_rounds}] devices={idx}/{num_devices}")
 
             # Early stopping checks
+            break_loop = False
             if len(np.unique(y_pseudo)) < 2:
                 log_util.safe_log(f"Device {idx}, round {t}: only single class left, stopping.")
-                break
-
-            if np.sum(np.abs(residual)) < 1e-5:
+                break_loop = True
+            elif np.sum(np.abs(residual)) < 1e-5:
                 log_util.safe_log(f"Device {idx}, round {t}: residuals below threshold, stopping.")
-                break
-
-            if prev_y_pseudo is not None:
+                break_loop = True
+            elif prev_y_pseudo is not None:
                 changes = np.mean(prev_y_pseudo != y_pseudo)
                 if changes < config["eps_threshold"]:
                     log_util.safe_log(f"Device {idx}, round {t}: labels stabilized, stopping.")
-                    break
+                    break_loop = True
+
             prev_y_pseudo = y_pseudo.copy()
+
+            if break_loop:
+                del y_pseudo
+                gc.collect()
+                break
 
             init_model = models_per_device[-1] if models_per_device else None
 
@@ -394,14 +400,18 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
                 log_util.safe_log(f"Device {idx}, round {t}: no improvement ({no_improve_rounds}/{max_no_improve}).")
                 if no_improve_rounds >= max_no_improve:
                     log_util.safe_log(f"Device {idx}: early stop after {no_improve_rounds} non-improving rounds.")
+                    del y_pseudo, init_model
+                    gc.collect()
                     break
+                del y_pseudo, init_model
+                gc.collect()
                 continue
 
             # --- Update residuals ---
             pred_proba = predict_proba_fixed(model, X_train, n_classes).astype(np.float32)
             residual -= pred_proba
             residual = np.clip(residual, -1 + eps_residual, 1 - eps_residual)
-            del pred_proba
+            del pred_proba, y_pseudo, init_model
             gc.collect()
 
         # --- True-label correction ---
@@ -430,7 +440,7 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
             )
             leaf_embeddings[np.arange(n_samples)[:, None], leaf_indices_concat] = 1.0
             device_embeddings[idx] = leaf_embeddings
-            del leaf_indices_list, leaf_indices_concat
+            del leaf_indices_list, leaf_indices_concat, leaf_embeddings
         else:
             device_embeddings[idx] = np.zeros((n_samples, 1), dtype=np.float32)
         gc.collect()
@@ -463,7 +473,8 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
         d_residuals[idx] = residual
         d_models[idx] = models_per_device
 
-        del X_train, y_train, X_device_finetune, y_device_finetune, models_per_device, residual
+        # --- Final cleanup per device ---
+        del X_train, y_train, X_device_finetune, y_device_finetune, models_per_device, residual, prev_y_pseudo
         gc.collect()
 
     # --- Run all devices in parallel ---
@@ -511,6 +522,7 @@ def edge_layer_boosting(
         # Pad embeddings
         any_sparse = any(sparse.issparse(e) for e in embeddings_list)
         max_cols = max(int(e.shape[1]) for e in embeddings_list)
+
         if any_sparse:
             csr_list = [e.tocsr() if sparse.issparse(e) else sparse.csr_matrix(e) for e in embeddings_list]
             padded_embeddings = []
@@ -532,9 +544,8 @@ def edge_layer_boosting(
                 elif a.shape[1] > width:
                     a = a[:, :width]
                 return a
-            padded_embeddings = [_safe_pad_dense(e, max_cols) for e in embeddings_list]
-            X_edge = np.vstack(padded_embeddings).astype(np.float32)
-            del padded_embeddings
+            X_edge = np.vstack([_safe_pad_dense(e, max_cols) for e in embeddings_list]).astype(np.float32)
+
         gc.collect()
 
         # Weighted residual stacking
@@ -551,8 +562,9 @@ def edge_layer_boosting(
             elif r.shape[1] > n_classes:
                 r = r[:, :n_classes]
             weighted_rows.append(r * w)
+
         residual_edge = np.vstack(weighted_rows).astype(np.float32)
-        residual_edge = np.clip(residual_edge, -1 + 1e-6, 1 - 1e-6)
+        residual_edge = np.clip(residual_edge, -1 + eps_residual, 1 - eps_residual)
         del embeddings_list, residual_list, weighted_rows
         gc.collect()
         return residual_edge, X_edge
@@ -583,14 +595,19 @@ def edge_layer_boosting(
         best_logloss_edge = None
 
         # Hyperparam tuning
-        if (
-            X_valid_edge is not None and y_valid_edge is not None
-            and residual_edge is not None
-        ):
+        if X_valid_edge is not None and y_valid_edge is not None:
+            # Align X_valid_edge shape to X_edge
+            if X_valid_edge.ndim == 2:
+                if X_valid_edge.shape[1] > X_edge.shape[1]:
+                    X_valid_edge = X_valid_edge[:, :X_edge.shape[1]]
+                elif X_valid_edge.shape[1] < X_edge.shape[1]:
+                    pad_width = X_edge.shape[1] - X_valid_edge.shape[1]
+                    X_valid_edge = np.pad(X_valid_edge, ((0, 0), (0, pad_width)), mode="constant")
+
             best_param_edge = random_search_boosting_params(
                 X_edge,
                 np.argmax(residual_edge, axis=1),
-                X_valid_edge[:, :X_edge.shape[1]] if not sparse.issparse(X_valid_edge) else X_valid_edge[:, :X_edge.shape[1]],
+                X_valid_edge,
                 y_valid_edge,
                 le,
                 n_classes,
@@ -613,18 +630,28 @@ def edge_layer_boosting(
 
             y_pseudo = np.argmax(residual_edge + 1e-9 * np.random.randn(*residual_edge.shape), axis=1)
             unique_classes = np.unique(y_pseudo)
+
+            # Early exit memory cleanup
             if len(unique_classes) < 2 or np.sum(np.abs(residual_edge)) < eps_residual:
+                del y_pseudo
+                gc.collect()
                 break
+
             if prev_y_pseudo_edge is not None and np.mean(prev_y_pseudo_edge != y_pseudo) < config.get("eps_threshold", 1e-3):
+                del y_pseudo
+                gc.collect()
                 break
+
             prev_y_pseudo_edge = y_pseudo.copy()
 
             init_model = models_per_edge[-1] if models_per_edge else None
-            X_valid_slice = (
-                X_valid_edge[:, :X_edge.shape[1]]
-                if (X_valid_edge is not None and X_valid_edge.ndim == 2)
-                else X_valid_edge
-            )
+            X_valid_slice = X_valid_edge
+            if X_valid_edge is not None and X_valid_edge.ndim == 2:
+                if X_valid_edge.shape[1] > X_edge.shape[1]:
+                    X_valid_slice = X_valid_edge[:, :X_edge.shape[1]]
+                elif X_valid_edge.shape[1] < X_edge.shape[1]:
+                    pad_width = X_edge.shape[1] - X_valid_edge.shape[1]
+                    X_valid_slice = np.pad(X_valid_edge, ((0, 0), (0, pad_width)), mode="constant")
 
             model, current_logloss = train_lightgbm(
                 X_edge, y_pseudo,
@@ -648,9 +675,9 @@ def edge_layer_boosting(
                 no_improve_count += 1
                 if no_improve_count >= max_no_improve:
                     log_util.safe_log(f"Edge {edge_idx}: stopped early after {no_improve_count} non-improving rounds.")
+                    del y_pseudo, init_model, X_valid_slice
+                    gc.collect()
                     break
-                else:
-                    continue  # skip model update, continue to next round
 
             # Predict & update residual
             num_rows = X_edge.shape[0]
@@ -660,13 +687,14 @@ def edge_layer_boosting(
                 parts = []
                 for start in range(0, num_rows, chunk_size):
                     end = min(start + chunk_size, num_rows)
-                    X_slice = X_edge[start:end] if not sparse.issparse(X_edge) else X_edge[start:end]
+                    X_slice = X_edge[start:end]
                     parts.append(predict_proba_fixed(model, X_slice, n_classes).astype(np.float32))
                 pred_proba = np.vstack(parts)
                 del parts
+
             residual_edge -= learning_rate * pred_proba
             residual_edge = np.clip(residual_edge, -1 + eps_residual, 1 - eps_residual)
-            del pred_proba, X_valid_slice
+            del pred_proba, X_valid_slice, init_model, y_pseudo
             gc.collect()
 
         # Store edge results
@@ -681,7 +709,7 @@ def edge_layer_boosting(
             else:
                 for start in range(0, X_edge.shape[0], chunk_size):
                     end = min(start + chunk_size, X_edge.shape[0])
-                    X_slice = X_edge[start:end] if not sparse.issparse(X_edge) else X_edge[start:end]
+                    X_slice = X_edge[start:end]
                     model_preds_sum[start:end] += predict_proba_fixed(m, X_slice, n_classes).astype(np.float32)
 
         e_pred_avg = (model_preds_sum / max(1, len(models_per_edge))).astype(np.float32)
@@ -695,7 +723,7 @@ def edge_layer_boosting(
         global_pred_blocks.append(e_pred_avg)
         global_offset += X_edge.shape[0]
 
-        del residual_edge, models_per_edge, e_pred_avg
+        del residual_edge, models_per_edge, e_pred_avg, X_edge
         gc.collect()
 
     # Global aggregation
@@ -706,11 +734,12 @@ def edge_layer_boosting(
                 block = np.hstack([block, np.zeros((block.shape[0], n_classes - block.shape[1]), dtype=np.float32)])
             padded_blocks.append(block.astype(np.float32))
         global_pred_matrix = np.vstack(padded_blocks)
+        del padded_blocks
+        gc.collect()
     else:
         global_pred_matrix = np.empty((0, n_classes), dtype=np.float32)
 
     return edge_outputs, e_models, e_residuals, edge_embeddings_list, global_pred_matrix, edge_sample_slices
-
 
 
 def global_layer_bayesian_aggregation(
@@ -2848,18 +2877,12 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
 
 if __name__ == "__main__":
     folder_path = "CIC_IoT_IDAD_Dataset_2024"
-    today_str = datetime.now().strftime("%Y-%m-%d")
 
     # Main log folder
-    log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
-    os.makedirs(log_path_str, exist_ok=True)
-
-    # Subfolder with today's date inside log_path_str
-    sub_log_path = os.path.join(log_path_str, today_str)
-    os.makedirs(sub_log_path, exist_ok=True)
+    log_path_str = os.path.join("logs", f"{folder_path}")
 
     # Setup logging in the new subfolder
-    log_util.setup_logging(sub_log_path)
+    log_util.setup_logging(log_path_str)
     # 1. Preprocess
     """, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test"""
     X_final, y_final = preprocess_data_safe(
