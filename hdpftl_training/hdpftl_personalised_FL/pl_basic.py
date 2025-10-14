@@ -133,7 +133,7 @@ def train_lightgbm(
     num_classes = len(np.unique(y_train))
     objective = "binary" if num_classes == 2 else "multiclass"
 
-    # --- Base static parameters (for random search) ---
+    # --- Base static parameters ---
     base_params = {
         "boosting_type": config.get("boosting", "gbdt"),
         "objective": objective,
@@ -154,11 +154,8 @@ def train_lightgbm(
         "verbose": verbose,
     }
 
-    # --- Merge tuned parameters if available ---
-    if best_params is not None:
-        model_params = {**base_params, **best_params}
-    else:
-        model_params = base_params
+    # --- Merge tuned parameters ---
+    model_params = {**base_params, **best_params} if best_params is not None else base_params
 
     # --- Initialize model ---
     model = LGBMClassifier(**model_params)
@@ -189,20 +186,25 @@ def train_lightgbm(
     # --- Train ---
     model.fit(X_train, y_train, **fit_kwargs)
 
-    # --- Compute validation logloss ---
+    # --- Compute validation logloss safely ---
     if X_valid is not None and y_valid is not None:
-        y_pred = model.predict_proba(X_valid)
+        # Align features with model
+        n_features_model = getattr(model, "n_features_in_", X_valid.shape[1])
+        if X_valid.shape[1] > n_features_model:
+            X_valid_aligned = X_valid[:, :n_features_model]
+        elif X_valid.shape[1] < n_features_model:
+            X_valid_aligned = np.pad(X_valid, ((0, 0), (0, n_features_model - X_valid.shape[1])), mode="constant")
+        else:
+            X_valid_aligned = X_valid
+
+        y_pred = model.predict_proba(X_valid_aligned)
         current_logloss = log_loss(y_valid, y_pred)
     else:
         current_logloss = None
 
-    # --- Logloss control across edges ---
+    # --- Logloss control ---
     if prev_best_logloss is not None and current_logloss is not None and current_logloss > prev_best_logloss:
-        # Revert to previous model
-        if isinstance(init_model, tuple):
-            prev_model = init_model[0]
-        else:
-            prev_model = init_model
+        prev_model = init_model[0] if isinstance(init_model, tuple) else init_model
         model_to_return = prev_model
         log_util.safe_log(
             f"⚠️ Logloss worsened ({current_logloss:.4f} > {prev_best_logloss:.4f}), reverting to previous model")
@@ -211,7 +213,8 @@ def train_lightgbm(
         if current_logloss is not None and prev_best_logloss is not None:
             log_util.safe_log(f"✅ Improved logloss: {current_logloss:.4f} (prev: {prev_best_logloss:.4f})")
 
-    return model_to_return, (current_logloss if current_logloss is not None else prev_best_logloss)
+    return model_to_return, current_logloss if current_logloss is not None else prev_best_logloss
+
 
 
 # ============================================================
@@ -2841,11 +2844,19 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
 # ============================================================
 
 if __name__ == "__main__":
-    folder_path = "CIC_IoT_DIAD_2024"
+    folder_path = "CIC_IoT_IDAD_Dataset_2024"
     today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Main log folder
     log_path_str = os.path.join("logs", f"{folder_path}_{today_str}")
     os.makedirs(log_path_str, exist_ok=True)
-    log_util.setup_logging(log_path_str)
+
+    # Subfolder with today's date inside log_path_str
+    sub_log_path = os.path.join(log_path_str, today_str)
+    os.makedirs(sub_log_path, exist_ok=True)
+
+    # Setup logging in the new subfolder
+    log_util.setup_logging(sub_log_path)
     # 1. Preprocess
     """, X_pretrain, y_pretrain, X_finetune, y_finetune, X_test, y_test"""
     X_final, y_final = preprocess_data_safe(
