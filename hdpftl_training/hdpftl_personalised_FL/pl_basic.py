@@ -347,7 +347,6 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
 
         models_per_device = d_models[idx] if d_models[idx] else []
         boosting_rounds = best_params.get("num_boost_round", 100)
-
         prev_best_logloss = None
         no_improve_rounds = 0
         max_no_improve = config.get("max_no_improve_device", 3)
@@ -357,7 +356,6 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
             y_pseudo = le.transform(y_train)
             log_util.safe_log(f"[Boosting round {t+1}/{boosting_rounds}] devices={idx}/{num_devices}")
 
-            # Early stopping checks
             break_loop = False
             if len(np.unique(y_pseudo)) < 2:
                 log_util.safe_log(f"Device {idx}, round {t}: only single class left, stopping.")
@@ -372,14 +370,12 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
                     break_loop = True
 
             prev_y_pseudo = y_pseudo.copy()
-
             if break_loop:
                 del y_pseudo
                 gc.collect()
                 break
 
             init_model = models_per_device[-1] if models_per_device else None
-
             model, current_logloss = train_lightgbm(
                 X_train, y_pseudo,
                 X_valid=X_device_finetune[:, :X_train.shape[1]] if y_device_finetune is not None else None,
@@ -394,7 +390,7 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
             if prev_best_logloss is None or (current_logloss is not None and current_logloss <= prev_best_logloss):
                 prev_best_logloss = current_logloss
                 models_per_device.append(model)
-                no_improve_rounds = 0  # reset counter
+                no_improve_rounds = 0
             else:
                 no_improve_rounds += 1
                 log_util.safe_log(f"Device {idx}, round {t}: no improvement ({no_improve_rounds}/{max_no_improve}).")
@@ -477,9 +473,14 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
         del X_train, y_train, X_device_finetune, y_device_finetune, models_per_device, residual, prev_y_pseudo
         gc.collect()
 
-    # --- Run all devices in parallel ---
+    # --- Run all devices in parallel AND wait for completion ---
+    futures = []
     with ThreadPoolExecutor(max_workers=num_devices) as executor:
-        executor.map(lambda args: process_device(*args), enumerate(d_data))
+        for idx, dev_tuple in enumerate(d_data):
+            futures.append(executor.submit(process_device, idx, dev_tuple))
+        # Wait for all device threads to complete
+        for f in futures:
+            f.result()  # blocks until each thread finishes
 
     # --- Aggregate weights ---
     device_weights = np.array([
@@ -916,8 +917,8 @@ def get_memory_mb():
 
 def forward_pass(
     devices_data, edge_groups, le, num_classes,
-    best_param_device= None,
-    best_param_edge = None,
+    best_param_device=None,
+    best_param_edge=None,
     X_edges_finetune=None, y_edges_finetune=None,
     residuals_devices=None, device_models=None,
     pred_chunk_size=1024,
@@ -943,9 +944,8 @@ def forward_pass(
             residuals_devices, residuals_edges, y_global_pred,
             device_embeddings, edge_embeddings_list, y_global_true,
             y_true_per_edge, global_residuals, edge_sample_slices, profile
-)
+        )
     """
-
 
     profile = {}  # store time & memory per layer
 
@@ -961,9 +961,10 @@ def forward_pass(
     t0 = time.time()
     mem0 = get_memory_mb()
 
+    # Ensure all device processing completes before moving to edge layer
     residuals_devices, device_models, device_embeddings, device_weights = device_layer_boosting(
         devices_data, residuals_devices, device_models,
-        le, num_classes,best_param_device
+        le, num_classes, best_param_device
     )
     assert device_embeddings is not None, "Device embeddings returned as None!"
 
@@ -987,6 +988,7 @@ def forward_pass(
 
     n_samples = sum(e.shape[0] for e in device_embeddings if e is not None)
 
+    # Edge layer starts only after all devices are done
     edge_outputs, edge_models, residuals_edges, edge_embeddings_list, global_pred_matrix, edge_sample_slices = edge_layer_boosting(
         e_groups=edge_groups,
         d_embeddings=device_embeddings,
