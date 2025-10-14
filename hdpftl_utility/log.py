@@ -11,7 +11,8 @@ import psutil
 
 # Global variables for structured JSON logs
 _structured_json_path = None
-_current_log_dir = None  # store log directory from setup_logging()
+_current_log_dir = None
+_run_counter = None
 
 def setup_logging(log_path, log_to_file=True):
     """
@@ -57,6 +58,7 @@ def safe_log(message, extra="", level="info"):
     """
     Safe logging function that logs to console, file, memory,
     and writes structured logs to a timestamped JSON file with pretty-print.
+    If writing fails, the log file is renamed with a .error extension.
     """
 
     global _structured_json_path
@@ -138,6 +140,14 @@ def safe_log(message, extra="", level="info"):
                 jf.write(json_line + "\n")
         except Exception as e:
             logging.error(f"Failed to write structured log to JSON: {e}")
+            try:
+                # Rename log file to indicate error
+                error_path = _structured_json_path.rsplit('.', 1)[0] + ".error"
+                os.rename(_structured_json_path, error_path)
+                logging.error(f"Log file renamed to indicate error: {error_path}")
+                _structured_json_path = error_path  # update global path
+            except Exception as rename_e:
+                logging.error(f"Failed to rename log file to .error: {rename_e}")
 
 def log_memory(tag=""):
     """
