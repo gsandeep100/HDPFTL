@@ -61,6 +61,11 @@ def safe_log(message, extra="", level="info"):
 
     global _structured_json_path
     global _current_log_dir
+    global _run_counter
+
+    # Initialize run counter if not already
+    if "_run_counter" not in globals():
+        _run_counter = 0
 
     # Convert non-string inputs to strings
     if not isinstance(message, str):
@@ -117,10 +122,11 @@ def safe_log(message, extra="", level="info"):
     if _current_log_dir is not None:
         os.makedirs(_current_log_dir, exist_ok=True)
         if _structured_json_path is None:
-            # One JSON file per run with timestamp
-            run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            # Increment run counter for separate file if rerun on same date
+            _run_counter += 1
+            run_timestamp = datetime.now().strftime("%Y-%m-%d")
             _structured_json_path = os.path.join(
-                _current_log_dir, f"structured_logs_{run_timestamp}.json"
+                _current_log_dir, f"structured_logs_{run_timestamp}_run{_run_counter}.json"
             )
 
         # Append structured log as one pretty-printed line
