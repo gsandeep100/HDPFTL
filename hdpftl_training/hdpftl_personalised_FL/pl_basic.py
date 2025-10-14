@@ -2143,6 +2143,7 @@ def evaluate_multilevel_performance(
         except ValueError:
             log_losses.append(np.nan)
         brier_scores.append(multi_class_brier(y_true, y_pred_probs))
+        print("Per-device logloss:", log_losses)
         topk_accuracies.append(top_k_accuracy(y_true, y_pred_probs, k=top_k))
 
     # ---------------------------
