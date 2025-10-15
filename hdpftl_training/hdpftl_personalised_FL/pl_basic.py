@@ -367,18 +367,21 @@ def get_leaf_indices(model, X):
 # ============================================================
 
 def device_layer_boosting(
-        d_data,            # list of device tuples: (X_train, X_test, y_train, ..., X_device_finetune, y_device_finetune)
-        d_residuals,       # list of residual arrays or None
-        d_models,          # list of model lists or None
-        le,                # label encoder with transform/ inverse_transform
+        d_data,
+        d_residuals,
+        d_models,
+        le,
         n_classes,
-        best_params,       # dict with 'num_boost_round', 'learning_rate', ...
+        best_params,
+        epoch=0,
         chunk_size=5000
 ):
     """
     Device-level gradient boosting: residual-driven pseudo-labels, gradient updates, leaf embeddings.
-    Returns updated (d_residuals, d_models, device_embeddings, device_weights).
+    Keeps only the latest model per device (memory-efficient incremental update).
     """
+
+    print_layer_banner("Device", layer_idx=1, current_epoch=epoch)
 
     num_devices = len(d_data)
     device_embeddings = [None] * num_devices
@@ -386,11 +389,10 @@ def device_layer_boosting(
     eps_residual = 1e-6
 
     def process_device(idx, dev_tuple):
-        # Unpack device tuple (expected shape — keep consistent with your existing pipeline)
         X_train, _, y_train, _, _, _, X_device_finetune, y_device_finetune = dev_tuple
         n_samples = X_train.shape[0]
 
-        # init residual
+        # Initialize residuals
         if d_residuals[idx] is None:
             residual = np.zeros((n_samples, n_classes), dtype=np.float32)
             if y_train is not None:
@@ -400,10 +402,9 @@ def device_layer_boosting(
         else:
             residual = d_residuals[idx].astype(np.float32, copy=False)
 
-        models_per_device = list(d_models[idx]) if d_models[idx] else []
+        prev_model = d_models[idx] if d_models[idx] else None
         boosting_rounds = int(best_params.get("num_boost_round", 50))
         learning_rate = float(best_params.get("learning_rate", 0.01))
-
         prev_res_norm = np.inf
 
         for t in range(boosting_rounds):
@@ -416,10 +417,7 @@ def device_layer_boosting(
                 break
             prev_res_norm = res_norm
 
-            # pseudo-labels from residual (argmax)
             y_pseudo = np.argmax(residual + 1e-9 * np.random.randn(*residual.shape), axis=1)
-
-            init_model = models_per_device[-1] if models_per_device else None
 
             model, _ = train_lightgbm(
                 X_train.astype(np.float32, copy=False), y_pseudo,
@@ -427,83 +425,67 @@ def device_layer_boosting(
                          if X_device_finetune is not None else None),
                 y_valid=y_device_finetune,
                 best_params=best_params,
-                init_model=init_model,
+                init_model=prev_model,
                 prev_best_logloss=None,
                 verbose=-1
             )
-            models_per_device.append(model)
+            prev_model = model  # overwrite previous model
 
-            # update residuals (gradient step)
+            # Update residuals
             if X_train.shape[0] <= chunk_size:
                 pred_proba = predict_proba_fixed(model, X_train, n_classes).astype(np.float32)
             else:
-                # chunked prediction for memory safety
                 preds = []
                 for s in range(0, X_train.shape[0], chunk_size):
                     e = min(s + chunk_size, X_train.shape[0])
                     preds.append(predict_proba_fixed(model, X_train[s:e], n_classes).astype(np.float32))
                 pred_proba = np.vstack(preds)
                 del preds
+
             residual -= learning_rate * pred_proba
             residual = np.clip(residual, -1 + eps_residual, 1 - eps_residual)
-
-            del pred_proba, y_pseudo, init_model
+            del pred_proba, y_pseudo
             gc.collect()
 
-        # final true-label correction (if available)
-        if y_train is not None and len(models_per_device) > 0:
+        # Final true-label correction
+        if y_train is not None and prev_model is not None:
             y_true_enc = le.transform(y_train)
             y_onehot = np.zeros((n_samples, n_classes), dtype=np.float32)
             y_onehot[np.arange(n_samples), y_true_enc] = 1.0
 
-            y_pred_total = np.zeros((n_samples, n_classes), dtype=np.float32)
-            for mdl in models_per_device:
-                # chunked predictions on train for memory safety
-                if n_samples <= chunk_size:
-                    y_pred_total += predict_proba_fixed(mdl, X_train, n_classes).astype(np.float32)
-                else:
-                    for s in range(0, n_samples, chunk_size):
-                        e = min(s + chunk_size, n_samples)
-                        y_pred_total[s:e] += predict_proba_fixed(mdl, X_train[s:e], n_classes).astype(np.float32)
+            if n_samples <= chunk_size:
+                y_pred_total = predict_proba_fixed(prev_model, X_train, n_classes).astype(np.float32)
+            else:
+                preds = [predict_proba_fixed(prev_model, X_train[s:e], n_classes).astype(np.float32)
+                         for s in range(0, n_samples, chunk_size)]
+                y_pred_total = np.vstack(preds)
 
             residual = np.clip(y_onehot - y_pred_total, -1 + eps_residual, 1 - eps_residual)
             del y_onehot, y_pred_total, y_true_enc
             gc.collect()
 
-        # device leaf embeddings
-        leaf_indices_list = [get_leaf_indices(mdl, X_train) for mdl in models_per_device]
-        if leaf_indices_list:
-            leaf_concat = np.hstack(leaf_indices_list)
-            # sparse one-hot construction might be better in memory, but using dense for compatibility
-            leaf_emb = np.zeros((n_samples, np.max(leaf_concat) + 1), dtype=np.float32)
-            leaf_emb[np.arange(n_samples)[:, None], leaf_concat] = 1.0
-            device_embeddings[idx] = leaf_emb
-            del leaf_indices_list, leaf_concat, leaf_emb
-        else:
-            device_embeddings[idx] = np.zeros((n_samples, 1), dtype=np.float32)
-        gc.collect()
+        # Device embedding
+        leaf_indices = get_leaf_indices(prev_model, X_train)
+        leaf_emb = np.zeros((n_samples, np.max(leaf_indices) + 1), dtype=np.float32)
+        leaf_emb[np.arange(n_samples), leaf_indices] = 1.0
+        device_embeddings[idx] = leaf_emb
+        del leaf_indices, leaf_emb
 
-        # simple device score (can be improved)
-        device_val_scores[idx] = (np.ones(len(models_per_device), dtype=np.float32) / len(models_per_device)
-                                  if models_per_device else np.array([1.0], dtype=np.float32))
+        # Simple device weight
+        device_val_scores[idx] = np.array([1.0], dtype=np.float32)
 
-        # writebacks
+        # Writebacks
         d_residuals[idx] = residual
-        d_models[idx] = models_per_device
+        d_models[idx] = prev_model
 
-        # cleanup locals
-        del residual, models_per_device, X_train, y_train, X_device_finetune, y_device_finetune
         gc.collect()
 
-    # run devices in parallel
     with ThreadPoolExecutor(max_workers=num_devices) as ex:
         futures = [ex.submit(process_device, idx, dev_tuple) for idx, dev_tuple in enumerate(d_data)]
         for f in futures:
             f.result()
 
-    # device_weights from device_val_scores (average)
-    device_weights = np.array([np.mean(w) if isinstance(w, np.ndarray) else float(w)
-                               for w in device_val_scores], dtype=np.float32)
+    device_weights = np.array([np.mean(w) for w in device_val_scores], dtype=np.float32)
     device_weights /= device_weights.sum() if device_weights.sum() > 0 else 1.0
     gc.collect()
     return d_residuals, d_models, device_embeddings, device_weights
@@ -513,20 +495,18 @@ def edge_layer_boosting(
         e_groups, d_embeddings, d_residuals,
         n_classes, le=None, best_param_edge=None,
         X_ftune=None, y_ftune=None, device_weights=None,
-        chunk_size=5000, n_random_trials=5
+        epoch=0, chunk_size=5000, n_random_trials=5,
+        prev_e_models=None   # <-- optional: pass previous edge models between calls
 ):
     """
     Edge-level gradient boosting: consumes device embeddings/residuals, runs boosting per edge,
-    stacks per-round predictions as edge features; updates e_residuals for global use.
+    stores/returns exactly one model per edge (latest). Returns:
+      edge_outputs, e_models (list of model or None), e_residuals, edge_embeddings_list,
+      global_pred_matrix, edge_sample_slices
     """
 
-    log_util.safe_log("""
-    ************************************************************
-    *                  STARTING EDGE LAYER                     *
-    *   Devices -> Edge-level boosted ensemble -> Edge output  *
-    *           Gradient-loss based early stopping             *
-    ************************************************************
-    """)
+    print_layer_banner("Edge", layer_idx=2, device_count=len(e_groups), current_epoch=epoch)
+
     e_models, e_residuals, edge_embeddings_list = [], [], []
     edge_outputs, global_pred_blocks, edge_sample_slices = [], [], {}
     global_offset = 0
@@ -559,10 +539,12 @@ def edge_layer_boosting(
         for emb, r, w in zip(embeddings_list, residuals_list, weights):
             n_rows = emb.shape[0]
             r = np.asarray(r, dtype=np.float32)
+            # ensure r has at least n_rows rows (pad or cut)
             if r.shape[0] < n_rows:
                 r = np.vstack([r, np.zeros((n_rows - r.shape[0], r.shape[1]), dtype=np.float32)])
             else:
                 r = r[:n_rows]
+            # ensure r has n_classes columns
             if r.shape[1] < n_classes:
                 r = np.pad(r, ((0, 0), (0, n_classes - r.shape[1])), mode='constant')
             else:
@@ -576,14 +558,19 @@ def edge_layer_boosting(
 
     for edge_idx, edge_devices in enumerate(e_groups):
         if len(edge_devices) == 0:
-            e_models.append([])
+            e_models.append(None)
             e_residuals.append(None)
             edge_embeddings_list.append(None)
             edge_outputs.append(None)
             continue
 
         residual_edge, X_edge = process_edge_data(edge_devices)
-        models_per_edge = []
+
+        # Instead of a list of models, keep a single model per edge (prev_model)
+        prev_model = None
+        if prev_e_models and len(prev_e_models) > edge_idx:
+            prev_model = prev_e_models[edge_idx]
+
         boosting_round_outputs = []
         boosting_rounds = int((best_param_edge or {}).get("num_boost_round", config.get("edge_boosting_rounds", 5)))
         learning_rate = float((best_param_edge or {}).get("learning_rate", config.get("learning_rate", 0.01)))
@@ -601,11 +588,11 @@ def edge_layer_boosting(
             prev_res_norm = res_norm
 
             y_pseudo = np.argmax(residual_edge + 1e-9 * np.random.randn(*residual_edge.shape), axis=1)
-            init_model = models_per_edge[-1] if models_per_edge else None
+            init_model = prev_model  # continue from latest model if present
 
             model, _ = train_lightgbm(
                 X_edge.astype(np.float32, copy=False), y_pseudo,
-                X_valid=(X_ftune[edge_idx].astype(np.float32, copy=False)[:,:X_edge.shape[1]]
+                X_valid=(X_ftune[edge_idx].astype(np.float32, copy=False)[:, :X_edge.shape[1]]
                          if X_ftune is not None else None),
                 y_valid=(y_ftune[edge_idx] if y_ftune is not None else None),
                 best_params=best_param_edge or {},
@@ -614,7 +601,8 @@ def edge_layer_boosting(
                 verbose=-1
             )
 
-            models_per_edge.append(model)
+            # Overwrite prev_model with the newly trained model (keep only one)
+            prev_model = model
 
             # predict (chunked) and store round outputs
             num_rows = X_edge.shape[0]
@@ -642,7 +630,8 @@ def edge_layer_boosting(
         else:
             e_pred_features = np.zeros((X_edge.shape[0], n_classes), dtype=np.float32)
 
-        e_models.append(models_per_edge)
+        # store single model (or None) for this edge
+        e_models.append(prev_model)
         e_residuals.append(residual_edge.copy())
         edge_embeddings_list.append(X_edge)
         edge_outputs.append(e_pred_features)
@@ -656,7 +645,7 @@ def edge_layer_boosting(
         global_pred_blocks.append(e_pred_features)
         global_offset += X_edge.shape[0]
 
-        del residual_edge, models_per_edge, e_pred_features, X_edge, boosting_round_outputs
+        del residual_edge, e_pred_features, X_edge, boosting_round_outputs
         gc.collect()
 
     # stack global_pred_blocks with padding to same width
@@ -675,9 +664,11 @@ def edge_layer_boosting(
     gc.collect()
     return edge_outputs, e_models, e_residuals, edge_embeddings_list, global_pred_matrix, edge_sample_slices
 
-def global_layer_bayesian_aggregation_with_edge_reliability(
+
+def global_layer_bayesian_aggregation(
     e_outputs,
     e_residuals=None,
+    epoch = 0,
     e_embeddings=None,
     verbose=True,
     eps=1e-12,
@@ -697,6 +688,7 @@ def global_layer_bayesian_aggregation_with_edge_reliability(
             "edge_scores_per_sample" (optional; shape (n_samples, n_edges))
         }
     """
+    print_layer_banner("Global", current_epoch=epoch)
 
     # 1. validate / collect outputs and per-edge feature sizes
     valid_edges = [i for i, out in enumerate(e_outputs) if out is not None and out.size > 0]
@@ -827,6 +819,7 @@ def forward_pass(
     best_param_edge=None,
     X_edges_finetune=None, y_edges_finetune=None,
     residuals_devices=None, device_models=None,
+    epoch = 0,
     pred_chunk_size=1024,
     track_profile=False
 ):
@@ -866,7 +859,7 @@ def forward_pass(
     device_models = device_models or [None] * len(devices_data)
 
     residuals_devices, device_models, device_embeddings, device_weights = device_layer_boosting(
-        devices_data, residuals_devices, device_models, le, num_classes, best_param_device
+        devices_data, residuals_devices, device_models, le, num_classes, best_param_device, epoch
     )
 
     assert device_embeddings is not None, "Device embeddings returned as None!"
@@ -896,7 +889,8 @@ def forward_pass(
         best_param_edge=best_param_edge,
         X_ftune=X_edges_finetune,
         y_ftune=y_edges_finetune,
-        device_weights=device_weights
+        device_weights=device_weights,
+        epoch = epoch
     )
 
     # Normalize types and cleanup
@@ -948,6 +942,7 @@ def forward_pass(
     y_global_pred, global_residuals, fusion_meta = global_layer_bayesian_aggregation(
         e_outputs=edge_embeddings_list,
         e_residuals=residuals_edges,
+        epoch=epoch,
         e_embeddings=None,
         verbose=True
     )
@@ -987,6 +982,7 @@ def backward_pass(edge_models, device_models,
                   global_pred_matrix=None,
                   n_classes=2,
                   use_classification=True,
+                  epoch=0,
                   verbose=True,
                   le=None,
                   feature_mode=True):
@@ -995,9 +991,7 @@ def backward_pass(edge_models, device_models,
     memory-managed and aligned with feature-level HPFL aggregation.
     """
     if verbose:
-        log_util.safe_log("\n" + "*" * 60)
-        log_util.safe_log("*" + " " * 20 + "STARTING BACKWARD PASS" + " " * 20 + "*")
-        log_util.safe_log("*" * 60 + "\n")
+        print_layer_banner("Backward Pass", current_epoch=epoch)
 
     num_edges = len(edge_models)
     updated_edge_preds_list, updated_edge_models = [], []
@@ -1147,64 +1141,107 @@ def backward_pass(edge_models, device_models,
 # ======================================================================
 
 
-def random_search_boosting_params(
+def print_layer_banner(layer_type, layer_idx=None, device_count=None, current_epoch=None):
+    """
+    Prints a dynamic, colored banner for different layers.
+
+    Args:
+        layer_type (str): Type of layer ('Device', 'Edge', 'Global', 'Evaluation', 'Backward Pass', etc.)
+        layer_idx (int, optional): Index of the layer (if applicable)
+        device_count (int, optional): Number of devices (if applicable)
+        current_epoch (int, optional): Current epoch or iteration
+    """
+
+    # ANSI color codes
+    COLORS = {
+        "Device": "\033[94m",  # Blue
+        "Edge": "\033[96m",  # Cyan
+        "Global": "\033[95m",  # Magenta
+        "Evaluation": "\033[92m",  # Green
+        "Backward": "\033[93m",  # Yellow
+        "Backward Pass": "\033[93m",  # Alias
+        "ENDC": "\033[0m",  # Reset
+        "BOLD": "\033[1m"
+    }
+    color = COLORS.get(layer_type, "")  # Default to no color if unknown
+
+    idx_str = f" {layer_idx}" if layer_idx is not None else ""
+    epoch_str = f" | Epoch {current_epoch}" if current_epoch is not None else ""
+    device_str = f"Devices ({device_count}) -> " if device_count is not None else ""
+
+    title = f"STARTING {layer_type.upper()} LAYER{idx_str}{epoch_str}"
+    description = f"{device_str}{layer_type}-level boosted ensemble -> {layer_type} output"
+    note = "Gradient-loss based early stopping"
+
+    # Special messages for Evaluation and Backward Pass layers
+    if layer_type.lower() in ["evaluation", "evaluation layer"]:
+        description = f"Computing metrics and validation outputs"
+        note = "No training, evaluation only"
+    elif layer_type.lower() in ["backward", "backward pass"]:
+        description = f"Propagating gradients backward and updating models"
+        note = "Gradient accumulation and parameter update"
+
+    # Banner width
+    max_width = max(len(title), len(description), len(note)) + 4  # padding
+
+    # Print colored banner
+    print(color + "*" * max_width + COLORS["ENDC"])
+    print(color + f"*{title.center(max_width - 2)}*" + COLORS["ENDC"])
+    print(color + f"*{description.center(max_width - 2)}*" + COLORS["ENDC"])
+    print(color + f"*{note.center(max_width - 2)}*" + COLORS["ENDC"])
+    print(color + "*" * max_width + COLORS["ENDC"] + "\n")
+
+
+def search_boosting_params(
         X_train,
         y_train,
         X_valid,
         y_valid,
         le,
         n_classes,
-        n_trials=10,
         verbose=True
 ):
     """
-    Random search for optimal LightGBM hyperparameters for sequential boosting.
-    Incorporates monotonic logloss check to avoid degrading performance.
-
-    Args:
-        X_train, y_train : training data
-        X_valid, y_valid : validation data for scoring
-        le : LabelEncoder for encoding y labels
-        n_classes : total number of classes in the problem
-        n_trials : number of random trials
-        verbose : log_util.safe_log trial info
-
-    Returns:
-        best_params : dictionary of best hyperparameters
+    Grid search for LightGBM boosting hyperparameters using gradient-based loss.
     """
+
+    param_grid = {
+        "learning_rate": [0.01, 0.05, 0.1],
+        "max_depth": [3, 6, 9],
+        """
+            "num_leaves": [31, 63, 127],
+            "min_data_in_leaf": [10, 20, 30],
+            "min_gain_to_split": [0.0, 0.1, 0.2],
+            
+            "feature_fraction": [0.7, 0.8, 1.0],
+            "bagging_fraction": [0.7, 0.8, 1.0],
+            "bagging_freq": [1, 5, 10],
+            "lambda_l1": [0.0, 0.1, 0.5],
+            "lambda_l2": [0.0, 0.1, 0.5],
+            "max_bin": [128, 256, 512],
+            """
+        "num_boost_round": [50, 100, 150]
+    }
+
+    y_train_enc = encode_labels_safe(le, y_train, n_classes)
+    y_valid_enc = encode_labels_safe(le, y_valid, n_classes)
+
+    # Convert y_valid_enc to one-hot for gradient computation
+    y_valid_onehot = np.eye(n_classes)[y_valid_enc]
 
     best_score = np.inf
     best_params = None
 
-    # Encode labels once
-    y_train_enc = encode_labels_safe(le, y_train, n_classes)
-    y_valid_enc = encode_labels_safe(le, y_valid, n_classes)
+    from itertools import product
+    keys, values = zip(*param_grid.items())
+    all_combinations = list(product(*values))
 
-    prev_best_logloss = np.inf  # monotonic logloss baseline
-    all_classes = np.arange(n_classes)
+    for idx, combo in enumerate(all_combinations):
+        params = dict(zip(keys, combo))
+        if verbose:
+            log_util.safe_log(f"Grid trial {idx+1}/{len(all_combinations)}: {params}")
 
-    for trial in range(n_trials):
-        # -----------------------------
-        # Sample random hyperparameters
-        # -----------------------------
-        params = {
-            "learning_rate": 10 ** np.random.uniform(-2.0, -0.3),
-            "num_leaves": np.random.randint(15, 128),
-            "max_depth": np.random.randint(3, 12),
-            "min_data_in_leaf": np.random.randint(5, 50),
-            "min_gain_to_split": np.random.uniform(0.0, 0.5),
-            "feature_fraction": np.random.uniform(0.6, 1.0),
-            "bagging_fraction": np.random.uniform(0.6, 1.0),
-            "bagging_freq": np.random.randint(1, 10),
-            "lambda_l1": np.random.uniform(0.0, 1.0),
-            "lambda_l2": np.random.uniform(0.0, 1.0),
-            "max_bin": np.random.randint(100, 512),
-            "num_boost_round": np.random.randint(50, 200)
-        }
-
-        # -----------------------------
-        # Train LightGBM model
-        # -----------------------------
+        # Train model
         model, _ = train_lightgbm(
             X_train, y_train_enc,
             X_valid=X_valid, y_valid=y_valid_enc,
@@ -1212,26 +1249,22 @@ def random_search_boosting_params(
             **params
         )
 
-        # -----------------------------
-        # Evaluate validation log-loss
-        # -----------------------------
+        # Predict probabilities
         y_pred = predict_proba_fixed(model, X_valid, n_classes)
-        score = log_loss(y_valid_enc, y_pred, labels=all_classes)
 
-        # -----------------------------
-        # Accept trial only if logloss improves monotonic baseline
-        # -----------------------------
-        if score <= prev_best_logloss:
-            best_score = score
+        # Gradient loss = mean L2 norm of residuals (y_true - y_pred)
+        grad_loss = np.mean(np.linalg.norm(y_valid_onehot - y_pred, axis=1))
+
+        # Accept trial if gradient loss improves
+        if grad_loss < best_score:
+            best_score = grad_loss
             best_params = params
-            prev_best_logloss = score
 
-        # Free memory
         del model, y_pred
         gc.collect()
 
     if verbose:
-        log_util.safe_log(f"Best params selected: {best_params} (val loss={best_score:.4f})")
+        log_util.safe_log(f"Best params (gradient loss): {best_params}, loss={best_score:.6f}")
 
     return best_params
 
@@ -2045,6 +2078,7 @@ def evaluate_multilevel_performance(
     Edge predictions can be weighted by their reliability.
     Returns a structured dictionary with predictions and metrics.
     """
+    print_layer_banner("Evaluation", current_epoch=10)
 
     def normalize_weights(weights):
         w = np.asarray(weights, dtype=np.float32)
@@ -2283,14 +2317,14 @@ def hpfl_train_with_accuracy(
         "y_true_per_epoch": [],
     }
 
-    # --- Hyperparameter tuning via random search ---
+    # --- Hyperparameter tuning ---
     if X_device_finetunes[0] is not None and y_device_finetunes[0] is not None:
-        best_param_device = random_search_boosting_params(
+        best_param_device = search_boosting_params(
             X_trains[0], y_trains[0],
             X_device_finetunes[0][:, :X_trains[0].shape[1]],
             y_device_finetunes[0],
-            le, n_classes,
-            n_trials=5,
+            le=le,
+            n_classes=n_classes,
             verbose=True
         )
     else:
@@ -2319,6 +2353,7 @@ def hpfl_train_with_accuracy(
             y_edges_finetune=y_edges_finetune,
             residuals_devices=residuals_devices,
             device_models=device_models,
+            epoch = epoch,
             track_profile=True
         )
         log_util.safe_log("Forward pass profile:", profile)
@@ -2334,6 +2369,7 @@ def hpfl_train_with_accuracy(
             global_pred_matrix=y_global_pred,
             n_classes=n_classes,
             use_classification=True,
+            epoch=epoch,
             verbose=True,
             le=le
         )
@@ -2609,20 +2645,21 @@ def plot_device_accuracies(
 
     return accuracies, log_losses, brier_scores, topk_accuracies
 
-def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=False):
+def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=False, top_k=3):
     """
     Generate Hierarchical PFL plots from structured metrics dictionary.
     Includes per-epoch stacked contributions, device/edge vs global,
-    overall accuracy trends, and per-device/edge heatmaps.
+    overall accuracy trends, per-device/edge heatmaps, and top-K accuracy heatmaps.
 
     Args:
         metrics_test (dict): Output metrics dictionary per epoch.
         save_root_dir (str): Base directory to save plots.
         show_plots (bool): Whether to call plt.show() after each plot.
+        top_k (int): Top-K accuracy to plot (default 3).
     """
 
     # -----------------------------
-    # Create dated folder automatically
+    # Create timestamped folder
     # -----------------------------
     today_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     save_dir = os.path.join(save_root_dir, today_str)
@@ -2636,8 +2673,8 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
     global_accs = metrics_test.get("global_accs", [])
     device_vs_global = metrics_test.get("device_vs_global", [])
     edge_vs_global = metrics_test.get("edge_vs_global", [])
-
     num_epochs = len(global_accs)
+
     colors = {"Device": "skyblue", "Edge": "orange", "Global": "green"}
 
     # -----------------------------
@@ -2649,24 +2686,19 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
         global_acc = global_accs[epoch_idx] if epoch_idx < len(global_accs) else 0
 
         # Contribution bars
-        contributions = [
-            mean_device,
-            max(mean_edge - mean_device, 0),
-            max(global_acc - mean_edge, 0),
-        ]
+        contributions = [mean_device, max(mean_edge - mean_device, 0), max(global_acc - mean_edge, 0)]
         layers = ["Device", "Edge", "Global"]
 
         plt.figure(figsize=(6, 4))
         bars = plt.bar(layers, contributions, color=[colors[l] for l in layers])
         plt.ylim(0, 1)
         plt.ylabel("Contribution to Accuracy")
-        plt.title(f"Epoch {epoch_idx + 1} Layer Contributions")
+        plt.title(f"Epoch {epoch_idx+1} Layer Contributions")
         for bar, val in zip(bars, contributions):
-            plt.text(bar.get_x() + bar.get_width() / 2, val + 0.02, f"{val:.3f}",
-                     ha="center", va="bottom")
+            plt.text(bar.get_x() + bar.get_width()/2, val + 0.02, f"{val:.3f}", ha="center", va="bottom")
         plt.grid(axis="y", linestyle="--", alpha=0.6)
         plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch_idx + 1}.png"))
+        plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch_idx+1}.png"))
         if show_plots: plt.show()
         plt.close()
 
@@ -2675,15 +2707,14 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
         mean_edge_vs_glob = np.mean(edge_vs_global[epoch_idx]) if edge_vs_global[epoch_idx] else 0
 
         plt.figure(figsize=(6, 4))
-        plt.bar(["Device vs Global", "Edge vs Global"],
-                [mean_dev_vs_glob, mean_edge_vs_glob],
+        plt.bar(["Device vs Global", "Edge vs Global"], [mean_dev_vs_glob, mean_edge_vs_glob],
                 color=[colors["Device"], colors["Edge"]])
         plt.ylim(0, 1)
         plt.ylabel("Accuracy vs Global")
-        plt.title(f"Epoch {epoch_idx + 1} Layer vs Global")
+        plt.title(f"Epoch {epoch_idx+1} Layer vs Global")
         plt.grid(axis="y", linestyle="--", alpha=0.6)
         plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, f"epoch_vs_global_{epoch_idx + 1}.png"))
+        plt.savefig(os.path.join(save_dir, f"epoch_vs_global_{epoch_idx+1}.png"))
         if show_plots: plt.show()
         plt.close()
 
@@ -2694,9 +2725,9 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
                         cbar=True, vmin=0, vmax=1)
             plt.xlabel("Device Index")
             plt.ylabel("Epoch")
-            plt.title(f"Epoch {epoch_idx + 1} Device Accuracies")
+            plt.title(f"Epoch {epoch_idx+1} Device Accuracies")
             plt.tight_layout()
-            plt.savefig(os.path.join(save_dir, f"epoch_device_heatmap_{epoch_idx + 1}.png"))
+            plt.savefig(os.path.join(save_dir, f"epoch_device_heatmap_{epoch_idx+1}.png"))
             if show_plots: plt.show()
             plt.close()
 
@@ -2707,11 +2738,42 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
                         cbar=True, vmin=0, vmax=1)
             plt.xlabel("Edge Index")
             plt.ylabel("Epoch")
-            plt.title(f"Epoch {epoch_idx + 1} Edge Accuracies")
+            plt.title(f"Epoch {epoch_idx+1} Edge Accuracies")
             plt.tight_layout()
-            plt.savefig(os.path.join(save_dir, f"epoch_edge_heatmap_{epoch_idx + 1}.png"))
+            plt.savefig(os.path.join(save_dir, f"epoch_edge_heatmap_{epoch_idx+1}.png"))
             if show_plots: plt.show()
             plt.close()
+
+        # -----------------------------
+        # 1d. Top-K accuracy heatmaps (if available)
+        # -----------------------------
+        if "metrics" in metrics_test and "device" in metrics_test["metrics"]:
+            device_topk_epoch = metrics_test["metrics"]["device"].get("topk", [])
+            if device_topk_epoch and len(device_topk_epoch) > epoch_idx:
+                topk_matrix = np.array([device_topk_epoch[epoch_idx]])  # shape: [1, num_devices]
+                plt.figure(figsize=(max(6, topk_matrix.shape[1]*0.5), 4))
+                sns.heatmap(topk_matrix, annot=True, cmap="Greens", cbar=True, vmin=0, vmax=1)
+                plt.xlabel("Device Index")
+                plt.ylabel("Epoch")
+                plt.title(f"Epoch {epoch_idx+1} Device Top-{top_k} Accuracies")
+                plt.tight_layout()
+                plt.savefig(os.path.join(save_dir, f"epoch_device_top{top_k}_heatmap_{epoch_idx+1}.png"))
+                if show_plots: plt.show()
+                plt.close()
+
+        if "metrics" in metrics_test and "edge" in metrics_test["metrics"]:
+            edge_topk_epoch = metrics_test["metrics"]["edge"].get("topk", [])
+            if edge_topk_epoch and len(edge_topk_epoch) > epoch_idx:
+                topk_matrix = np.array([edge_topk_epoch[epoch_idx]])
+                plt.figure(figsize=(max(6, topk_matrix.shape[1]*0.5), 4))
+                sns.heatmap(topk_matrix, annot=True, cmap="Purples", cbar=True, vmin=0, vmax=1)
+                plt.xlabel("Edge Index")
+                plt.ylabel("Epoch")
+                plt.title(f"Epoch {epoch_idx+1} Edge Top-{top_k} Accuracies")
+                plt.tight_layout()
+                plt.savefig(os.path.join(save_dir, f"epoch_edge_top{top_k}_heatmap_{epoch_idx+1}.png"))
+                if show_plots: plt.show()
+                plt.close()
 
     # -----------------------------
     # 2. Accuracy trends across epochs
@@ -2727,30 +2789,11 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
     plt.ylabel("Accuracy")
     plt.title("Hierarchical PFL Accuracy Trends")
     plt.ylim(0, 1)
-    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i + 1}" for i in range(num_epochs)])
+    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, "overall_accuracy_trends.png"))
-    if show_plots: plt.show()
-    plt.close()
-
-    # Device/Edge vs Global trends
-    mean_device_vs_global = [np.mean(d) if d else 0 for d in device_vs_global]
-    mean_edge_vs_global = [np.mean(e) if e else 0 for e in edge_vs_global]
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(mean_device_vs_global, label="Device vs Global", marker="o", color=colors["Device"])
-    plt.plot(mean_edge_vs_global, label="Edge vs Global", marker="s", color=colors["Edge"])
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy vs Global")
-    plt.title("Device/Edge Accuracy vs Global Across Epochs")
-    plt.ylim(0, 1)
-    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i + 1}" for i in range(num_epochs)])
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "device_edge_vs_global_trends.png"))
     if show_plots: plt.show()
     plt.close()
 
@@ -2763,15 +2806,9 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
     epochs = np.arange(1, num_epochs + 1)
 
     plt.figure(figsize=(10, 6))
-    plt.stackplot(
-        epochs,
-        base_device,
-        edge_gain,
-        global_gain,
-        labels=["Device Base", "Edge Gain", "Global Gain"],
-        colors=[colors["Device"], colors["Edge"], colors["Global"]],
-        alpha=0.8,
-    )
+    plt.stackplot(epochs, base_device, edge_gain, global_gain,
+                  labels=["Device Base", "Edge Gain", "Global Gain"],
+                  colors=[colors["Device"], colors["Edge"], colors["Global"]], alpha=0.8)
     plt.title("Hierarchical Contribution Evolution Across Epochs")
     plt.xlabel("Epoch")
     plt.ylabel("Cumulative Accuracy")
@@ -2784,34 +2821,7 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
     if show_plots: plt.show()
     plt.close()
 
-    # -----------------------------
-    # 4. Aggregate heatmaps across all epochs
-    # -----------------------------
-    # Device heatmap
-    device_matrix = np.array([d if d else [0] * len(device_accs[0]) for d in device_accs])
-    plt.figure(figsize=(max(8, device_matrix.shape[1] * 0.5), max(6, device_matrix.shape[0] * 0.5)))
-    sns.heatmap(device_matrix, annot=True, cmap="Blues", cbar=True, vmin=0, vmax=1)
-    plt.xlabel("Device Index")
-    plt.ylabel("Epoch")
-    plt.title("Device Accuracies Across Epochs")
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "all_epochs_device_heatmap.png"))
-    if show_plots: plt.show()
-    plt.close()
-
-    # Edge heatmap
-    edge_matrix = np.array([e if e else [0] * len(edge_accs[0]) for e in edge_accs])
-    plt.figure(figsize=(max(8, edge_matrix.shape[1] * 0.5), max(6, edge_matrix.shape[0] * 0.5)))
-    sns.heatmap(edge_matrix, annot=True, cmap="Oranges", cbar=True, vmin=0, vmax=1)
-    plt.xlabel("Edge Index")
-    plt.ylabel("Epoch")
-    plt.title("Edge Accuracies Across Epochs")
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "all_epochs_edge_heatmap.png"))
-    if show_plots: plt.show()
-    plt.close()
-
-    log_util.safe_log(f"All plots saved to folder: {save_dir}")
+    log_util.safe_log(f"All plots (including Top-{top_k} heatmaps) saved to folder: {save_dir}")
 
 
 # ============================================================
@@ -2820,7 +2830,6 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
 
 if __name__ == "__main__":
     folder_path = "CIC_IoT_IDAD_Dataset_2024"
-    log_util.setup_logging(f"Memory available: {psutil.virtual_memory().available / 1024 ** 3:.2f} GB")
 
     # Main log folder
     log_path_str = os.path.join("logs", f"{folder_path}")
