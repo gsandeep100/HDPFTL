@@ -93,20 +93,16 @@ DeviceData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 # LightGBM Training
 # ============================================================
 
-def gradient_loss_eval(y_pred, dataset):
+def gradient_loss_eval(y_true, y_pred):
     """
-    Custom LightGBM evaluation function for gradient loss.
-    y_pred : predicted probabilities (flattened)
-    dataset : lgb.Dataset with true labels
+    Custom LightGBM evaluation function for sklearn API (LGBMClassifier.fit).
     Returns tuple: (eval_name, value, is_higher_better)
     """
-    y_true = dataset.get_label().astype(int)
-    n_classes = dataset.num_class() if hasattr(dataset, 'num_class') else len(np.unique(y_true))
+    y_true = y_true.astype(int)
+    n_classes = y_pred.shape[1] if y_pred.ndim > 1 else 2
 
-    # Reshape predictions if multiclass
-    if n_classes > 2:
-        y_pred = y_pred.reshape(-1, n_classes)
-    else:
+    # Reshape for binary case
+    if n_classes == 2 and y_pred.ndim == 1:
         y_pred = np.vstack([1 - y_pred, y_pred]).T
 
     # Clip to avoid extremes
@@ -116,8 +112,9 @@ def gradient_loss_eval(y_pred, dataset):
     y_onehot = np.zeros_like(y_pred)
     y_onehot[np.arange(len(y_true)), y_true] = 1
 
+    # Gradient loss = mean squared L2
     grad_loss = np.mean((y_onehot - y_pred) ** 2)
-    return "grad_loss", grad_loss, False  # lower is better
+    return "grad_loss", grad_loss, False  # False = lower is better
 
 def train_lightgbm(
         X_train,
