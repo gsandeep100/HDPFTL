@@ -675,122 +675,140 @@ def edge_layer_boosting(
     gc.collect()
     return edge_outputs, e_models, e_residuals, edge_embeddings_list, global_pred_matrix, edge_sample_slices
 
-
-def global_layer_bayesian_aggregation(
+def global_layer_bayesian_aggregation_with_edge_reliability(
     e_outputs,
     e_residuals=None,
     e_embeddings=None,
     verbose=True,
     eps=1e-12,
-    chunk_size=2048
+    chunk_size=2048,
+    return_edge_probs_per_sample=False
 ):
     """
-    Global Bayesian feature-level aggregation with reliability weighting.
-
-    Args:
-        e_outputs (list[np.ndarray]): Edge outputs (feature matrices per edge).
-        e_residuals (list[np.ndarray], optional): Edge residuals (same shape as outputs or sample-wise).
-        e_embeddings (list[np.ndarray], optional): Edge feature embeddings for diagnostics (unused in aggregation).
-        verbose (bool): Print summary.
-        eps (float): Numerical stability constant.
-        chunk_size (int): Chunk size for memory-safe normalization.
+    Global Bayesian feature-level aggregation + per-edge reliability reweighting.
 
     Returns:
-        tuple: (
-            y_global_pred_featurespace: np.ndarray (n_samples, n_features),
-            None,  # placeholder for global residuals
-            theta_global: dict of priors/statistics
-        )
+        y_global_pred_featurespace: np.ndarray (n_samples, n_features)
+        None
+        theta_global: dict {
+            "feat_mean", "feat_precision", "sample_weights", "n_features",
+            "edge_reliability" (array len n_valid_edges, sums to 1),
+            "edge_feature_slices" (list of (start, end) for each edge in valid_edges),
+            "edge_scores_per_sample" (optional; shape (n_samples, n_edges))
+        }
     """
 
-    # -----------------------------
-    # 1. Validate Inputs
-    # -----------------------------
+    # 1. validate / collect outputs and per-edge feature sizes
     valid_edges = [i for i, out in enumerate(e_outputs) if out is not None and out.size > 0]
     if not valid_edges:
         raise ValueError("No valid edges found for global aggregation!")
 
-    H_list, weight_list = [], []
+    H_list = []
+    weight_list = []
+    edge_feature_slices = []
+    col_cursor = 0
     for i in valid_edges:
         out = np.nan_to_num(e_outputs[i], nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
         H_list.append(out)
+        n_feat = out.shape[1]
+        edge_feature_slices.append((col_cursor, col_cursor + n_feat))
+        col_cursor += n_feat
 
+        # sample reliability from residuals (smooth exponential mapping)
         if e_residuals and e_residuals[i] is not None:
             res = np.nan_to_num(e_residuals[i], nan=0.0).astype(np.float32, copy=False)
-            per_sample_mse = np.mean(res**2, axis=1) if res.ndim > 1 else res**2
-            # reliability = exp(-MSE)
+            per_sample_mse = np.mean(res**2, axis=1) if res.ndim > 1 else (res.reshape(-1) ** 2)
             reliability = np.exp(-per_sample_mse / (np.mean(per_sample_mse) + eps))
         else:
             reliability = np.ones(out.shape[0], dtype=np.float32)
 
-        # normalize per edge
-        reliability /= np.mean(reliability) + eps
+        # normalize edge-level reliability to have mean=1 for stability across edges
+        reliability = reliability / (np.mean(reliability) + eps)
         weight_list.append(reliability)
 
-        del res, per_sample_mse
+        # cleanup local temp
+        try:
+            del res, per_sample_mse
+        except UnboundLocalError:
+            pass
         gc.collect()
 
-    # -----------------------------
-    # 2. Stack features & weights
-    # -----------------------------
+    # 2. stack features horizontally
     H_global = np.hstack(H_list).astype(np.float32, copy=False)
     sample_weights = np.hstack(weight_list).astype(np.float32, copy=False)
-    sample_weights /= np.sum(sample_weights) + eps
+    sample_weights /= (np.sum(sample_weights) + eps)
 
     n_samples, n_features = H_global.shape
     if verbose:
-        print(f"[GlobalBayes] Aggregating {len(valid_edges)} edges | shape=({n_samples},{n_features})")
+        print(f"[GlobalBayes+Edge] stacking {len(valid_edges)} edges -> H_global shape {H_global.shape}")
 
-    # -----------------------------
-    # 3. Normalize features (chunked)
-    # -----------------------------
+    # 3. chunked normalization to [eps,1]
     H_norm = np.empty_like(H_global, dtype=np.float32)
-    for start in range(0, n_samples, chunk_size):
-        end = min(start + chunk_size, n_samples)
-        block = H_global[start:end]
+    for rs in range(0, n_samples, chunk_size):
+        re = min(rs + chunk_size, n_samples)
+        block = H_global[rs:re]
         f_min = np.min(block, axis=0, keepdims=True)
         f_max = np.max(block, axis=0, keepdims=True)
         f_range = np.clip(f_max - f_min, eps, None)
-        H_norm[start:end] = np.clip((block - f_min) / f_range, eps, 1.0)
+        H_norm[rs:re] = np.clip((block - f_min) / f_range, eps, 1.0)
         del block, f_min, f_max, f_range
         gc.collect()
 
     del H_global
     gc.collect()
 
-    # -----------------------------
-    # 4. Feature Priors (mean & variance)
-    # -----------------------------
+    # 4. feature priors (weighted mean/var)
     feat_mean = np.average(H_norm, axis=0, weights=sample_weights)
     feat_var = np.average((H_norm - feat_mean) ** 2, axis=0, weights=sample_weights)
     feat_precision = 1.0 / (feat_var + eps)
 
+    # 5. weighted log-likelihood (stable) -> feature-space posterior
+    # log_likelihood shape (n_samples, n_features)
+    log_likelihood = np.log(H_norm) * sample_weights[:, None]
+    log_likelihood -= np.max(log_likelihood, axis=1, keepdims=True)
+    exp_likelihood = np.exp(log_likelihood, dtype=np.float32)
+    y_global_pred_featurespace = exp_likelihood / (np.sum(exp_likelihood, axis=1, keepdims=True) + eps)
+
+    # 6. per-edge aggregation: sum feature-posteriors belonging to each edge
+    n_edges = len(valid_edges)
+    edge_scores_per_sample = np.empty((n_samples, n_edges), dtype=np.float32)
+    for ei, (scol, ecol) in enumerate(edge_feature_slices):
+        edge_scores_per_sample[:, ei] = np.sum(y_global_pred_featurespace[:, scol:ecol], axis=1)
+
+    # 7. collapse to per-edge scalar reliability using sample_weights
+    # reliability scalar for edge ei = weighted average over samples of edge_score(sample)
+    edge_reliability = np.sum(edge_scores_per_sample * sample_weights[:, None], axis=0)
+    # normalize to sum to 1 for interpretability/use as weights
+    edge_reliability = edge_reliability / (np.sum(edge_reliability) + eps)
+
+    # 8. prepare theta_global and cleanup
     theta_global = {
         "feat_mean": feat_mean.astype(np.float32),
         "feat_precision": feat_precision.astype(np.float32),
         "sample_weights": sample_weights,
         "n_features": n_features,
+        "valid_edges": valid_edges,
+        "edge_feature_slices": edge_feature_slices,
+        "edge_reliability": edge_reliability.astype(np.float32)
     }
 
-    # -----------------------------
-    # 5. Weighted Log-Likelihood
-    # -----------------------------
-    log_likelihood = np.log1p(H_norm - 1 + eps) * sample_weights[:, None]
+    if return_edge_probs_per_sample:
+        theta_global["edge_scores_per_sample"] = edge_scores_per_sample  # caution: big
+    else:
+        # free large array if not requested
+        del edge_scores_per_sample
+        gc.collect()
 
-    # Softmax across features (feature-wise contribution to global score)
-    log_likelihood -= np.max(log_likelihood, axis=1, keepdims=True)
-    exp_likelihood = np.exp(log_likelihood, dtype=np.float32)
-    y_global_pred_featurespace = exp_likelihood / (np.sum(exp_likelihood, axis=1, keepdims=True) + eps)
-
+    # final cleanups
     del H_norm, log_likelihood, exp_likelihood
     gc.collect()
 
     if verbose:
-        print(f"[GlobalBayes] Feature-level posterior aggregated. {n_features} features combined safely.")
+        print(f"[GlobalBayes+Edge] n_samples={n_samples}, n_features={n_features}, n_edges={n_edges}")
+        print(f"[GlobalBayes+Edge] edge_reliability: {theta_global['edge_reliability']}")
 
+    # return feature-space posteriors and theta with per-edge reliability
     return y_global_pred_featurespace, None, theta_global
-
-
 
 
 # ============================================================
@@ -2008,7 +2026,8 @@ def evaluate_multilevel_performance(
     device_models,
     edge_models,
     edge_groups,
-    X_tests, y_tests,
+    X_tests,
+    y_tests,
     le,
     num_classes,
     combine_mode="last",
@@ -2016,43 +2035,33 @@ def evaluate_multilevel_performance(
     edge_model_weights=None,
     device_val_scores=None,
     edge_val_scores=None,
+    edge_reliabilities=None,   # NEW: reliability weights from global aggregation
     calibrate=True,
     device_weight_mode="weighted",
     top_k=3,
 ):
     """
-    Unified evaluation for hierarchical federated models:
-    Computes per-device, per-edge, and global metrics.
-
-    Returns a dictionary compatible with plot_hpfl_all.
+    Evaluate hierarchical federated model performance: device, edge, and global levels.
+    Edge predictions can be weighted by their reliability.
+    Returns a structured dictionary with predictions and metrics.
     """
 
-    # ---------------------------
-    # Helper functions
-    # ---------------------------
     def normalize_weights(weights):
-        w = np.asarray(weights, dtype=float)
+        w = np.asarray(weights, dtype=np.float32)
         w[np.isnan(w)] = 0.0
         s = w.sum()
-        if s <= 0:
-            return np.ones_like(w) / len(w)
-        return w / s
+        return w / s if s > 0 else np.ones_like(w) / len(w)
 
     def calibrate_probs(y_true, probs):
         y_true = np.atleast_1d(y_true)
-        probs = np.atleast_2d(probs)
-        if probs.shape[0] == 1 and y_true.shape[0] > 1:
-            probs = np.tile(probs, (y_true.shape[0], 1))
+        probs = np.atleast_2d(probs).astype(np.float32)
         if probs.shape[1] == 2:
             ir = IsotonicRegression(out_of_bounds="clip")
             ir.fit(probs[:, 1], y_true)
-            calibrated_p1 = ir.transform(probs[:, 1])
-            return np.column_stack([1 - calibrated_p1, calibrated_p1])
+            p1 = ir.transform(probs[:, 1])
+            probs = np.column_stack([1 - p1, p1])
         return probs
 
-    # ---------------------------
-    # Suppress warnings
-    # ---------------------------
     warnings.filterwarnings("ignore", category=UserWarning)
     np.seterr(divide='ignore', over='ignore', invalid='ignore')
 
@@ -2062,25 +2071,25 @@ def evaluate_multilevel_performance(
     device_preds, device_accs, log_losses, brier_scores, topk_accuracies = [], [], [], [], []
 
     for idx, models_per_device in enumerate(device_models):
+        X_test = np.atleast_2d(X_tests[idx])
+        y_true = le.transform(np.atleast_1d(y_tests[idx]))
+
         if not models_per_device:
+            y_pred_probs = np.zeros((X_test.shape[0], num_classes), dtype=np.float32)
+            device_preds.append(y_pred_probs)
             device_accs.append(0.0)
             log_losses.append(np.nan)
             brier_scores.append(np.nan)
             topk_accuracies.append(np.nan)
-            device_preds.append(np.zeros((X_tests[idx].shape[0], num_classes)))
             continue
 
-        X_test = np.atleast_2d(X_tests[idx])
-        y_test = np.atleast_1d(y_tests[idx])
-        y_true = le.transform(y_test)
-
-        # Stack predictions
-        preds_list = [predict_proba_fixed(m, X_test, num_classes)
+        # Stack predictions from multiple models per device
+        preds_list = [predict_proba_fixed(m, X_test, num_classes).astype(np.float32)
                       for m in (models_per_device if isinstance(models_per_device, list) else [models_per_device])]
 
-        # Compute weights
+        # Compute combination weights
         if combine_mode == "weighted":
-            w = np.array(device_val_scores[idx]) if device_val_scores and idx < len(device_val_scores) else np.ones(len(preds_list))
+            w = (np.array(device_val_scores[idx]) if device_val_scores else np.ones(len(preds_list)))
             w = normalize_weights(w)
         else:
             w = None
@@ -2094,7 +2103,7 @@ def evaluate_multilevel_performance(
             y_pred_probs = sum(wi * pi for pi, wi in zip(preds_list, w))
         elif combine_mode == "hard_vote":
             votes = np.array([np.argmax(p, axis=1) for p in preds_list])
-            y_pred_probs = np.zeros((votes.shape[1], num_classes))
+            y_pred_probs = np.zeros((votes.shape[1], num_classes), dtype=np.float32)
             for c in range(num_classes):
                 y_pred_probs[:, c] = np.mean(votes == c, axis=0)
         elif combine_mode == "stacked":
@@ -2105,7 +2114,6 @@ def evaluate_multilevel_performance(
         else:
             raise ValueError(f"Unknown combine_mode: {combine_mode}")
 
-        # Optional calibration
         if calibrate:
             y_pred_probs = calibrate_probs(y_true, y_pred_probs)
 
@@ -2117,7 +2125,6 @@ def evaluate_multilevel_performance(
         except ValueError:
             log_losses.append(np.nan)
         brier_scores.append(multi_class_brier(y_true, y_pred_probs))
-        log_util.safe_log("Per-device logloss:", log_losses)
         topk_accuracies.append(top_k_accuracy(y_true, y_pred_probs, k=top_k))
 
     # ---------------------------
@@ -2132,21 +2139,26 @@ def evaluate_multilevel_performance(
 
         # Device weights for edge aggregation
         if device_weight_mode == "samples":
-            w_devices = [np.atleast_2d(X_tests[d]).shape[0] for d in edge_devices if d < len(X_tests)]
+            w_devices = [X_tests[d].shape[0] for d in edge_devices if d < len(X_tests)]
         else:
             w_devices = [1.0] * len(device_edge_preds)
         w_devices = normalize_weights(w_devices)
 
-        # Safely combine predictions with varying number of samples
         weighted_preds = [wi * dp for wi, dp in zip(w_devices, device_edge_preds)]
         device_mix_pred = np.vstack(weighted_preds)
 
-        if edge_idx < len(edge_models):
-            mdl = edge_models[edge_idx]
-            edge_pred_accum = predict_proba_fixed(mdl, np.vstack([X_tests[d] for d in edge_devices]), num_classes)
+        # Edge model predictions
+        if edge_idx < len(edge_models) and edge_models[edge_idx]:
+            X_edge_combined = np.vstack([X_tests[d] for d in edge_devices])
+            edge_pred_accum = predict_proba_fixed(edge_models[edge_idx], X_edge_combined, num_classes)
             if calibrate:
                 edge_pred_accum = calibrate_probs(y_edge_true, edge_pred_accum)
-            pred_accum = 0.5 * (edge_pred_accum + device_mix_pred)
+
+            # Apply edge reliability weighting if provided
+            reliability = 1.0
+            if edge_reliabilities and edge_idx < len(edge_reliabilities):
+                reliability = float(edge_reliabilities[edge_idx])
+            pred_accum = reliability * edge_pred_accum + (1 - reliability) * device_mix_pred
         else:
             pred_accum = device_mix_pred
 
@@ -2156,18 +2168,28 @@ def evaluate_multilevel_performance(
     # ---------------------------
     # 3️⃣ Global-level metrics
     # ---------------------------
-    global_pred = np.vstack(device_preds)
+    # Weight devices by edge reliabilities
+    if edge_reliabilities:
+        global_pred_list = []
+        for edge_idx, edge_devices in enumerate(edge_groups):
+            pred_edge = edge_preds[edge_idx]
+            w = float(edge_reliabilities[edge_idx]) if edge_idx < len(edge_reliabilities) else 1.0
+            global_pred_list.append(pred_edge * w)
+        global_pred = np.vstack(global_pred_list)
+    else:
+        global_pred = np.vstack(device_preds)
+
     y_global_true = np.concatenate([le.transform(y_tests[d]) for d in range(len(X_tests))])
     global_acc = accuracy_score(y_global_true, global_pred.argmax(axis=1))
 
     # ---------------------------
-    # 4️⃣ Prepare structured metrics dictionary
+    # 4️⃣ Structured metrics dictionary
     # ---------------------------
     metrics_test = {
         "device_means": device_accs,
-        "device_stds": np.std(device_accs),
+        "device_stds": float(np.std(device_accs)),
         "edge_means": edge_accs,
-        "edge_stds": np.std(edge_accs),
+        "edge_stds": float(np.std(edge_accs)),
         "global_accs": global_acc,
         "device_vs_global": device_accs,
         "edge_vs_global": edge_accs,
@@ -2193,9 +2215,6 @@ def evaluate_multilevel_performance(
     return metrics_test
 
 
-
-
-
 # ============================================================
 #                  HPFL TRAINING AND EVALUATION
 # ============================================================
@@ -2205,9 +2224,11 @@ def evaluate_multilevel_performance(
 #   device, edge, and global (gossip-summary) levels.
 # ============================================================
 
-def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes, verbose=True):
+def hpfl_train_with_accuracy(
+    d_data, e_groups, edge_finetune_data, le, n_classes, verbose=True
+):
     """
-    HPFL Training Loop with Multi-Level Accuracy Tracking
+    HPFL Training Loop with Multi-Level Accuracy Tracking and edge reliability weighting.
     """
 
     # -------------------------
@@ -2237,7 +2258,9 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
     X_edges_finetune = list(X_edges_finetune)
     y_edges_finetune = list(y_edges_finetune)
 
-    # Initialize placeholders
+    # -------------------------
+    # 3️⃣ Initialize placeholders
+    # -------------------------
     residuals_devices = [None] * len(d_data)
     device_models = [None] * len(d_data)
     residuals_edges = [None] * len(e_groups)
@@ -2247,7 +2270,6 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
 
     num_epochs = config["epoch"]
 
-    # Initialize history dictionary
     history = {
         "device_accs_per_epoch": [],
         "edge_accs_per_epoch": [],
@@ -2277,18 +2299,13 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
             "num_boost_round": config["num_boost_round"]
         }
 
+    # -------------------------
+    # 4️⃣ Epoch Loop
+    # -------------------------
     for epoch in range(num_epochs):
-        log_util.safe_log(f"""
-        ************************************************************
-        *                                                          *
-        *                  === Epoch {epoch + 1}/{num_epochs} ===  *
-        *                                                          *
-        ************************************************************
-        """)
+        log_util.safe_log(f"\n===== Epoch {epoch + 1}/{num_epochs} =====\n")
 
-        # -----------------------------
-        # 1️⃣ Forward Pass
-        # -----------------------------
+        # --- Forward Pass ---
         (
             device_models, edge_models, edge_outputs, theta_global,
             residuals_devices, residuals_edges, y_global_pred,
@@ -2304,11 +2321,9 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
             device_models=device_models,
             track_profile=True
         )
-        log_util.safe_log("Profile:", profile)
+        log_util.safe_log("Forward pass profile:", profile)
 
-        # -----------------------------
-        # 2️⃣ Backward Pass
-        # -----------------------------
+        # --- Backward Pass ---
         updated_edge_models, updated_device_models, updated_edge_preds_stacked = backward_pass(
             edge_models=edge_models,
             device_models=device_models,
@@ -2323,9 +2338,16 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
             le=le
         )
 
-        # -----------------------------
-        # 3️⃣ Compute Multi-Level Accuracy
-        # -----------------------------
+        # --- Compute Edge Reliabilities ---
+        edge_reliabilities = []
+        for i, res in enumerate(residuals_edges):
+            if res is not None:
+                mse = np.mean(res**2, axis=1)
+                edge_reliabilities.append(float(np.clip(1.0 / (np.mean(mse) + 1e-12), 0.0, 1.0)))
+            else:
+                edge_reliabilities.append(1.0)
+
+        # --- Evaluate Multi-Level Performance ---
         metrics_test = evaluate_multilevel_performance(
             device_models=updated_device_models,
             edge_models=updated_edge_models,
@@ -2336,26 +2358,22 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
             num_classes=n_classes,
             combine_mode="weighted",
             top_k=3,
+            edge_reliabilities=edge_reliabilities
         )
 
-        # -----------------------------
-        # 4️⃣ Save Models
-        # -----------------------------
+        # --- Save Models ---
         save_hpfl_models(
-            device_models, edge_models, epoch,
+            updated_device_models, updated_edge_models, epoch,
             y_global_pred=y_global_pred,
             global_residuals=global_residuals,
             theta_global=theta_global
         )
 
-        # -----------------------------
-        # 5️⃣ Update history
-        # -----------------------------
+        # --- Update History ---
         metrics = metrics_test["metrics"]
         history["device_accs_per_epoch"].append(metrics["device"]["acc"])
         history["edge_accs_per_epoch"].append(metrics["edge"]["acc"])
         history["global_accs"].append(metrics["global"]["acc"])
-
         history["device_means"].append(np.mean(metrics["device"]["acc"]))
         history["device_stds"].append(np.std(metrics["device"]["acc"]))
         history["edge_means"].append(np.mean(metrics["edge"]["acc"]))
@@ -2364,7 +2382,11 @@ def hpfl_train_with_accuracy(d_data, e_groups, edge_finetune_data, le, n_classes
         global_acc = metrics["global"]["acc"]
         history["device_vs_global"].append([acc - global_acc for acc in metrics["device"]["acc"]])
         history["edge_vs_global"].append([acc - global_acc for acc in metrics["edge"]["acc"]])
-        history["y_true_per_epoch"].append(y_tests)
+        history["y_true_per_epoch"].append(y_true_per_edge)
+
+        # --- Clean up memory ---
+        del edge_outputs, y_global_pred, updated_edge_preds_stacked
+        gc.collect()
 
     return history
 
@@ -2587,7 +2609,7 @@ def plot_device_accuracies(
 
     return accuracies, log_losses, brier_scores, topk_accuracies
 
-def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
+def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=False):
     """
     Generate Hierarchical PFL plots from structured metrics dictionary.
     Includes per-epoch stacked contributions, device/edge vs global,
@@ -2596,34 +2618,35 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     Args:
         metrics_test (dict): Output metrics dictionary per epoch.
         save_root_dir (str): Base directory to save plots.
+        show_plots (bool): Whether to call plt.show() after each plot.
     """
 
     # -----------------------------
     # Create dated folder automatically
     # -----------------------------
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     save_dir = os.path.join(save_root_dir, today_str)
     os.makedirs(save_dir, exist_ok=True)
 
     # -----------------------------
     # Extract per-epoch values
     # -----------------------------
-    device_accs = metrics_test["device_accs_per_epoch"]  # list of lists
-    edge_accs = metrics_test["edge_accs_per_epoch"]      # list of lists
-    global_accs = metrics_test["global_accs"]            # list of scalars
-    device_vs_global = metrics_test["device_vs_global"]  # list of lists
-    edge_vs_global = metrics_test["edge_vs_global"]      # list of lists
+    device_accs = metrics_test.get("device_accs_per_epoch", [])
+    edge_accs = metrics_test.get("edge_accs_per_epoch", [])
+    global_accs = metrics_test.get("global_accs", [])
+    device_vs_global = metrics_test.get("device_vs_global", [])
+    edge_vs_global = metrics_test.get("edge_vs_global", [])
 
     num_epochs = len(global_accs)
     colors = {"Device": "skyblue", "Edge": "orange", "Global": "green"}
 
     # -----------------------------
-    # 1. Per-epoch stacked contributions & comparisons
+    # 1. Per-epoch contributions & comparisons
     # -----------------------------
     for epoch_idx in range(num_epochs):
         mean_device = np.mean(device_accs[epoch_idx]) if device_accs[epoch_idx] else 0
         mean_edge = np.mean(edge_accs[epoch_idx]) if edge_accs[epoch_idx] else 0
-        global_acc = global_accs[epoch_idx]
+        global_acc = global_accs[epoch_idx] if epoch_idx < len(global_accs) else 0
 
         # Contribution bars
         contributions = [
@@ -2636,17 +2659,16 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
         plt.figure(figsize=(6, 4))
         bars = plt.bar(layers, contributions, color=[colors[l] for l in layers])
         plt.ylim(0, 1)
-        plt.ylabel("Contribution to Final Accuracy")
-        plt.title(f"Epoch {epoch_idx+1} Layer Contributions")
+        plt.ylabel("Contribution to Accuracy")
+        plt.title(f"Epoch {epoch_idx + 1} Layer Contributions")
         for bar, val in zip(bars, contributions):
-            plt.text(bar.get_x() + bar.get_width()/2, float(val)+0.02, f"{val:.3f}",
+            plt.text(bar.get_x() + bar.get_width() / 2, val + 0.02, f"{val:.3f}",
                      ha="center", va="bottom")
         plt.grid(axis="y", linestyle="--", alpha=0.6)
         plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch_idx+1}.png"))
+        plt.savefig(os.path.join(save_dir, f"epoch_contribution_{epoch_idx + 1}.png"))
+        if show_plots: plt.show()
         plt.close()
-        plt.clf()  # clears the current figure
-        plt.cla()  # clears current axes
 
         # Device vs Global & Edge vs Global
         mean_dev_vs_glob = np.mean(device_vs_global[epoch_idx]) if device_vs_global[epoch_idx] else 0
@@ -2657,52 +2679,45 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
                 [mean_dev_vs_glob, mean_edge_vs_glob],
                 color=[colors["Device"], colors["Edge"]])
         plt.ylim(0, 1)
-        plt.ylabel("Accuracy compared to Global")
-        plt.title(f"Epoch {epoch_idx+1} Layer vs Global Accuracy")
+        plt.ylabel("Accuracy vs Global")
+        plt.title(f"Epoch {epoch_idx + 1} Layer vs Global")
         plt.grid(axis="y", linestyle="--", alpha=0.6)
         plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, f"epoch_vs_global_{epoch_idx+1}.png"))
+        plt.savefig(os.path.join(save_dir, f"epoch_vs_global_{epoch_idx + 1}.png"))
+        if show_plots: plt.show()
         plt.close()
-        plt.clf()  # clears the current figure
-        plt.cla()  # clears current axes
-        # -----------------------------
-        # 1b. Device-level heatmap
-        # -----------------------------
+
+        # Device heatmap
         if device_accs[epoch_idx]:
-            plt.figure(figsize=(max(6, len(device_accs[epoch_idx])*0.5), 4))
+            plt.figure(figsize=(max(6, len(device_accs[epoch_idx]) * 0.5), 4))
             sns.heatmap(np.array([device_accs[epoch_idx]]), annot=True, cmap="Blues",
                         cbar=True, vmin=0, vmax=1)
             plt.xlabel("Device Index")
             plt.ylabel("Epoch")
-            plt.title(f"Epoch {epoch_idx+1} Device Accuracies")
+            plt.title(f"Epoch {epoch_idx + 1} Device Accuracies")
             plt.tight_layout()
-            plt.savefig(os.path.join(save_dir, f"epoch_device_heatmap_{epoch_idx+1}.png"))
+            plt.savefig(os.path.join(save_dir, f"epoch_device_heatmap_{epoch_idx + 1}.png"))
+            if show_plots: plt.show()
             plt.close()
-            plt.clf()  # clears the current figure
-            plt.cla()  # clears current axes
-        # -----------------------------
-        # 1c. Edge-level heatmap
-        # -----------------------------
+
+        # Edge heatmap
         if edge_accs[epoch_idx]:
-            plt.figure(figsize=(max(6, len(edge_accs[epoch_idx])*0.5), 4))
+            plt.figure(figsize=(max(6, len(edge_accs[epoch_idx]) * 0.5), 4))
             sns.heatmap(np.array([edge_accs[epoch_idx]]), annot=True, cmap="Oranges",
                         cbar=True, vmin=0, vmax=1)
             plt.xlabel("Edge Index")
             plt.ylabel("Epoch")
-            plt.title(f"Epoch {epoch_idx+1} Edge Accuracies")
+            plt.title(f"Epoch {epoch_idx + 1} Edge Accuracies")
             plt.tight_layout()
-            plt.savefig(os.path.join(save_dir, f"epoch_edge_heatmap_{epoch_idx+1}.png"))
+            plt.savefig(os.path.join(save_dir, f"epoch_edge_heatmap_{epoch_idx + 1}.png"))
+            if show_plots: plt.show()
             plt.close()
-            plt.clf()  # clears the current figure
-            plt.cla()  # clears current axes
 
     # -----------------------------
     # 2. Accuracy trends across epochs
     # -----------------------------
     mean_device_accs = [np.mean(d) if d else 0 for d in device_accs]
     mean_edge_accs = [np.mean(e) if e else 0 for e in edge_accs]
-    log_util.safe_log("Device accs:", device_accs)
-    log_util.safe_log("Mean device accs:", mean_device_accs)
 
     plt.figure(figsize=(10, 6))
     plt.plot(mean_device_accs, label="Device Accuracy", marker="o", color=colors["Device"])
@@ -2712,15 +2727,13 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     plt.ylabel("Accuracy")
     plt.title("Hierarchical PFL Accuracy Trends")
     plt.ylim(0, 1)
-    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
+    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i + 1}" for i in range(num_epochs)])
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, "overall_accuracy_trends.png"))
-    plt.show()
+    if show_plots: plt.show()
     plt.close()
-    plt.clf()  # clears the current figure
-    plt.cla()  # clears current axes
 
     # Device/Edge vs Global trends
     mean_device_vs_global = [np.mean(d) if d else 0 for d in device_vs_global]
@@ -2730,27 +2743,23 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     plt.plot(mean_device_vs_global, label="Device vs Global", marker="o", color=colors["Device"])
     plt.plot(mean_edge_vs_global, label="Edge vs Global", marker="s", color=colors["Edge"])
     plt.xlabel("Epoch")
-    plt.ylabel("Accuracy compared to Global")
+    plt.ylabel("Accuracy vs Global")
     plt.title("Device/Edge Accuracy vs Global Across Epochs")
     plt.ylim(0, 1)
-    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i+1}" for i in range(num_epochs)])
+    plt.xticks(np.arange(num_epochs), labels=[f"Epoch {i + 1}" for i in range(num_epochs)])
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, "device_edge_vs_global_trends.png"))
-    plt.show()
+    if show_plots: plt.show()
     plt.close()
-    plt.clf()  # clears the current figure
-    plt.cla()  # clears current axes
 
     # -----------------------------
-    # 2b. Hierarchical Contribution Evolution (stacked)
+    # 3. Hierarchical Contribution Evolution (stacked)
     # -----------------------------
-    # Calculate incremental gains for each layer
     edge_gain = np.maximum(np.array(mean_edge_accs) - np.array(mean_device_accs), 0)
     global_gain = np.maximum(np.array(global_accs) - np.array(mean_edge_accs), 0)
     base_device = np.array(mean_device_accs)
-
     epochs = np.arange(1, num_epochs + 1)
 
     plt.figure(figsize=(10, 6))
@@ -2772,16 +2781,13 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     plt.legend(loc="upper left")
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, "hierarchical_contribution_evolution.png"))
-    plt.show()
+    if show_plots: plt.show()
     plt.close()
-    plt.clf()
-    plt.cla()
 
     # -----------------------------
-    # 3. Aggregate heatmaps across all epochs
+    # 4. Aggregate heatmaps across all epochs
     # -----------------------------
-
-    # Device accuracy heatmap across epochs
+    # Device heatmap
     device_matrix = np.array([d if d else [0] * len(device_accs[0]) for d in device_accs])
     plt.figure(figsize=(max(8, device_matrix.shape[1] * 0.5), max(6, device_matrix.shape[0] * 0.5)))
     sns.heatmap(device_matrix, annot=True, cmap="Blues", cbar=True, vmin=0, vmax=1)
@@ -2790,11 +2796,10 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     plt.title("Device Accuracies Across Epochs")
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, "all_epochs_device_heatmap.png"))
+    if show_plots: plt.show()
     plt.close()
-    plt.clf()  # clears the current figure
-    plt.cla()  # clears current axes
 
-    # Edge accuracy heatmap across epochs
+    # Edge heatmap
     edge_matrix = np.array([e if e else [0] * len(edge_accs[0]) for e in edge_accs])
     plt.figure(figsize=(max(8, edge_matrix.shape[1] * 0.5), max(6, edge_matrix.shape[0] * 0.5)))
     sns.heatmap(edge_matrix, annot=True, cmap="Oranges", cbar=True, vmin=0, vmax=1)
@@ -2803,11 +2808,11 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs"):
     plt.title("Edge Accuracies Across Epochs")
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, "all_epochs_edge_heatmap.png"))
+    if show_plots: plt.show()
     plt.close()
-    plt.clf()  # clears the current figure
-    plt.cla()  # clears current axes
 
     log_util.safe_log(f"All plots saved to folder: {save_dir}")
+
 
 # ============================================================
 #                     Main
