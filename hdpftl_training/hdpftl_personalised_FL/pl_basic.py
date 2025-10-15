@@ -93,76 +93,103 @@ DeviceData = Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
 # LightGBM Training
 # ============================================================
 
-def train_lightgbm(
-    X_train,
-    y_train,
-    X_valid=None,
-    y_valid=None,
-    best_params=None,
-    init_model=None,
-    prev_best_logloss=None,
-    verbose=-1,
-    **kwargs
-):
-    # --- Convert safely ---
-    X_train = np.array(X_train)
-    y_train = np.array(y_train)
-    X_valid = np.array(X_valid) if X_valid is not None else None
-    y_valid = np.array(y_valid) if y_valid is not None else None
+def gradient_loss_eval(y_pred, dataset):
+    """
+    Custom LightGBM evaluation function for gradient loss.
+    y_pred : predicted probabilities (flattened)
+    dataset : lgb.Dataset with true labels
+    Returns tuple: (eval_name, value, is_higher_better)
+    """
+    y_true = dataset.get_label().astype(int)
+    n_classes = dataset.num_class() if hasattr(dataset, 'num_class') else len(np.unique(y_true))
 
+    # Reshape predictions if multiclass
+    if n_classes > 2:
+        y_pred = y_pred.reshape(-1, n_classes)
+    else:
+        y_pred = np.vstack([1 - y_pred, y_pred]).T
+
+    # Clip to avoid extremes
+    y_pred = np.clip(y_pred, 1e-6, 1 - 1e-6)
+
+    # One-hot encode
+    y_onehot = np.zeros_like(y_pred)
+    y_onehot[np.arange(len(y_true)), y_true] = 1
+
+    grad_loss = np.mean((y_onehot - y_pred) ** 2)
+    return "grad_loss", grad_loss, False  # lower is better
+
+def train_lightgbm(
+        X_train,
+        y_train,
+        X_valid=None,
+        y_valid=None,
+        best_params=None,
+        init_model=None,
+        prev_best_gradloss=None,
+        verbose=-1,
+):
+    """
+    Train LightGBM with gradient-loss early stopping.
+    Allows very large n_estimators safely.
+    """
+
+    # --- Convert inputs ---
+    X_train = np.asarray(X_train, dtype=np.float32)
+    y_train = np.asarray(y_train, dtype=int)
     if y_train.ndim > 1 and y_train.shape[1] > 1:
         y_train = np.argmax(y_train, axis=1)
-    if y_valid is not None and y_valid.ndim > 1 and y_valid.shape[1] > 1:
-        y_valid = np.argmax(y_valid, axis=1)
+
+    if X_valid is not None and y_valid is not None:
+        X_valid = np.asarray(X_valid, dtype=np.float32)
+        y_valid = np.asarray(y_valid, dtype=int)
+        if y_valid.ndim > 1 and y_valid.shape[1] > 1:
+            y_valid = np.argmax(y_valid, axis=1)
 
     num_classes = len(np.unique(y_train))
     objective = "binary" if num_classes == 2 else "multiclass"
 
-    # --- Base static parameters ---
-    base_params = {
-        "boosting_type": config.get("boosting", "gbdt"),
-        "objective": objective,
-        "num_class": num_classes if num_classes > 2 else None,
-        "n_estimators": int(best_params.get("num_boost_round", config.get("n_estimators", 5000))),
-        "learning_rate": float(best_params.get("learning_rate", config.get("learning_rate", 0.01))),
-        "num_leaves": config.get("num_leaves", 31),
-        "max_depth": int(best_params.get("max_depth", config.get("max_depth", -1))),
-        "min_child_samples": config.get("min_child_samples", 20),
-        "class_weight": config.get("class_weight", None),
-        "lambda_l1": config.get("lambda_l1", 0.0),
-        "lambda_l2": config.get("lambda_l2", 0.0),
-        "feature_fraction": config.get("feature_fraction", 1.0),
-        "random_state": config.get("random_seed", 42),
-        "device": config.get("device", "cpu"),
-        "max_cores": 2,
-        "verbose": verbose,
-    }
+    # --- Model parameters ---
+    best_params = best_params or {}
+    n_estimators = int(best_params.get("num_boost_round", config.get("n_estimators", 10000)))
+    learning_rate = float(best_params.get("learning_rate", config.get("learning_rate", 0.01)))
+    max_depth = int(best_params.get("max_depth", config.get("max_depth", -1)))
 
-    # --- Convert to DataFrame to keep feature names consistent ---
-    n_features = X_train.shape[1]
-    X_train_df = pd.DataFrame(X_train, columns=[f"f{i}" for i in range(n_features)])
-    X_valid_df = None
-    if X_valid is not None:
-        X_valid_df = pd.DataFrame(X_valid, columns=[f"f{i}" for i in range(n_features)])
+    model = LGBMClassifier(
+        boosting_type=config.get("boosting", "gbdt"),
+        objective=objective,
+        num_class=num_classes if num_classes > 2 else None,
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        num_leaves=config.get("num_leaves", 31),
+        max_depth=max_depth,
+        min_child_samples=config.get("min_child_samples", 20),
+        class_weight=config.get("class_weight", None),
+        lambda_l1=config.get("lambda_l1", 0.0),
+        lambda_l2=config.get("lambda_l2", 0.0),
+        feature_fraction=config.get("feature_fraction", 1.0),
+        random_state=config.get("random_seed", 42),
+        device=config.get("device", "cpu"),
+        verbose=-1,
+        boost_from_average=config.get("boost_from_average", True)
+    )
 
-    model = LGBMClassifier(**base_params)
+    # --- Early stopping ---
     fit_kwargs = {}
-
-    # --- Validation setup ---
-    if X_valid_df is not None and y_valid is not None and config.get("early_stopping_rounds", 100):
+    if X_valid is not None and y_valid is not None:
         mask = np.isin(y_valid, np.unique(y_train))
         if mask.sum() < 10:
             mask = np.ones_like(y_valid, dtype=bool)
-        X_valid_filtered = X_valid_df[mask]
+
+        X_valid_filtered = X_valid[mask]
         y_valid_filtered = y_valid[mask]
 
         fit_kwargs.update({
-            "eval_set": [(X_train_df, y_train), (X_valid_filtered, y_valid_filtered)],
-            "eval_metric": "multi_logloss" if num_classes > 2 else "logloss",
-            "eval_names": ["train", "valid"],
+            "eval_set": [(X_valid_filtered, y_valid_filtered)],
+            "eval_metric": gradient_loss_eval,
             "callbacks": [
-                early_stopping(config.get("early_stopping_rounds", 100)),
-                log_evaluation(10)
+                early_stopping(config.get("early_stopping_rounds", 100), verbose=False),
+                log_evaluation(period=verbose if verbose > 0 else 0)
             ]
         })
 
@@ -170,56 +197,53 @@ def train_lightgbm(
         fit_kwargs["init_model"] = init_model
 
     # --- Train ---
-    model.fit(X_train_df, y_train, **fit_kwargs)
+    model.fit(X_train, y_train, **fit_kwargs)
 
-    # --- Align validation features safely ---
-    current_logloss = None
-    if X_valid_df is not None and y_valid is not None:
-        y_pred = model.predict_proba(X_valid_df)
-        try:
-            current_logloss = log_loss(y_valid, y_pred, labels=np.arange(num_classes))
-        except ValueError as e:
-            log_util.safe_log(f"⚠️ Logloss computation failed: {e}")
-            valid_labels = np.unique(y_valid)
-            y_pred_filtered = y_pred[:, :len(valid_labels)]
-            current_logloss = log_loss(y_valid, y_pred_filtered, labels=valid_labels)
+    # --- Compute final gradient loss on validation ---
+    grad_loss_val = None
+    if X_valid is not None and y_valid is not None:
+        y_pred = model.predict_proba(X_valid)
+        if num_classes == 2:
+            y_pred = np.vstack([1 - y_pred, y_pred]).T
+        y_onehot = np.zeros_like(y_pred)
+        y_onehot[np.arange(len(y_valid)), y_valid] = 1
+        grad_loss_val = np.mean((y_onehot - y_pred) ** 2)
 
-    # --- Logloss control ---
-    if prev_best_logloss is not None and current_logloss is not None and current_logloss > prev_best_logloss:
-        prev_model = init_model[0] if isinstance(init_model, tuple) else init_model
-        model_to_return = prev_model
-        log_util.safe_log(f"⚠️ Logloss worsened ({current_logloss:.4f} > {prev_best_logloss:.4f}), reverting to previous model")
+    # --- Revert if gradient loss worsened ---
+    if prev_best_gradloss is not None and grad_loss_val is not None and grad_loss_val > prev_best_gradloss:
+        model_to_return = init_model if init_model is not None else model
+        if verbose:
+            log_util.safe_log(f"⚠️ Gradient loss worsened ({grad_loss_val:.6f} > {prev_best_gradloss:.6f}), reverting")
     else:
         model_to_return = model
-        if current_logloss is not None and prev_best_logloss is not None:
-            log_util.safe_log(f"✅ Improved logloss: {current_logloss:.4f} (prev: {prev_best_logloss:.4f})")
+        if grad_loss_val is not None and prev_best_gradloss is not None and verbose:
+            log_util.safe_log(f"✅ Improved gradient loss: {grad_loss_val:.6f} (prev: {prev_best_gradloss:.6f})")
 
-    return model_to_return, current_logloss if current_logloss is not None else prev_best_logloss
-
-
+    return model_to_return, grad_loss_val if grad_loss_val is not None else prev_best_gradloss
 
 
 # ============================================================
 # Predict probabilities safely, filling missing classes
 # ============================================================
 
-def predict_proba_fixed(model, X, n_classes):
+def predict_proba_fixed(model, X, y_true, n_classes):
     """
-    Universal safe prediction wrapper for LightGBM / sklearn models.
-    Handles:
-      - Binary & multiclass
-      - Degenerate one-hot predictions
-      - Missing/mismatched classes
-      - Prevents NaN in logloss
+    Safe probability prediction + gradient-style loss computation.
+
+    Args:
+        model : LightGBM / sklearn model
+        X : input features
+        y_true : integer class labels
+        n_classes : total number of classes
+
+    Returns:
+        y_pred_proba : predicted probabilities (n_samples x n_classes)
+        grad_loss : mean squared error between one-hot true labels and predicted probabilities
     """
 
     # --- Convert to float32 safely ---
     if not isinstance(X, np.ndarray):
-        # Prefer zero-copy if possible
-        if hasattr(X, "to_numpy"):
-            X_np = X.to_numpy(dtype=np.float32, copy=False)
-        else:
-            X_np = np.asarray(X, dtype=np.float32)
+        X_np = X.to_numpy(dtype=np.float32, copy=False) if hasattr(X, "to_numpy") else np.asarray(X, dtype=np.float32)
     else:
         X_np = X.astype(np.float32, copy=False)
 
@@ -229,55 +253,51 @@ def predict_proba_fixed(model, X, n_classes):
     if X_np.shape[1] > n_features_model:
         X_np = X_np[:, :n_features_model]
     elif X_np.shape[1] < n_features_model:
-        X_np = np.pad(
-            X_np,
-            ((0, 0), (0, n_features_model - X_np.shape[1])),
-            mode="constant"
-        )
+        X_np = np.pad(X_np, ((0, 0), (0, n_features_model - X_np.shape[1])), mode="constant")
 
-    # --- Feature names ---
+    # --- Feature names for DataFrame ---
     columns = getattr(model, "feature_name_", [f"f{i}" for i in range(X_np.shape[1])])
-
-    # Avoid DataFrame duplication when not needed
-    if hasattr(model, "predict_proba") or not isinstance(model, lgb.Booster):
-        X_df = pd.DataFrame(X_np, columns=columns)
-    else:
-        X_df = None
+    X_df = pd.DataFrame(X_np, columns=columns) if hasattr(model, "predict_proba") or not isinstance(model,
+                                                                                                    lgb.Booster) else None
 
     # --- Predict probabilities ---
     if isinstance(model, lgb.Booster):
-        pred = model.predict(X_np, raw_score=False)
+        y_pred_proba = model.predict(X_np, raw_score=False)
     elif hasattr(model, "predict_proba"):
-        pred = model.predict_proba(X_df)
+        y_pred_proba = model.predict_proba(X_df)
     else:
-        pred = model.predict(X_df, raw_score=False)
+        y_pred_proba = model.predict(X_df, raw_score=False)
 
-    pred = np.atleast_2d(pred)
+    y_pred_proba = np.atleast_2d(y_pred_proba)
 
     # --- Flatten binary predictions ---
-    if pred.shape[1] == 1:
-        pred = np.hstack([1 - pred, pred])
+    if y_pred_proba.shape[1] == 1:
+        y_pred_proba = np.hstack([1 - y_pred_proba, y_pred_proba])
 
     # --- Clip to avoid extreme values ---
     eps = 1e-6
-    pred = np.clip(pred, eps, 1 - eps)
+    y_pred_proba = np.clip(y_pred_proba, eps, 1 - eps)
 
     # --- Align with total number of classes ---
-    full = np.zeros((pred.shape[0], n_classes), dtype=np.float32)
-    model_classes = np.asarray(
-        getattr(model, "classes_", np.arange(pred.shape[1]))
-    ).astype(int)
-
+    full = np.zeros((y_pred_proba.shape[0], n_classes), dtype=np.float32)
+    model_classes = np.asarray(getattr(model, "classes_", np.arange(y_pred_proba.shape[1]))).astype(int)
     for i, cls in enumerate(model_classes):
         if 0 <= cls < n_classes:
-            full[:, cls] = pred[:, i]
+            full[:, cls] = y_pred_proba[:, i]
 
     # --- Normalize rows ---
     row_sums = full.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0] = 1
     full /= row_sums
 
-    return full
+    # --- Gradient loss computation ---
+    y_true = np.asarray(y_true, dtype=int)
+    y_onehot = np.zeros_like(full)
+    y_onehot[np.arange(len(y_true)), y_true] = 1
+    grad_loss = np.mean((y_onehot - full) ** 2)
+
+    return full, grad_loss
+
 
 def get_leaf_indices(model, X):
     """
@@ -393,7 +413,7 @@ def device_layer_boosting(
                 y_valid=y_device_finetune,
                 best_params=best_params,
                 init_model=prev_model,
-                prev_best_logloss=None,
+                prev_best_gradloss=None,
                 verbose=-1
             )
             prev_model = model  # overwrite previous model
@@ -564,7 +584,7 @@ def edge_layer_boosting(
                 y_valid=(y_ftune[edge_idx] if y_ftune is not None else None),
                 best_params=best_param_edge or {},
                 init_model=init_model,
-                prev_best_logloss=None,
+                prev_best_gradloss=None,
                 verbose=-1
             )
 
@@ -699,7 +719,7 @@ def global_layer_bayesian_aggregation(
 
     n_samples, n_features = H_global.shape
     if verbose:
-        print(f"[GlobalBayes+Edge] stacking {len(valid_edges)} edges -> H_global shape {H_global.shape}")
+        log_util.safe_log(f"[GlobalBayes+Edge] stacking {len(valid_edges)} edges -> H_global shape {H_global.shape}")
 
     # 3. chunked normalization to [eps,1]
     H_norm = np.empty_like(H_global, dtype=np.float32)
@@ -763,8 +783,8 @@ def global_layer_bayesian_aggregation(
     gc.collect()
 
     if verbose:
-        print(f"[GlobalBayes+Edge] n_samples={n_samples}, n_features={n_features}, n_edges={n_edges}")
-        print(f"[GlobalBayes+Edge] edge_reliability: {theta_global['edge_reliability']}")
+        log_util.safe_log(f"[GlobalBayes+Edge] n_samples={n_samples}, n_features={n_features}, n_edges={n_edges}")
+        log_util.safe_log(f"[GlobalBayes+Edge] edge_reliability: {theta_global['edge_reliability']}")
 
     # return feature-space posteriors and theta with per-edge reliability
     return y_global_pred_featurespace, None, theta_global
@@ -1204,11 +1224,12 @@ def search_boosting_params(
         # "max_bin": [128, 256, 512],
     }
 
+    # Encode labels safely
     y_train_enc = encode_labels_safe(le, y_train, n_classes)
     y_valid_enc = encode_labels_safe(le, y_valid, n_classes)
 
-    # Convert y_valid_enc to one-hot for gradient computation
-    y_valid_onehot = np.eye(n_classes)[y_valid_enc]
+    # One-hot for gradient loss computation
+    y_valid_onehot = np.eye(n_classes, dtype=np.float32)[y_valid_enc]
 
     best_score = np.inf
     best_params = None
@@ -1222,21 +1243,24 @@ def search_boosting_params(
         if verbose:
             log_util.safe_log(f"Grid trial {idx+1}/{len(all_combinations)}: {params}")
 
-        # Train model
+        # Train model — pass hyperparameters inside best_params
         model, _ = train_lightgbm(
-            X_train, y_train_enc,
-            X_valid=X_valid, y_valid=y_valid_enc,
-            best_params=None,
-            **params
+            X_train.astype(np.float32, copy=False),
+            y_train_enc,
+            X_valid=X_valid.astype(np.float32, copy=False) if X_valid is not None else None,
+            y_valid=y_valid_enc,
+            best_params=params,
+            init_model=None,
+            prev_best_gradloss=None,
+            verbose=verbose
         )
 
         # Predict probabilities
         y_pred = predict_proba_fixed(model, X_valid, n_classes)
 
-        # Gradient loss = mean L2 norm of residuals (y_true - y_pred)
-        grad_loss = np.mean(np.linalg.norm(y_valid_onehot - y_pred, axis=1))
+        grad_loss = np.mean(np.sum((y_valid_onehot - y_pred) ** 2, axis=1))
 
-        # Accept trial if gradient loss improves
+        # Update best params if improved
         if grad_loss < best_score:
             best_score = grad_loss
             best_params = params
@@ -1248,7 +1272,6 @@ def search_boosting_params(
         log_util.safe_log(f"Best params (gradient loss): {best_params}, loss={best_score:.6f}")
 
     return best_params
-
 
 
 def encode_labels_safe(le, y, n_classes):
@@ -2055,11 +2078,7 @@ def evaluate_multilevel_performance(
     device_weight_mode="weighted",
     top_k=3,
 ):
-    """
-    Evaluate hierarchical federated model performance: device, edge, and global levels.
-    Edge predictions can be weighted by their reliability.
-    Returns a structured dictionary with predictions and metrics.
-    """
+
     print_layer_banner("Evaluation", current_epoch=epoch)
 
     def normalize_weights(weights):
@@ -2078,13 +2097,22 @@ def evaluate_multilevel_performance(
             probs = np.column_stack([1 - p1, p1])
         return probs
 
+    def gradient_loss_score(y_true, y_pred_probs):
+        y_true = np.atleast_1d(y_true)
+        y_pred_probs = np.atleast_2d(y_pred_probs)
+        if y_pred_probs.shape[1] == 2 and y_true.ndim == 1:
+            y_pred_probs = np.vstack([1 - y_pred_probs[:, 1], y_pred_probs[:, 1]]).T
+        y_onehot = np.zeros_like(y_pred_probs)
+        y_onehot[np.arange(len(y_true)), y_true] = 1
+        return float(np.mean((y_onehot - y_pred_probs) ** 2))
+
     warnings.filterwarnings("ignore", category=UserWarning)
     np.seterr(divide='ignore', over='ignore', invalid='ignore')
 
     # ---------------------------
     # 1️⃣ Device-level metrics
     # ---------------------------
-    device_preds, device_accs, log_losses, brier_scores, topk_accuracies = [], [], [], [], []
+    device_preds, device_accs, grad_losses, brier_scores, topk_accuracies = [], [], [], [], []
 
     for idx, models_per_device in enumerate(device_models):
         X_test = np.atleast_2d(X_tests[idx])
@@ -2094,7 +2122,7 @@ def evaluate_multilevel_performance(
             y_pred_probs = np.zeros((X_test.shape[0], num_classes), dtype=np.float32)
             device_preds.append(y_pred_probs)
             device_accs.append(0.0)
-            log_losses.append(np.nan)
+            grad_losses.append(np.nan)
             brier_scores.append(np.nan)
             topk_accuracies.append(np.nan)
             continue
@@ -2136,17 +2164,14 @@ def evaluate_multilevel_performance(
         y_pred = np.argmax(y_pred_probs, axis=1)
         device_preds.append(y_pred_probs)
         device_accs.append(accuracy_score(y_true, y_pred))
-        try:
-            log_losses.append(log_loss(y_true, y_pred_probs))
-        except ValueError:
-            log_losses.append(np.nan)
+        grad_losses.append(gradient_loss_score(y_true, y_pred_probs))
         brier_scores.append(multi_class_brier(y_true, y_pred_probs))
         topk_accuracies.append(top_k_accuracy(y_true, y_pred_probs, k=top_k))
 
     # ---------------------------
     # 2️⃣ Edge-level metrics
     # ---------------------------
-    edge_preds, edge_accs = [], []
+    edge_preds, edge_accs, edge_grad_losses = [], [], []
 
     for edge_idx, edge_devices in enumerate(edge_groups):
         device_edge_preds = [device_preds[d] for d in edge_devices if d < len(device_preds)]
@@ -2180,6 +2205,7 @@ def evaluate_multilevel_performance(
 
         edge_preds.append(pred_accum)
         edge_accs.append(accuracy_score(y_edge_true, pred_accum.argmax(axis=1)))
+        edge_grad_losses.append(gradient_loss_score(y_edge_true, pred_accum))
 
     # ---------------------------
     # 3️⃣ Global-level metrics
@@ -2197,6 +2223,7 @@ def evaluate_multilevel_performance(
 
     y_global_true = np.concatenate([le.transform(y_tests[d]) for d in range(len(X_tests))])
     global_acc = accuracy_score(y_global_true, global_pred.argmax(axis=1))
+    global_grad_loss = gradient_loss_score(y_global_true, global_pred)
 
     # ---------------------------
     # 4️⃣ Structured metrics dictionary
@@ -2207,28 +2234,32 @@ def evaluate_multilevel_performance(
         "edge_means": edge_accs,
         "edge_stds": float(np.std(edge_accs)),
         "global_accs": global_acc,
+        "global_grad_loss": global_grad_loss,
         "device_vs_global": device_accs,
         "edge_vs_global": edge_accs,
         "metrics": {
             "device": {
                 "acc": device_accs,
-                "logloss": log_losses,
+                "grad_loss": grad_losses,
                 "brier": brier_scores,
                 "topk": topk_accuracies,
                 "preds": device_preds,
             },
             "edge": {
                 "acc": edge_accs,
+                "grad_loss": edge_grad_losses,
                 "preds": edge_preds,
             },
             "global": {
                 "acc": global_acc,
+                "grad_loss": global_grad_loss,
                 "pred": global_pred,
             },
         },
     }
 
     return metrics_test
+
 
 
 # ============================================================
@@ -2517,18 +2548,25 @@ def plot_device_accuracies(
         top_k=3
 ):
     """
-    Compute and plot Accuracy, Log Loss, Brier Score, and Top-K Accuracy per device.
+    Compute and plot Accuracy, Gradient Loss, Brier Score, and Top-K Accuracy per device.
     """
-    accuracies, log_losses, brier_scores, topk_accuracies = [], [], [], []
+    accuracies, grad_losses, brier_scores, topk_accuracies = [], [], [], []
 
     log_util.safe_log("\n================ Device Metrics ================\n")
+
+    def gradient_loss_score(y_true, y_pred_probs):
+        y_true = np.atleast_1d(y_true)
+        y_pred_probs = np.atleast_2d(y_pred_probs)
+        y_onehot = np.zeros_like(y_pred_probs)
+        y_onehot[np.arange(len(y_true)), y_true] = 1
+        return float(np.mean((y_onehot - y_pred_probs) ** 2))
 
     for idx, models_per_device in enumerate(d_models):
 
         if not models_per_device:
             log_util.safe_log(f"Device {idx}: ❌ No trained models found.")
             accuracies.append(0.0)
-            log_losses.append(np.nan)
+            grad_losses.append(np.nan)
             brier_scores.append(np.nan)
             topk_accuracies.append(np.nan)
             continue
@@ -2580,20 +2618,17 @@ def plot_device_accuracies(
 
         # Compute metrics
         acc = accuracy_score(y_true, y_pred)
-        try:
-            ll = log_loss(y_true, y_pred_probs)
-        except ValueError:
-            ll = np.nan
+        grad_loss = gradient_loss_score(y_true, y_pred_probs)
         brier = multi_class_brier(y_true, y_pred_probs)
         topk = top_k_accuracy(y_true, y_pred_probs, k=top_k)
 
         accuracies.append(acc)
-        log_losses.append(ll)
+        grad_losses.append(grad_loss)
         brier_scores.append(brier)
         topk_accuracies.append(topk)
 
-        log_util.safe_log(f"✅ Device {idx}: Accuracy={acc:.4f}, LogLoss={ll:.4f}, "
-              f"Brier={brier:.4f}, Top-{top_k} Acc={topk:.4f} ({combine_mode})")
+        log_util.safe_log(f"✅ Device {idx}: Accuracy={acc:.4f}, GradientLoss={grad_loss:.4f}, "
+                          f"Brier={brier:.4f}, Top-{top_k} Acc={topk:.4f} ({combine_mode})")
 
     # Plot all metrics
     fig, ax1 = plt.subplots(figsize=(12, 5))
@@ -2607,14 +2642,14 @@ def plot_device_accuracies(
     ax1.axhline(mean_acc, color='red', linestyle='--', label=f"Mean Accuracy = {mean_acc:.3f}")
 
     ax2 = ax1.twinx()
-    safe_log_losses = [x for x in log_losses if np.isfinite(x)]
+    safe_grad_losses = [x for x in grad_losses if np.isfinite(x)]
     safe_brier_scores = [x for x in brier_scores if np.isfinite(x)]
-    ax2.plot(range(len(log_losses)), log_losses, color='orange', marker='o', label='Log Loss')
+    ax2.plot(range(len(grad_losses)), grad_losses, color='orange', marker='o', label='Gradient Loss')
     ax2.plot(range(len(brier_scores)), brier_scores, color='green', marker='s', label='Brier Score')
     ax2.plot(range(len(topk_accuracies)), topk_accuracies, color='purple', marker='^', label=f'Top-{top_k} Acc')
-    max_log = max(safe_log_losses) if safe_log_losses else 0
-    max_brier = max(safe_brier_scores) if safe_brier_scores else 0
-    ax2.set_ylim(0, max(max_log, max_brier, 1.0))
+    max_grad = max(safe_grad_losses) if safe_grad_losses else 1.0
+    max_brier = max(safe_brier_scores) if safe_brier_scores else 1.0
+    ax2.set_ylim(0, max(max_grad, max_brier, 1.0))
     ax2.set_ylabel("Other Metrics")
 
     fig.legend(loc="upper right", bbox_to_anchor=(1, 1), bbox_transform=ax1.transAxes)
@@ -2622,11 +2657,12 @@ def plot_device_accuracies(
     plt.show()
 
     log_util.safe_log(f"\nOverall Mean Accuracy: {mean_acc:.4f}")
-    log_util.safe_log(f"Overall Mean Log Loss: {np.nanmean(log_losses):.4f}")
+    log_util.safe_log(f"Overall Mean Gradient Loss: {np.nanmean(grad_losses):.4f}")
     log_util.safe_log(f"Overall Mean Brier Score: {np.nanmean(brier_scores):.4f}")
     log_util.safe_log(f"Overall Mean Top-{top_k} Accuracy: {np.nanmean(topk_accuracies):.4f}\n")
 
-    return accuracies, log_losses, brier_scores, topk_accuracies
+    return accuracies, grad_losses, brier_scores, topk_accuracies
+
 
 def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=False, top_k=3):
     """

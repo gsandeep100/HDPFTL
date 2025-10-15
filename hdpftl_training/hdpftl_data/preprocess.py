@@ -585,36 +585,37 @@ def log_transform_skewed_features(
     extreme_skew_threshold=1000,
     clip_threshold=1e6,
     top_n=None,
-    scale_method='standard',
     remove_constant=True,
     constant_threshold=1e-6,
+    apply_pca=True,
+    pca_variance_ratio=0.95,
     verbose=True,
     report_top_n=10
 ):
-    """
-    Log-transform highly skewed numeric features, then drop features still extremely skewed.
-    Recomputes skew after transformation and applies Yeo–Johnson for remaining skew.
-    """
-
-    df_safe = df.copy()
+    df_safe = df  # avoid unnecessary copy
 
     # 1️⃣ Identify numeric columns, exclude target
     numeric_cols = df_safe.select_dtypes(include=[np.number]).columns.tolist()
     if target_col in numeric_cols:
         numeric_cols.remove(target_col)
 
-    # 2️⃣ Report top skewed features before log-transform
+    if not numeric_cols:
+        if verbose:
+            print("⚠️ No numeric columns found.")
+        return df_safe
+
+    # 2️⃣ Report top skewed features before transformation
     skew_before = df_safe[numeric_cols].skew().abs().sort_values(ascending=False)
     if verbose:
-        print(f"\nTop {report_top_n} skewed features BEFORE log-transform:")
+        print(f"\nTop {report_top_n} skewed features BEFORE transformation:")
         print(skew_before.head(report_top_n))
 
-    # 3️⃣ Select high-skew, positive columns for log1p
-    high_skew_cols = skew_before[skew_before > skew_threshold].index.tolist()
-    positive_cols = [c for c in high_skew_cols if (df_safe[c] >= 0).all()]
-    high_skew_cols = positive_cols[:top_n] if top_n is not None else positive_cols
+    # 3️⃣ Log-transform high-skew positive features
+    high_skew_cols = [c for c in skew_before[skew_before > skew_threshold].index
+                      if (df_safe[c] >= 0).all()]
+    if top_n is not None:
+        high_skew_cols = high_skew_cols[:top_n]
 
-    # 4️⃣ Apply log1p transform
     if high_skew_cols:
         df_safe[high_skew_cols] = np.log1p(df_safe[high_skew_cols])
         if verbose:
@@ -624,62 +625,67 @@ def log_transform_skewed_features(
     elif verbose:
         print("✅ No numeric features exceeded skew threshold.")
 
-    # 5️⃣ Recompute skew after log-transform
+    # 4️⃣ Recompute skew after log-transform
     skew_after = df_safe[numeric_cols].skew().abs().sort_values(ascending=False)
 
-    # 6️⃣ Drop extreme-skew features (after log-transform)
-    extreme_cols = skew_after[skew_after > extreme_skew_threshold].index.tolist()
+    # 5️⃣ Drop extreme-skew features
+    extreme_cols = [c for c in skew_after.index if skew_after[c] > extreme_skew_threshold]
     if extreme_cols:
         df_safe.drop(columns=extreme_cols, inplace=True)
         numeric_cols = [c for c in numeric_cols if c not in extreme_cols]
         if verbose:
-            print(f"\n❌ Dropped extreme-skew features after log-transform: {extreme_cols}")
+            print(f"\n❌ Dropped extreme-skew features: {extreme_cols}")
 
-    # 7️⃣ Apply Yeo–Johnson to remaining skewed features
-    still_skewed = skew_after[(skew_after > skew_threshold) &
-                              (skew_after <= extreme_skew_threshold)].index.tolist()
+    # 6️⃣ Apply Yeo–Johnson to remaining skewed features
+    still_skewed = [c for c in skew_after.index if skew_threshold < skew_after[c] <= extreme_skew_threshold]
+    still_skewed = [c for c in still_skewed if c in df_safe.columns]
     if still_skewed:
         pt = PowerTransformer(method='yeo-johnson')
         df_safe[still_skewed] = pt.fit_transform(df_safe[still_skewed])
         if verbose:
             print(f"\n⚡ Applied Yeo–Johnson to reduce skew for: {still_skewed}")
 
-    # 8️⃣ Clip numeric values
+    # 7️⃣ Clip numeric values
     if clip_threshold is not None:
-        numeric_cols = [c for c in numeric_cols if c in df_safe.columns]
-        df_safe[numeric_cols] = df_safe[numeric_cols].clip(
-            lower=-clip_threshold, upper=clip_threshold
-        )
+        df_safe[numeric_cols] = df_safe[numeric_cols].clip(lower=-clip_threshold, upper=clip_threshold)
 
-    # 9️⃣ Scale numeric features
-    numeric_cols = [c for c in numeric_cols if c in df_safe.columns]
-    if scale_method in ('standard', 'minmax') and numeric_cols:
-        if scale_method == 'standard':
-            df_safe[numeric_cols] = StandardScaler().fit_transform(df_safe[numeric_cols])
-        else:
-            df_safe[numeric_cols] = MinMaxScaler().fit_transform(df_safe[numeric_cols])
-        if verbose:
-            print(f"\n✅ Applied {scale_method} scaling to numeric features.")
-
-    # 🔟 Remove near-constant features
+    # 8️⃣ Remove near-constant features
     if remove_constant:
-        numeric_cols = [c for c in numeric_cols if c in df_safe.columns]
-        constant_features = df_safe[numeric_cols].columns[
-            df_safe[numeric_cols].var() < constant_threshold
-        ].tolist()
+        constant_features = [c for c in numeric_cols if df_safe[c].var() < constant_threshold]
         if constant_features:
             df_safe.drop(columns=constant_features, inplace=True)
+            numeric_cols = [c for c in numeric_cols if c not in constant_features]
             if verbose:
                 print(f"🗑 Removed near-constant features: {constant_features}")
 
-    # 1️⃣1️⃣ Report top skewed features after all transformations
+    # 9️⃣ Apply PCA if requested (with scaling)
     numeric_cols = [c for c in numeric_cols if c in df_safe.columns]
+    if apply_pca and numeric_cols:
+        df_safe[numeric_cols] = StandardScaler().fit_transform(df_safe[numeric_cols])
+        pca = PCA(n_components=pca_variance_ratio, svd_solver='full')
+        pca_result = pca.fit_transform(df_safe[numeric_cols])
+        df_pca = pd.DataFrame(
+            pca_result,
+            columns=[f'PC{i+1}' for i in range(pca_result.shape[1])],
+            index=df_safe.index
+        )
+        df_safe.drop(columns=numeric_cols, inplace=True)
+        df_safe = pd.concat([df_safe, df_pca], axis=1)
+        if verbose:
+            explained_var = np.sum(pca.explained_variance_ratio_) * 100
+            print(f"\n🎯 Applied PCA, retained {df_pca.shape[1]} components "
+                  f"explaining {explained_var:.2f}% variance.")
+
+    # 🔟 Report top skewed features after all transformations
+    numeric_cols = df_safe.select_dtypes(include=[np.number]).columns.tolist()
     skew_final = df_safe[numeric_cols].skew().abs().sort_values(ascending=False)
     if verbose:
         print(f"\nTop {report_top_n} skewed features AFTER transformation:")
         print(skew_final.head(report_top_n))
 
     return df_safe
+
+
 
 
 """
@@ -898,7 +904,6 @@ def load_and_label_all_parallel(
         extreme_skew_threshold=1000,
         clip_threshold=1e6,
         top_n=20,
-        scale_method='standard',
         remove_constant=True,
         constant_threshold=1e-6,
         verbose=True,
@@ -937,10 +942,6 @@ def load_and_label_all_parallel(
     log_util.safe_log(f"✅ Final shape: {final_df.shape}")
 
     return final_df
-
-
-
-
 
 
 def safe_clean_dataframe(df: pd.DataFrame,
