@@ -543,16 +543,23 @@ def device_layer_boosting(d_data, d_residuals, d_models, le, n_classes, best_par
     return d_residuals, d_models, device_embeddings, device_weights
 
 
-def edge_layer_boosting(
+def edge_layer_boosting_features_grad(
         e_groups, d_embeddings, d_residuals,
         n_classes, le=None, best_param_edge=None,
         X_ftune=None, y_ftune=None, device_weights=None,
         chunk_size=5000, n_random_trials=5
 ):
+    """
+    Edge layer boosting that outputs per-sample feature vectors
+    suitable for feature-level Naive Bayes aggregation.
+    Uses gradient-loss based stopping instead of logloss.
+    """
+
     log_util.safe_log("""
     ************************************************************
     *                  STARTING EDGE LAYER                     *
     *   Devices -> Edge-level boosted ensemble -> Edge output  *
+    *           Gradient-loss based early stopping             *
     ************************************************************
     """)
 
@@ -564,41 +571,16 @@ def edge_layer_boosting(
             for emb, i in zip(embeddings_list, edge_devices)
         ]
 
-        # Device weights
         if device_weights is None:
             weights = np.ones(len(edge_devices), dtype=np.float32)
         else:
             weights = np.array([device_weights[i] for i in edge_devices], dtype=np.float32)
         weights /= weights.sum() if weights.sum() > 0 else 1.0
 
-        # Pad embeddings
-        any_sparse = any(sparse.issparse(e) for e in embeddings_list)
         max_cols = max(int(e.shape[1]) for e in embeddings_list)
-
-        if any_sparse:
-            csr_list = [e.tocsr() if sparse.issparse(e) else sparse.csr_matrix(e) for e in embeddings_list]
-            padded_embeddings = []
-            for e_csr in csr_list:
-                n_rows, n_cols = e_csr.shape
-                if n_cols < max_cols:
-                    pad_block = sparse.csr_matrix((n_rows, max_cols - n_cols), dtype=np.float32)
-                    e_fixed = sparse.hstack([e_csr.astype(np.float32), pad_block], format="csr")
-                else:
-                    e_fixed = e_csr.astype(np.float32)[:, :max_cols].tocsr()
-                padded_embeddings.append(e_fixed)
-            X_edge = sparse.vstack(padded_embeddings, format="csr")
-            del csr_list
-        else:
-            def _safe_pad_dense(a, width):
-                a = np.asarray(a, dtype=np.float32)
-                if a.shape[1] < width:
-                    a = np.pad(a, ((0, 0), (0, width - a.shape[1])), mode="constant")
-                elif a.shape[1] > width:
-                    a = a[:, :width]
-                return a
-            X_edge = np.vstack([_safe_pad_dense(e, max_cols) for e in embeddings_list])
-
-        gc.collect()
+        X_edge = np.vstack([np.pad(e.astype(np.float32), ((0, 0), (0, max_cols - e.shape[1])), mode='constant')
+                            if e.shape[1] < max_cols else e.astype(np.float32)[:, :max_cols]
+                            for e in embeddings_list])
 
         # Weighted residual stacking
         weighted_rows = []
@@ -616,7 +598,7 @@ def edge_layer_boosting(
             weighted_rows.append(r * w)
 
         residual_edge = np.vstack(weighted_rows)
-        residual_edge = np.clip(residual_edge, -1 + eps_residual, 1 - eps_residual)
+        residual_edge = np.clip(residual_edge, -1 + 1e-6, 1 - 1e-6)
         del embeddings_list, residual_list, weighted_rows
         gc.collect()
         return residual_edge, X_edge
@@ -624,10 +606,9 @@ def edge_layer_boosting(
     e_models, e_residuals, edge_embeddings_list = [], [], []
     edge_outputs, global_pred_blocks, edge_sample_slices = [], [], {}
     global_offset = 0
-    eps_residual = 1e-6
 
     for edge_idx, edge_devices in enumerate(e_groups):
-        prev_y_pseudo_edge = None
+        prev_residual_norm = None
         X_valid_edge = X_ftune[edge_idx] if X_ftune is not None else None
         y_valid_edge = y_ftune[edge_idx] if y_ftune is not None else None
 
@@ -640,21 +621,14 @@ def edge_layer_boosting(
             continue
 
         residual_edge, X_edge = process_edge_data(
-            d_embeddings, d_residuals, device_weights, edge_devices, eps_residual, n_classes
+            d_embeddings, d_residuals, device_weights, edge_devices, 1e-6, n_classes
         )
 
         models_per_edge = []
-        best_logloss_edge = None
+        boosting_round_outputs = []
 
         # Hyperparam tuning
         if X_valid_edge is not None and y_valid_edge is not None:
-            if X_valid_edge.ndim == 2:
-                if X_valid_edge.shape[1] > X_edge.shape[1]:
-                    X_valid_edge = X_valid_edge[:, :X_edge.shape[1]]
-                elif X_valid_edge.shape[1] < X_edge.shape[1]:
-                    pad_width = X_edge.shape[1] - X_valid_edge.shape[1]
-                    X_valid_edge = np.pad(X_valid_edge, ((0, 0), (0, pad_width)), mode="constant")
-
             best_param_edge = random_search_boosting_params(
                 X_edge,
                 np.argmax(residual_edge, axis=1),
@@ -677,61 +651,30 @@ def edge_layer_boosting(
         no_improve_count = 0
 
         for t in range(boosting_rounds):
-            log_util.safe_log(f"[Boosting round {t+1}/{boosting_rounds}] edges={edge_idx}/{len(e_groups)} ")
-
             y_pseudo = np.argmax(residual_edge + 1e-9 * np.random.randn(*residual_edge.shape), axis=1)
-            unique_classes = np.unique(y_pseudo)
-
-            # Early exit memory cleanup
-            if len(unique_classes) < 2 or np.sum(np.abs(residual_edge)) < eps_residual:
-                del y_pseudo
-                gc.collect()
-                break
-
-            if prev_y_pseudo_edge is not None and np.mean(prev_y_pseudo_edge != y_pseudo) < config.get("eps_threshold", 1e-3):
-                del y_pseudo
-                gc.collect()
-                break
-
-            prev_y_pseudo_edge = y_pseudo.copy()
+            if prev_residual_norm is not None:
+                grad_norm = np.linalg.norm(residual_edge)
+                if np.abs(grad_norm - prev_residual_norm) < config.get("eps_threshold", 1e-4):
+                    del y_pseudo
+                    gc.collect()
+                    break
+            prev_residual_norm = np.linalg.norm(residual_edge)
 
             init_model = models_per_edge[-1] if models_per_edge else None
-            X_valid_slice = X_valid_edge
-            if X_valid_edge is not None and X_valid_edge.ndim == 2:
-                if X_valid_edge.shape[1] > X_edge.shape[1]:
-                    X_valid_slice = X_valid_edge[:, :X_edge.shape[1]]
-                elif X_valid_edge.shape[1] < X_edge.shape[1]:
-                    pad_width = X_edge.shape[1] - X_valid_edge.shape[1]
-                    X_valid_slice = np.pad(X_valid_edge, ((0, 0), (0, pad_width)), mode="constant")
 
-            model, current_logloss = train_lightgbm(
+            model, _ = train_lightgbm(
                 X_edge.astype(np.float32, copy=False), y_pseudo,
-                X_valid=X_valid_slice.astype(np.float32, copy=False) if X_valid_slice is not None else None,
+                X_valid=X_valid_edge.astype(np.float32, copy=False) if X_valid_edge is not None else None,
                 y_valid=y_valid_edge,
                 best_params=best_param_edge,
                 init_model=init_model,
-                prev_best_logloss=best_logloss_edge,
+                prev_best_logloss=None,
                 verbose=-1
             )
 
-            # logloss monotonicity
-            if best_logloss_edge is None or (current_logloss is not None and current_logloss <= best_logloss_edge):
-                best_logloss_edge = current_logloss
-                if models_per_edge is None:
-                    models_per_edge = [model]
-                else:
-                    models_per_edge.append(model)
+            models_per_edge.append(model)
 
-                no_improve_count = 0
-            else:
-                no_improve_count += 1
-                if no_improve_count >= max_no_improve:
-                    log_util.safe_log(f"Edge {edge_idx}: stopped early after {no_improve_count} non-improving rounds.")
-                    del y_pseudo, init_model, X_valid_slice
-                    gc.collect()
-                    break
-
-            # Predict & update residual with chunking
+            # Predict per round and store as features
             num_rows = X_edge.shape[0]
             if num_rows <= chunk_size:
                 pred_proba = predict_proba_fixed(model, X_edge, n_classes).astype(np.float32)
@@ -740,45 +683,41 @@ def edge_layer_boosting(
                     predict_proba_fixed(model, X_edge[start:min(start + chunk_size, num_rows)], n_classes).astype(np.float32)
                     for start in range(0, num_rows, chunk_size)
                 ])
+            boosting_round_outputs.append(pred_proba)
             residual_edge -= learning_rate * pred_proba
-            residual_edge = np.clip(residual_edge, -1 + eps_residual, 1 - eps_residual)
-            del pred_proba, X_valid_slice, init_model, y_pseudo
+            residual_edge = np.clip(residual_edge, -1 + 1e-6, 1 - 1e-6)
+            del pred_proba, y_pseudo, init_model
             gc.collect()
 
-        # Store edge results
+        # Stack predictions from all rounds as features
+        if boosting_round_outputs:
+            e_pred_features = np.hstack(boosting_round_outputs).astype(np.float32)
+        else:
+            e_pred_features = np.zeros((X_edge.shape[0], n_classes), dtype=np.float32)
+
         e_models.append(models_per_edge)
         e_residuals.append(residual_edge.copy())
         edge_embeddings_list.append(X_edge)
-
-        model_preds_sum = np.zeros((X_edge.shape[0], n_classes), dtype=np.float32)
-        for m in models_per_edge:
-            if X_edge.shape[0] <= chunk_size:
-                model_preds_sum += predict_proba_fixed(m, X_edge, n_classes).astype(np.float32)
-            else:
-                for start in range(0, X_edge.shape[0], chunk_size):
-                    end = min(start + chunk_size, X_edge.shape[0])
-                    model_preds_sum[start:end] += predict_proba_fixed(m, X_edge[start:end], n_classes).astype(np.float32)
-
-        e_pred_avg = (model_preds_sum / max(1, len(models_per_edge))).astype(np.float32)
-        edge_outputs.append(e_pred_avg)
+        edge_outputs.append(e_pred_features)
 
         row_start = 0
         for dev_idx in edge_devices:
             n_dev = int(d_embeddings[dev_idx].shape[0])
             edge_sample_slices[dev_idx] = np.arange(global_offset + row_start, global_offset + row_start + n_dev)
             row_start += n_dev
-        global_pred_blocks.append(e_pred_avg)
+        global_pred_blocks.append(e_pred_features)
         global_offset += X_edge.shape[0]
 
-        del residual_edge, models_per_edge, e_pred_avg, X_edge
+        del residual_edge, models_per_edge, e_pred_features, X_edge, boosting_round_outputs
         gc.collect()
 
-    # Global aggregation
+    # Global aggregation: stack all edges
     if global_pred_blocks:
         padded_blocks = []
+        max_cols = max(block.shape[1] for block in global_pred_blocks)
         for block in global_pred_blocks:
-            if block.shape[1] < n_classes:
-                block = np.hstack([block, np.zeros((block.shape[0], n_classes - block.shape[1]), dtype=np.float32)])
+            if block.shape[1] < max_cols:
+                block = np.hstack([block, np.zeros((block.shape[0], max_cols - block.shape[1]), dtype=np.float32)])
             padded_blocks.append(block.astype(np.float32))
         global_pred_matrix = np.vstack(padded_blocks)
         del padded_blocks
@@ -789,167 +728,90 @@ def edge_layer_boosting(
     return edge_outputs, e_models, e_residuals, edge_embeddings_list, global_pred_matrix, edge_sample_slices
 
 
-def global_layer_bayesian_aggregation(
-    e_outputs,
-    e_embeddings,
-    e_residuals=None,
-    y_val=None,
-    n_classes=2,
-    n_random_samples=30,
-    prior_var_range=(0.01, 10.0),
-    noise_var_range=(1e-3, 1.0),
-    verbose=True,
+def global_layer_bayesian_aggregation_features_residual(
+        e_outputs,
+        e_residuals,
+        e_embeddings=None,
+        verbose=True
 ):
     """
-    Global Bayesian Aggregation Layer with memory management.
-    Combines edge-level predictions using reliability weighting and Bayesian fusion.
+    Fully weighted feature-level Naive Bayes global aggregation using edge residuals.
+
+    Features:
+    - Each feature from edge outputs treated as conditionally independent.
+    - Uses residual-based per-sample weights (from e_residuals).
+    - No pseudo-labels needed.
+    - Memory-efficient for large-scale federated setups.
     """
 
-    log_util.safe_log("""
-    ************************************************************
-    *                  STARTING GLOBAL LAYER                   *
-    *  Edges -> Bayesian fusion (weighted) -> Global ensemble  *
-    ************************************************************
-    """)
-
-    eps = 1e-8
+    eps = 1e-12  # numerical stability
 
     # --------------------------------------------------------
     # 1. Filter valid edges
     # --------------------------------------------------------
-    valid_edges = [
-        i for i, (out, emb) in enumerate(zip(e_outputs, e_embeddings))
-        if out is not None and emb is not None
-    ]
+    valid_edges = [i for i, out in enumerate(e_outputs) if out is not None]
     if not valid_edges:
         raise ValueError("No valid edges found!")
 
     # --------------------------------------------------------
-    # 2. Stack predictions across edges
+    # 2. Flatten all features and compute per-sample weights
     # --------------------------------------------------------
-    edge_preds = []
+    H_features_list = []
+    sample_weights_list = []
     for i in valid_edges:
         out = e_outputs[i].astype(np.float32, copy=False)
-        if out.shape[1] < n_classes:
-            out = np.pad(out, ((0, 0), (0, n_classes - out.shape[1])), mode='constant')
-        edge_preds.append(out)
+        residual = e_residuals[i].astype(np.float32, copy=False) if e_residuals and e_residuals[i] is not None else None
 
-    H_global = np.vstack(edge_preds)
-    del edge_preds
-    gc.collect()
-
-    n_samples_total = H_global.shape[0]
-
-    # --------------------------------------------------------
-    # 3. Compute reliability weights
-    # --------------------------------------------------------
-    if e_residuals is not None:
-        weights_list = []
-        for i in valid_edges:
-            r = e_residuals[i]
-            if r is None:
-                weights_list.append(np.ones(H_global.shape[0], dtype=np.float32) * eps)
-                continue
-            r = r.astype(np.float32, copy=False)
-            if r.shape[1] < n_classes:
-                r = np.pad(r, ((0, 0), (0, n_classes - r.shape[1])), mode='constant')
-            elif r.shape[1] > n_classes:
-                r = r[:, :n_classes]
-            per_sample_mse = np.mean(r ** 2, axis=1)
+        # Compute per-sample weight from residuals
+        if residual is not None:
+            per_sample_mse = np.mean(residual ** 2, axis=1)
             reliability = np.clip(1.0 / (per_sample_mse + eps), a_min=eps, a_max=1e6)
-            weights_list.append(reliability)
-        edge_weights = np.hstack(weights_list).astype(np.float32)
-        del weights_list, r, per_sample_mse, reliability
-        gc.collect()
-    else:
-        edge_weights = np.ones(n_samples_total, dtype=np.float32)
-
-    edge_weights /= np.sum(edge_weights)
-
-    # --------------------------------------------------------
-    # 4. Generate pseudo-labels if y_val not provided
-    # --------------------------------------------------------
-    y_pseudo_global = np.argmax(H_global, axis=1)
-    y_pseudo_onehot = np.zeros((n_samples_total, n_classes), dtype=np.float32)
-    y_pseudo_onehot[np.arange(n_samples_total), y_pseudo_global] = 1
-    global_residuals = y_pseudo_onehot - H_global
-    del y_pseudo_global
-    gc.collect()
-
-    # --------------------------------------------------------
-    # 5. Create validation subset
-    # --------------------------------------------------------
-    val_size = max(10, n_samples_total // 5)
-    val_indices = np.random.choice(n_samples_total, size=val_size, replace=False)
-    H_val = H_global[val_indices]
-    y_val_internal = y_val if y_val is not None else y_pseudo_onehot[val_indices]
-    del val_indices
-    gc.collect()
-
-    # --------------------------------------------------------
-    # 6. Random sampling for Bayesian hyperparameter tuning
-    # --------------------------------------------------------
-    best_score, best_params = -np.inf, None
-
-    for _ in range(n_random_samples):
-        prior_var = np.exp(np.random.uniform(np.log(prior_var_range[0]), np.log(prior_var_range[1])))
-        noise_var = np.exp(np.random.uniform(np.log(noise_var_range[0]), np.log(noise_var_range[1])))
-
-        precision_prior = 1.0 / prior_var
-        precision_noise = 1.0 / noise_var
-
-        alpha = np.sum(H_global * edge_weights[:, None], axis=0)
-        theta_global = (precision_noise * alpha) / (precision_prior + precision_noise)
-
-        # Softmax probabilities
-        exp_logits = np.exp(theta_global - np.max(theta_global))
-        y_pred = exp_logits / np.sum(exp_logits)
-
-        if y_val_internal.ndim == 1:
-            log_likelihood = np.mean(np.log(y_pred[y_val_internal % len(y_pred)] + eps))
         else:
-            log_likelihood = np.mean(np.sum(y_val_internal * np.log(y_pred + eps), axis=1))
+            reliability = np.ones(out.shape[0], dtype=np.float32)
 
-        if log_likelihood > best_score:
-            best_score = log_likelihood
-            best_params = {"prior_var": prior_var, "noise_var": noise_var}
-
-        del exp_logits, y_pred
+        H_features_list.append(out)
+        sample_weights_list.append(reliability)
+        del residual, per_sample_mse if 'residual' in locals() else None
         gc.collect()
 
-    if verbose:
-        log_util.safe_log(f"\n[Bayesian Tuning] Best params: {best_params} | Validation score: {best_score:.6f}\n")
-
-    # --------------------------------------------------------
-    # 7. Final Bayesian fusion using best hyperparameters
-    # --------------------------------------------------------
-    prior_var, noise_var = best_params["prior_var"], best_params["noise_var"]
-    precision_prior, precision_noise = 1.0 / prior_var, 1.0 / noise_var
-
-    alpha = np.sum(H_global * edge_weights[:, None], axis=0)
-    beta = np.sum(global_residuals * edge_weights[:, None], axis=0)
-    theta_global = (precision_noise * (alpha + beta)) / (precision_prior + precision_noise)
-
-    logits = H_global + beta
-    exp_logits = np.exp(logits - np.max(logits, axis=1, keepdims=True))
-    y_global_pred = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
-
-    del logits, exp_logits
+    # Stack horizontally: features from all edges
+    H_global = np.hstack(H_features_list)
+    sample_weights = np.hstack(sample_weights_list).astype(np.float32)
+    sample_weights /= np.sum(sample_weights)
+    del H_features_list, sample_weights_list
     gc.collect()
 
-    theta_out = {
-        "alpha": alpha,
-        "beta": beta,
-        "prior_var": prior_var,
-        "noise_var": noise_var,
-    }
+    n_samples, n_features_total = H_global.shape
+
+    # --------------------------------------------------------
+    # 3. Use residuals to define "likelihood" per feature
+    # --------------------------------------------------------
+    # We'll normalize each feature across samples to [eps,1] to act like probability
+    H_min = np.min(H_global, axis=0, keepdims=True)
+    H_max = np.max(H_global, axis=0, keepdims=True)
+    H_range = np.clip(H_max - H_min, eps, None)
+    H_norm = (H_global - H_min) / H_range
+    H_norm = np.clip(H_norm, eps, 1.0)
+    del H_global, H_min, H_max, H_range
+    gc.collect()
+
+    # --------------------------------------------------------
+    # 4. Compute weighted log-likelihood per "class"
+    # Here we treat each feature as a "class" contribution
+    # --------------------------------------------------------
+    # Since we don't have labels, we produce a soft aggregated output
+    # Summing log-likelihoods across features weighted by sample_weights
+    log_likelihood = np.log(H_norm) * sample_weights[:, None]
+    y_global_pred = np.exp(log_likelihood)
+    y_global_pred /= np.sum(y_global_pred, axis=1, keepdims=True)
+    del H_norm, log_likelihood
+    gc.collect()
 
     if verbose:
-        log_util.safe_log(f"Final α: {alpha}")
-        log_util.safe_log(f"Final β: {beta}")
-        log_util.safe_log(f"Samples: {n_samples_total}")
+        print(f"[Global Layer Residual] Feature-level NB aggregation completed for {n_samples} samples.")
 
-    return y_global_pred, global_residuals, theta_out
+    return y_global_pred, None, {"sample_weights": sample_weights, "n_features": n_features_total}
+
 
 
 # ============================================================
