@@ -65,7 +65,7 @@ config = {
     "results_path": "results",
     "isotonic_min_positives": 5,
     "max_cores": 2,
-    "n_estimators": 50,
+    "n_estimators": 1000,
     "num_leaves": 64,
     "alpha": 1.0,
     "min_child_samples": 10,
@@ -104,22 +104,6 @@ def train_lightgbm(
     verbose=-1,
     **kwargs
 ):
-    """
-    Train a LightGBM classifier with validation, continuation, and logloss control.
-
-    Args:
-        X_train, y_train : training data
-        X_valid, y_valid : validation data
-        best_params : tuned hyperparameters
-        init_model : existing model for continued training
-        prev_best_logloss : previous best logloss (across edges)
-        verbose : verbosity level
-
-    Returns:
-        model : trained model
-        best_logloss : best validation logloss
-    """
-
     # --- Convert safely ---
     X_train = np.array(X_train)
     y_train = np.array(y_train)
@@ -131,7 +115,6 @@ def train_lightgbm(
     if y_valid is not None and y_valid.ndim > 1 and y_valid.shape[1] > 1:
         y_valid = np.argmax(y_valid, axis=1)
 
-    # --- Determine objective ---
     num_classes = len(np.unique(y_train))
     objective = "binary" if num_classes == 2 else "multiclass"
 
@@ -140,11 +123,10 @@ def train_lightgbm(
         "boosting_type": config.get("boosting", "gbdt"),
         "objective": objective,
         "num_class": num_classes if num_classes > 2 else None,
-        "n_estimators": config.get("n_estimators", 5000),
-        "learning_rate": config.get("learning_rate", 0.01),
-        "num_iterations": config.get("num_iterations", 100),
+        "n_estimators": int(best_params.get("num_boost_round", config.get("n_estimators", 5000))),
+        "learning_rate": float(best_params.get("learning_rate", config.get("learning_rate", 0.01))),
         "num_leaves": config.get("num_leaves", 31),
-        "max_depth": config.get("max_depth", -1),
+        "max_depth": int(best_params.get("max_depth", config.get("max_depth", -1))),
         "min_child_samples": config.get("min_child_samples", 20),
         "class_weight": config.get("class_weight", None),
         "lambda_l1": config.get("lambda_l1", 0.0),
@@ -156,23 +138,26 @@ def train_lightgbm(
         "verbose": verbose,
     }
 
-    # --- Merge tuned parameters ---
-    model_params = {**base_params, **best_params} if best_params is not None else base_params
+    # --- Convert to DataFrame to keep feature names consistent ---
+    n_features = X_train.shape[1]
+    X_train_df = pd.DataFrame(X_train, columns=[f"f{i}" for i in range(n_features)])
+    X_valid_df = None
+    if X_valid is not None:
+        X_valid_df = pd.DataFrame(X_valid, columns=[f"f{i}" for i in range(n_features)])
 
-    # --- Initialize model ---
-    model = LGBMClassifier(**model_params)
+    model = LGBMClassifier(**base_params)
+    fit_kwargs = {}
 
     # --- Validation setup ---
-    fit_kwargs = {}
-    if X_valid is not None and y_valid is not None and config.get("early_stopping_rounds", 0):
+    if X_valid_df is not None and y_valid is not None and config.get("early_stopping_rounds", 100):
         mask = np.isin(y_valid, np.unique(y_train))
         if mask.sum() < 10:
             mask = np.ones_like(y_valid, dtype=bool)
-        X_valid_filtered = X_valid[mask]
+        X_valid_filtered = X_valid_df[mask]
         y_valid_filtered = y_valid[mask]
 
         fit_kwargs.update({
-            "eval_set": [(X_train, y_train), (X_valid_filtered, y_valid_filtered)],
+            "eval_set": [(X_train_df, y_train), (X_valid_filtered, y_valid_filtered)],
             "eval_metric": "multi_logloss" if num_classes > 2 else "logloss",
             "eval_names": ["train", "valid"],
             "callbacks": [
@@ -181,54 +166,36 @@ def train_lightgbm(
             ]
         })
 
-    # --- Continue from previous model ---
     if init_model is not None:
         fit_kwargs["init_model"] = init_model
 
     # --- Train ---
-    model.fit(X_train, y_train, **fit_kwargs)
+    model.fit(X_train_df, y_train, **fit_kwargs)
 
     # --- Align validation features safely ---
-    if X_valid is not None and y_valid is not None:
-        X_valid = np.atleast_2d(np.asarray(X_valid, dtype=np.float32))
-        n_features_model = X_train.shape[1]
-        n_features_valid = X_valid.shape[1]
-        if n_features_valid < n_features_model:
-            X_valid = np.pad(X_valid, ((0, 0), (0, n_features_model - n_features_valid)), mode="constant")
-        elif n_features_valid > n_features_model:
-            X_valid = X_valid[:, :n_features_model]
-
-        y_pred = model.predict_proba(X_valid)
-
-        # --- Safe logloss computation even if y_valid misses some classes ---
+    current_logloss = None
+    if X_valid_df is not None and y_valid is not None:
+        y_pred = model.predict_proba(X_valid_df)
         try:
             current_logloss = log_loss(y_valid, y_pred, labels=np.arange(num_classes))
         except ValueError as e:
-            log_util.safe_log(f"⚠️ Logloss computation failed due to class mismatch: {e}")
-            log_util.safe_log("Falling back to filtered label set for logloss computation.")
+            log_util.safe_log(f"⚠️ Logloss computation failed: {e}")
             valid_labels = np.unique(y_valid)
-            valid_mask = np.isin(np.arange(num_classes), valid_labels)
-            y_pred_filtered = y_pred[:, valid_mask] if y_pred.shape[1] > len(valid_labels) else y_pred
-            try:
-                current_logloss = log_loss(y_valid, y_pred_filtered, labels=valid_labels)
-            except Exception as inner_e:
-                log_util.safe_log(f"⚠️ Logloss fallback also failed: {inner_e}")
-                current_logloss = np.nan
-    else:
-        current_logloss = None
+            y_pred_filtered = y_pred[:, :len(valid_labels)]
+            current_logloss = log_loss(y_valid, y_pred_filtered, labels=valid_labels)
 
     # --- Logloss control ---
     if prev_best_logloss is not None and current_logloss is not None and current_logloss > prev_best_logloss:
         prev_model = init_model[0] if isinstance(init_model, tuple) else init_model
         model_to_return = prev_model
-        log_util.safe_log(
-            f"⚠️ Logloss worsened ({current_logloss:.4f} > {prev_best_logloss:.4f}), reverting to previous model")
+        log_util.safe_log(f"⚠️ Logloss worsened ({current_logloss:.4f} > {prev_best_logloss:.4f}), reverting to previous model")
     else:
         model_to_return = model
         if current_logloss is not None and prev_best_logloss is not None:
             log_util.safe_log(f"✅ Improved logloss: {current_logloss:.4f} (prev: {prev_best_logloss:.4f})")
 
     return model_to_return, current_logloss if current_logloss is not None else prev_best_logloss
+
 
 
 
@@ -381,7 +348,7 @@ def device_layer_boosting(
     Keeps only the latest model per device (memory-efficient incremental update).
     """
 
-    print_layer_banner("Device", layer_idx=1, current_epoch=epoch)
+    print_layer_banner("Device", device_id=1, current_epoch=epoch)
 
     num_devices = len(d_data)
     device_embeddings = [None] * num_devices
@@ -505,7 +472,7 @@ def edge_layer_boosting(
       global_pred_matrix, edge_sample_slices
     """
 
-    print_layer_banner("Edge", layer_idx=2, device_count=len(e_groups), current_epoch=epoch)
+    print_layer_banner("Edge", edge_id=2, device_count=len(e_groups), current_epoch=epoch)
 
     e_models, e_residuals, edge_embeddings_list = [], [], []
     edge_outputs, global_pred_blocks, edge_sample_slices = [], [], {}
@@ -1141,7 +1108,7 @@ def backward_pass(edge_models, device_models,
 # ======================================================================
 
 
-def print_layer_banner(layer_type, layer_idx=None, device_count=None, current_epoch=None):
+def print_layer_banner(layer_type, layer_idx=None, device_count=None, current_epoch=None, device_id=None, edge_id=None):
     """
     Prints a dynamic, colored banner for different layers.
 
@@ -1150,46 +1117,61 @@ def print_layer_banner(layer_type, layer_idx=None, device_count=None, current_ep
         layer_idx (int, optional): Index of the layer (if applicable)
         device_count (int, optional): Number of devices (if applicable)
         current_epoch (int, optional): Current epoch or iteration
+        device_id (int, optional): Specific device number (for device-level prints)
+        edge_id (int, optional): Specific edge number (for edge-level prints)
     """
 
     # ANSI color codes
     COLORS = {
-        "Device": "\033[94m",  # Blue
-        "Edge": "\033[96m",  # Cyan
-        "Global": "\033[95m",  # Magenta
-        "Evaluation": "\033[92m",  # Green
-        "Backward": "\033[93m",  # Yellow
-        "Backward Pass": "\033[93m",  # Alias
-        "ENDC": "\033[0m",  # Reset
+        "Device": "\033[94m",       # Blue
+        "Edge": "\033[96m",         # Cyan
+        "Global": "\033[95m",       # Magenta
+        "Evaluation": "\033[92m",   # Green
+        "Backward": "\033[93m",     # Yellow
+        "Backward Pass": "\033[93m",
+        "ENDC": "\033[0m",
         "BOLD": "\033[1m"
     }
-    color = COLORS.get(layer_type, "")  # Default to no color if unknown
 
-    idx_str = f" {layer_idx}" if layer_idx is not None else ""
-    epoch_str = f" | Epoch {current_epoch}" if current_epoch is not None else ""
-    device_str = f"Devices ({device_count}) -> " if device_count is not None else ""
+    color = COLORS.get(layer_type, "")
+    bold = COLORS["BOLD"]
+    endc = COLORS["ENDC"]
 
-    title = f"STARTING {layer_type.upper()} LAYER{idx_str}{epoch_str}"
-    description = f"{device_str}{layer_type}-level boosted ensemble -> {layer_type} output"
-    note = "Gradient-loss based early stopping"
+    # Dynamic context parts
+    layer_info = []
+    if layer_idx is not None:
+        layer_info.append(f"Layer {layer_idx}")
+    if edge_id is not None:
+        layer_info.append(f"Edge {edge_id}")
+    if device_id is not None:
+        layer_info.append(f"Device {device_id}")
+    if current_epoch is not None:
+        layer_info.append(f"Epoch {current_epoch + 1}")
 
-    # Special messages for Evaluation and Backward Pass layers
+    context_str = " | ".join(layer_info)
+    context_str = f" ({context_str})" if context_str else ""
+
+    # Dynamic description
     if layer_type.lower() in ["evaluation", "evaluation layer"]:
-        description = f"Computing metrics and validation outputs"
+        description = "Computing metrics and validation outputs"
         note = "No training, evaluation only"
     elif layer_type.lower() in ["backward", "backward pass"]:
-        description = f"Propagating gradients backward and updating models"
+        description = "Propagating gradients backward and updating models"
         note = "Gradient accumulation and parameter update"
+    else:
+        description = f"{layer_type}-level boosted ensemble → {layer_type} output"
+        note = "Gradient-loss based early stopping"
 
-    # Banner width
-    max_width = max(len(title), len(description), len(note)) + 4  # padding
+    # Construct title
+    title = f"STARTING {layer_type.upper()} LAYER{context_str}"
+    max_width = max(len(title), len(description), len(note)) + 6  # padding
 
-    # Print colored banner
-    print(color + "*" * max_width + COLORS["ENDC"])
-    print(color + f"*{title.center(max_width - 2)}*" + COLORS["ENDC"])
-    print(color + f"*{description.center(max_width - 2)}*" + COLORS["ENDC"])
-    print(color + f"*{note.center(max_width - 2)}*" + COLORS["ENDC"])
-    print(color + "*" * max_width + COLORS["ENDC"] + "\n")
+    # Print banner
+    print(color + "*" * max_width + endc)
+    print(color + f"*{bold}{title.center(max_width - 2)}{endc}*" + endc)
+    print(color + f"*{description.center(max_width - 2)}*" + endc)
+    print(color + f"*{note.center(max_width - 2)}*" + endc)
+    print(color + "*" * max_width + endc + "\n")
 
 
 def search_boosting_params(
@@ -1207,20 +1189,19 @@ def search_boosting_params(
 
     param_grid = {
         "learning_rate": [0.01, 0.05, 0.1],
-        "max_depth": [3, 6, 9],
-        """
-            "num_leaves": [31, 63, 127],
-            "min_data_in_leaf": [10, 20, 30],
-            "min_gain_to_split": [0.0, 0.1, 0.2],
-            
-            "feature_fraction": [0.7, 0.8, 1.0],
-            "bagging_fraction": [0.7, 0.8, 1.0],
-            "bagging_freq": [1, 5, 10],
-            "lambda_l1": [0.0, 0.1, 0.5],
-            "lambda_l2": [0.0, 0.1, 0.5],
-            "max_bin": [128, 256, 512],
-            """
-        "num_boost_round": [50, 100, 150]
+        "max_depth": [3, 4, 5],
+        "num_boost_round": [100, 200, 300],
+
+        # Optional parameters — uncomment as needed:
+        # "num_leaves": [31, 63, 127],
+        # "min_data_in_leaf": [10, 20, 30],
+        # "min_gain_to_split": [0.0, 0.1, 0.2],
+        # "feature_fraction": [0.7, 0.8, 1.0],
+        # "bagging_fraction": [0.7, 0.8, 1.0],
+        # "bagging_freq": [1, 5, 10],
+        # "lambda_l1": [0.0, 0.1, 0.5],
+        # "lambda_l2": [0.0, 0.1, 0.5],
+        # "max_bin": [128, 256, 512],
     }
 
     y_train_enc = encode_labels_safe(le, y_train, n_classes)
@@ -2063,6 +2044,7 @@ def evaluate_multilevel_performance(
     y_tests,
     le,
     num_classes,
+    epoch=0,
     combine_mode="last",
     device_model_weights=None,
     edge_model_weights=None,
@@ -2078,7 +2060,7 @@ def evaluate_multilevel_performance(
     Edge predictions can be weighted by their reliability.
     Returns a structured dictionary with predictions and metrics.
     """
-    print_layer_banner("Evaluation", current_epoch=10)
+    print_layer_banner("Evaluation", current_epoch=epoch)
 
     def normalize_weights(weights):
         w = np.asarray(weights, dtype=np.float32)
@@ -2337,7 +2319,7 @@ def hpfl_train_with_accuracy(
     # 4️⃣ Epoch Loop
     # -------------------------
     for epoch in range(num_epochs):
-        log_util.safe_log(f"\n===== Epoch {epoch + 1}/{num_epochs} =====\n")
+        #log_util.safe_log(f"\n===== Epoch {epoch + 1}/{num_epochs} =====\n")
 
         # --- Forward Pass ---
         (
@@ -2392,6 +2374,7 @@ def hpfl_train_with_accuracy(
             y_tests=y_tests,
             le=le,
             num_classes=n_classes,
+            epoch=epoch,
             combine_mode="weighted",
             top_k=3,
             edge_reliabilities=edge_reliabilities
