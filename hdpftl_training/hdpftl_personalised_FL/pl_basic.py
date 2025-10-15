@@ -131,7 +131,7 @@ def train_lightgbm(
     Allows very large n_estimators safely.
     """
 
-    # --- Convert inputs ---
+    # --- Convert inputs to NumPy arrays (feature names removed) ---
     X_train = np.asarray(X_train, dtype=np.float32)
     y_train = np.asarray(y_train, dtype=int)
     if y_train.ndim > 1 and y_train.shape[1] > 1:
@@ -217,6 +217,7 @@ def train_lightgbm(
             log_util.safe_log(f"✅ Improved gradient loss: {grad_loss_val:.6f} (prev: {prev_best_gradloss:.6f})")
 
     return model_to_return, grad_loss_val if grad_loss_val is not None else prev_best_gradloss
+
 
 
 # ============================================================
@@ -360,10 +361,6 @@ def device_layer_boosting(
         epoch=0,
         chunk_size=5000
 ):
-    """
-    Device-level gradient boosting: residual-driven pseudo-labels, gradient updates, leaf embeddings.
-    Keeps only the latest model per device (memory-efficient incremental update).
-    """
 
     print_layer_banner("Device", device_id=1, current_epoch=epoch)
 
@@ -402,9 +399,9 @@ def device_layer_boosting(
             prev_res_norm = res_norm
 
             y_pseudo = np.argmax(residual + 1e-9 * np.random.randn(*residual.shape), axis=1)
-
+            X_train = X_train.astype(np.float32)
             model, _ = train_lightgbm(
-                X_train.astype(np.float32, copy=False), y_pseudo,
+                X_train, y_pseudo,
                 X_valid=(X_device_finetune[:, :X_train.shape[1]].astype(np.float32, copy=False)
                          if X_device_finetune is not None else None),
                 y_valid=y_device_finetune,
@@ -415,50 +412,54 @@ def device_layer_boosting(
             )
             prev_model = model  # overwrite previous model
 
-            # Update residuals
-            if X_train.shape[0] <= chunk_size:
-                pred_proba = predict_proba_fixed(model, X_train, n_classes).astype(np.float32)
-            else:
-                preds = []
-                for s in range(0, X_train.shape[0], chunk_size):
-                    e = min(s + chunk_size, X_train.shape[0])
-                    preds.append(predict_proba_fixed(model, X_train[s:e], n_classes).astype(np.float32))
-                pred_proba = np.vstack(preds)
-                del preds
+            # --- Update residuals with chunked predictions ---
+            pred_proba_list = []
+            for s in range(0, X_train.shape[0], chunk_size):
+                e = min(s + chunk_size, X_train.shape[0])
+                preds_batch, grad_loss = predict_proba_fixed(
+                    model,
+                    X_train[s:e],
+                    y_train[s:e],
+                    n_classes
+                )
+                pred_proba_list.append(preds_batch.astype(np.float32))
+            pred_proba = np.vstack(pred_proba_list)
+            del pred_proba_list
 
             residual -= learning_rate * pred_proba
             residual = np.clip(residual, -1 + eps_residual, 1 - eps_residual)
             del pred_proba, y_pseudo
             gc.collect()
 
-        # Final true-label correction
+        # --- Final true-label correction ---
         if y_train is not None and prev_model is not None:
             y_true_enc = le.transform(y_train)
             y_onehot = np.zeros((n_samples, n_classes), dtype=np.float32)
             y_onehot[np.arange(n_samples), y_true_enc] = 1.0
 
-            if n_samples <= chunk_size:
-                y_pred_total = predict_proba_fixed(prev_model, X_train, n_classes).astype(np.float32)
-            else:
-                preds = [predict_proba_fixed(prev_model, X_train[s:e], n_classes).astype(np.float32)
-                         for s in range(0, n_samples, chunk_size)]
-                y_pred_total = np.vstack(preds)
+            y_pred_list = []
+            for s in range(0, n_samples, chunk_size):
+                e = min(s + chunk_size, n_samples)
+                preds_batch, _ = predict_proba_fixed(prev_model, X_train[s:e], y_train[s:e], n_classes)
+                y_pred_list.append(preds_batch.astype(np.float32))
+            y_pred_total = np.vstack(y_pred_list)
+            del y_pred_list
 
             residual = np.clip(y_onehot - y_pred_total, -1 + eps_residual, 1 - eps_residual)
             del y_onehot, y_pred_total, y_true_enc
             gc.collect()
 
-        # Device embedding
+        # --- Device embedding ---
         leaf_indices = get_leaf_indices(prev_model, X_train)
         leaf_emb = np.zeros((n_samples, np.max(leaf_indices) + 1), dtype=np.float32)
         leaf_emb[np.arange(n_samples), leaf_indices] = 1.0
         device_embeddings[idx] = leaf_emb
         del leaf_indices, leaf_emb
 
-        # Simple device weight
+        # --- Simple device weight ---
         device_val_scores[idx] = np.array([1.0], dtype=np.float32)
 
-        # Writebacks
+        # --- Writebacks ---
         d_residuals[idx] = residual
         d_models[idx] = prev_model
 
@@ -1252,10 +1253,8 @@ def search_boosting_params(
             verbose=verbose
         )
 
-        # Predict probabilities
-        y_pred = predict_proba_fixed(model, X_valid, n_classes)
-
-        grad_loss = np.mean(np.sum((y_valid_onehot - y_pred) ** 2, axis=1))
+        # Predict probabilities + gradient loss
+        y_pred, grad_loss = predict_proba_fixed(model, X_valid, y_valid_enc, n_classes)
 
         # Update best params if improved
         if grad_loss < best_score:
@@ -1269,6 +1268,7 @@ def search_boosting_params(
         log_util.safe_log(f"Best params (gradient loss): {best_params}, loss={best_score:.6f}")
 
     return best_params
+
 
 
 def encode_labels_safe(le, y, n_classes):
