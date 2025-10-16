@@ -62,7 +62,7 @@ config = {
     "results_path": "results",
     "isotonic_min_positives": 5,
     "max_cores": 2,
-    "n_estimators": 50,
+    "n_estimators": 1000,
     "num_leaves": 64,
     "alpha": 1.0,
     "min_child_samples": 10,
@@ -178,7 +178,6 @@ def train_lightgbm(
             ]
         })
 
-    # --- Continue from previous model ---
     if init_model is not None:
         fit_kwargs["init_model"] = init_model
 
@@ -187,14 +186,6 @@ def train_lightgbm(
 
     # --- Align validation features safely ---
     if X_valid is not None and y_valid is not None:
-        X_valid = np.atleast_2d(np.asarray(X_valid, dtype=np.float32))
-        n_features_model = X_train.shape[1]
-        n_features_valid = X_valid.shape[1]
-        if n_features_valid < n_features_model:
-            X_valid = np.pad(X_valid, ((0, 0), (0, n_features_model - n_features_valid)), mode="constant")
-        elif n_features_valid > n_features_model:
-            X_valid = X_valid[:, :n_features_model]
-
         y_pred = model.predict_proba(X_valid)
 
         # --- Safe logloss computation even if y_valid misses some classes ---
@@ -233,7 +224,7 @@ def train_lightgbm(
 # Predict probabilities safely, filling missing classes
 # ============================================================
 
-def predict_proba_fixed(model, X, n_classes):
+def predict_proba_fixed(model, X, y_true, n_classes):
     """
     Universal safe prediction wrapper for LightGBM / sklearn models.
     Handles:
@@ -253,9 +244,8 @@ def predict_proba_fixed(model, X, n_classes):
     else:
         X_np = X.astype(np.float32, copy=False)
 
+    # --- Align features to model ---
     n_features_model = getattr(model, "n_features_in_", X_np.shape[1])
-
-    # --- Align input features with model ---
     if X_np.shape[1] > n_features_model:
         X_np = X_np[:, :n_features_model]
     elif X_np.shape[1] < n_features_model:
@@ -373,12 +363,8 @@ def device_layer_boosting(
         epoch=0,
         chunk_size=5000
 ):
-    """
-    Device-level gradient boosting: residual-driven pseudo-labels, gradient updates, leaf embeddings.
-    Keeps only the latest model per device (memory-efficient incremental update).
-    """
 
-    print_layer_banner("Device", layer_idx=1, current_epoch=epoch)
+    print_layer_banner("Device", device_id=1, current_epoch=epoch)
 
     num_devices = len(d_data)
     device_embeddings = [None] * num_devices
@@ -490,9 +476,9 @@ def device_layer_boosting(
 
 def edge_layer_boosting(
         e_groups, d_embeddings, d_residuals,
-        n_classes, le=None, best_param_edge=None,
+        n_classes, best_param_edge=None,
         X_ftune=None, y_ftune=None, device_weights=None,
-        epoch=0, chunk_size=5000, n_random_trials=5,
+        epoch=0, chunk_size=5000,
         prev_e_models=None   # <-- optional: pass previous edge models between calls
 ):
     """
@@ -502,7 +488,7 @@ def edge_layer_boosting(
       global_pred_matrix, edge_sample_slices
     """
 
-    print_layer_banner("Edge", layer_idx=2, device_count=len(e_groups), current_epoch=epoch)
+    print_layer_banner("Edge", edge_id=2, device_count=len(e_groups), current_epoch=epoch)
 
     e_models, e_residuals, edge_embeddings_list = [], [], []
     edge_outputs, global_pred_blocks, edge_sample_slices = [], [], {}
@@ -604,12 +590,12 @@ def edge_layer_boosting(
             # predict (chunked) and store round outputs
             num_rows = X_edge.shape[0]
             if num_rows <= chunk_size:
-                pred_proba = predict_proba_fixed(model, X_edge, n_classes).astype(np.float32)
+                pred_proba = predict_proba_fixed(model, X_edge, y_pseudo, n_classes).astype(np.float32)
             else:
                 preds = []
                 for s in range(0, num_rows, chunk_size):
                     e = min(s + chunk_size, num_rows)
-                    preds.append(predict_proba_fixed(model, X_edge[s:e], n_classes).astype(np.float32))
+                    preds.append(predict_proba_fixed(model, X_edge[s:e], y_pseudo, n_classes).astype(np.float32))
                 pred_proba = np.vstack(preds)
                 del preds
             boosting_round_outputs.append(pred_proba)
@@ -666,9 +652,8 @@ def global_layer_bayesian_aggregation(
     e_outputs,
     e_residuals=None,
     epoch = 0,
-    e_embeddings=None,
     verbose=True,
-    eps=1e-12,
+    eps:float=1e-6,
     chunk_size=2048,
     return_edge_probs_per_sample=False
 ):
@@ -729,7 +714,7 @@ def global_layer_bayesian_aggregation(
 
     n_samples, n_features = H_global.shape
     if verbose:
-        print(f"[GlobalBayes+Edge] stacking {len(valid_edges)} edges -> H_global shape {H_global.shape}")
+        log_util.safe_log(f"[GlobalBayes+Edge] stacking {len(valid_edges)} edges -> H_global shape {H_global.shape}")
 
     # 3. chunked normalization to [eps,1]
     H_norm = np.empty_like(H_global, dtype=np.float32)
@@ -793,8 +778,8 @@ def global_layer_bayesian_aggregation(
     gc.collect()
 
     if verbose:
-        print(f"[GlobalBayes+Edge] n_samples={n_samples}, n_features={n_features}, n_edges={n_edges}")
-        print(f"[GlobalBayes+Edge] edge_reliability: {theta_global['edge_reliability']}")
+        log_util.safe_log(f"[GlobalBayes+Edge] n_samples={n_samples}, n_features={n_features}, n_edges={n_edges}")
+        log_util.safe_log(f"[GlobalBayes+Edge] edge_reliability: {theta_global['edge_reliability']}")
 
     # return feature-space posteriors and theta with per-edge reliability
     return y_global_pred_featurespace, None, theta_global
@@ -811,13 +796,12 @@ def get_memory_mb():
 
 
 def forward_pass(
-    devices_data, edge_groups, le, num_classes,
+    devices_data, edge_groups, le, n_classes,
     best_param_device=None,
     best_param_edge=None,
     X_edges_finetune=None, y_edges_finetune=None,
     residuals_devices=None, device_models=None,
     epoch = 0,
-    pred_chunk_size=1024,
     track_profile=False
 ):
     """
@@ -830,11 +814,10 @@ def forward_pass(
         devices_data (list): Per-device data tuples.
         edge_groups (list of lists): Device indices per edge.
         le (LabelEncoder): Fitted label encoder.
-        num_classes (int): Number of classes.
+        n_classes (int): Number of classes.
         best_param_device, best_param_edge (dict, optional): Pre-tuned hyperparameters.
         X_edges_finetune, y_edges_finetune (list, optional): Edge fine-tuning data.
         residuals_devices, device_models (list, optional): Previous residuals/models.
-        pred_chunk_size (int, default=1024): Batch size for predictions.
         track_profile (bool, default=False): Record time/memory usage.
 
     Returns:
@@ -856,7 +839,7 @@ def forward_pass(
     device_models = device_models or [None] * len(devices_data)
 
     residuals_devices, device_models, device_embeddings, device_weights = device_layer_boosting(
-        devices_data, residuals_devices, device_models, le, num_classes, best_param_device, epoch
+        devices_data, residuals_devices, device_models, le, n_classes, best_param_device, epoch
     )
 
     assert device_embeddings is not None, "Device embeddings returned as None!"
@@ -882,7 +865,7 @@ def forward_pass(
         e_groups=edge_groups,
         d_embeddings=device_embeddings,
         d_residuals=residuals_devices,
-        n_classes=num_classes,
+        n_classes=n_classes,
         best_param_edge=best_param_edge,
         X_ftune=X_edges_finetune,
         y_ftune=y_edges_finetune,
@@ -940,7 +923,6 @@ def forward_pass(
         e_outputs=edge_embeddings_list,
         e_residuals=residuals_edges,
         epoch=epoch,
-        e_embeddings=None,
         verbose=True
     )
 
@@ -976,7 +958,6 @@ def backward_pass(edge_models, device_models,
                   edge_embeddings, device_embeddings,
                   y_true_per_edge,
                   edge_sample_slices=None,
-                  global_pred_matrix=None,
                   n_classes=2,
                   use_classification=True,
                   epoch=0,
@@ -1138,7 +1119,7 @@ def backward_pass(edge_models, device_models,
 # ======================================================================
 
 
-def print_layer_banner(layer_type, layer_idx=None, device_count=None, current_epoch=None):
+def print_layer_banner(layer_type, layer_idx=None, device_count=None, current_epoch=None, device_id=None, edge_id=None):
     """
     Prints a dynamic, colored banner for different layers.
 
@@ -1147,46 +1128,61 @@ def print_layer_banner(layer_type, layer_idx=None, device_count=None, current_ep
         layer_idx (int, optional): Index of the layer (if applicable)
         device_count (int, optional): Number of devices (if applicable)
         current_epoch (int, optional): Current epoch or iteration
+        device_id (int, optional): Specific device number (for device-level prints)
+        edge_id (int, optional): Specific edge number (for edge-level prints)
     """
 
     # ANSI color codes
     COLORS = {
-        "Device": "\033[94m",  # Blue
-        "Edge": "\033[96m",  # Cyan
-        "Global": "\033[95m",  # Magenta
-        "Evaluation": "\033[92m",  # Green
-        "Backward": "\033[93m",  # Yellow
-        "Backward Pass": "\033[93m",  # Alias
-        "ENDC": "\033[0m",  # Reset
+        "Device": "\033[94m",       # Blue
+        "Edge": "\033[96m",         # Cyan
+        "Global": "\033[95m",       # Magenta
+        "Evaluation": "\033[92m",   # Green
+        "Backward": "\033[93m",     # Yellow
+        "Backward Pass": "\033[93m",
+        "ENDC": "\033[0m",
         "BOLD": "\033[1m"
     }
-    color = COLORS.get(layer_type, "")  # Default to no color if unknown
 
-    idx_str = f" {layer_idx}" if layer_idx is not None else ""
-    epoch_str = f" | Epoch {current_epoch}" if current_epoch is not None else ""
-    device_str = f"Devices ({device_count}) -> " if device_count is not None else ""
+    color = COLORS.get(layer_type, "")
+    bold = COLORS["BOLD"]
+    endc = COLORS["ENDC"]
 
-    title = f"STARTING {layer_type.upper()} LAYER{idx_str}{epoch_str}"
-    description = f"{device_str}{layer_type}-level boosted ensemble -> {layer_type} output"
-    note = "Gradient-loss based early stopping"
+    # Dynamic context parts
+    layer_info = []
+    if layer_idx is not None:
+        layer_info.append(f"Layer {layer_idx}")
+    if edge_id is not None:
+        layer_info.append(f"Edge {edge_id}")
+    if device_id is not None:
+        layer_info.append(f"Device {device_id}")
+    if current_epoch is not None:
+        layer_info.append(f"Epoch {current_epoch + 1}")
 
-    # Special messages for Evaluation and Backward Pass layers
+    context_str = " | ".join(layer_info)
+    context_str = f" ({context_str})" if context_str else ""
+
+    # Dynamic description
     if layer_type.lower() in ["evaluation", "evaluation layer"]:
-        description = f"Computing metrics and validation outputs"
+        description = "Computing metrics and validation outputs"
         note = "No training, evaluation only"
     elif layer_type.lower() in ["backward", "backward pass"]:
-        description = f"Propagating gradients backward and updating models"
+        description = "Propagating gradients backward and updating models"
         note = "Gradient accumulation and parameter update"
+    else:
+        description = f"{layer_type}-level boosted ensemble → {layer_type} output"
+        note = "Gradient-loss based early stopping"
 
-    # Banner width
-    max_width = max(len(title), len(description), len(note)) + 4  # padding
+    # Construct title
+    title = f"STARTING {layer_type.upper()} LAYER{context_str}"
+    max_width = max(len(title), len(description), len(note)) + 6  # padding
 
-    # Print colored banner
-    print(color + "*" * max_width + COLORS["ENDC"])
-    print(color + f"*{title.center(max_width - 2)}*" + COLORS["ENDC"])
-    print(color + f"*{description.center(max_width - 2)}*" + COLORS["ENDC"])
-    print(color + f"*{note.center(max_width - 2)}*" + COLORS["ENDC"])
-    print(color + "*" * max_width + COLORS["ENDC"] + "\n")
+    # Print banner
+    print(color + "*" * max_width + endc)
+    print(color + f"*{bold}{title.center(max_width - 2)}{endc}*" + endc)
+    print(color + f"*{description.center(max_width - 2)}*" + endc)
+    print(color + f"*{note.center(max_width - 2)}*" + endc)
+    print(color + "*" * max_width + endc + "\n")
 
 
 def search_boosting_params(
@@ -1205,7 +1201,8 @@ def search_boosting_params(
     param_grid = {
         "learning_rate": [0.01, 0.05, 0.1],
         "max_depth": [3, 4, 5],
-        "num_boost_round": [50, 100, 150],
+        "num_boost_round": [100, 200, 300],
+
         # Optional parameters — uncomment as needed:
         # "num_leaves": [31, 63, 127],
         # "min_data_in_leaf": [10, 20, 30],
@@ -1236,12 +1233,16 @@ def search_boosting_params(
         if verbose:
             log_util.safe_log(f"Grid trial {idx+1}/{len(all_combinations)}: {params}")
 
-        # Train model
+        # Train model — pass hyperparameters inside best_params
         model, _ = train_lightgbm(
-            X_train, y_train_enc,
-            X_valid=X_valid, y_valid=y_valid_enc,
-            best_params=None,
-            **params
+            X_train.astype(np.float32, copy=False),
+            y_train_enc,
+            X_valid=X_valid.astype(np.float32, copy=False) if X_valid is not None else None,
+            y_valid=y_valid_enc,
+            best_params=params,
+            init_model=None,
+            prev_best_gradloss=None,
+            verbose=verbose
         )
 
         # Predict probabilities
@@ -1384,142 +1385,6 @@ def average_predictions(pred_list, num_samples=None, num_classes=None):
 
     return avg_preds
 
-
-def safe_array(X):
-    """Convert input to numeric NumPy array for LightGBM."""
-    # -----------------------------
-    # 1) Handle None input
-    # -----------------------------
-    if X is None:
-        return None
-
-    # -----------------------------
-    # 2) Convert pandas objects to numpy
-    # -----------------------------
-    if isinstance(X, (pd.DataFrame, pd.Series)):
-        arr = X.to_numpy(dtype=np.float32)
-    else:
-        arr = np.asarray(X, dtype=np.float32)
-
-    # -----------------------------
-    # 3) Return numeric array
-    # -----------------------------
-    return arr
-
-
-def safe_labels(y):
-    """Convert labels to integer NumPy array for LightGBM."""
-    # -----------------------------
-    # 1) Handle None input
-    # -----------------------------
-    if y is None:
-        return None
-
-    # -----------------------------
-    # 2) Convert pandas objects to numpy
-    # -----------------------------
-    if isinstance(y, (pd.Series, pd.DataFrame)):
-        y = y.to_numpy()
-
-    # -----------------------------
-    # 3) Ensure array
-    # -----------------------------
-    y = np.asarray(y)
-
-    # -----------------------------
-    # 4) Convert one-hot labels to class indices if needed
-    # -----------------------------
-    if y.ndim > 1 and y.shape[1] > 1:
-        y = np.argmax(y, axis=1)
-
-    # -----------------------------
-    # 5) Convert to integer type
-    # -----------------------------
-    return y.astype(np.int32)
-
-
-def safe_fit(X, y, *, model=None, **fit_kwargs):
-    """
-    Safely fit a LightGBM classifier with numeric arrays and correct label handling.
-    """
-    # -----------------------------
-    # 1) Convert inputs to safe arrays
-    # -----------------------------
-    X_safe = safe_array(X)
-    y_safe = safe_labels(y)
-
-    # -----------------------------
-    # 2) Determine number of classes and objective
-    # -----------------------------
-    n_classes = len(np.unique(y_safe))
-    objective = 'binary' if n_classes == 2 else 'multiclass'
-
-    # -----------------------------
-    # 3) Extract verbose if provided
-    # -----------------------------
-    verbose = fit_kwargs.pop("verbose", None)
-
-    # -----------------------------
-    # 4) Initialize or use provided model
-    # -----------------------------
-    if model is None:
-        model = LGBMClassifier(objective=objective)
-        if verbose is not None:
-            model.set_params(verbose=verbose)
-
-    # -----------------------------
-    # 5) Set num_class for multiclass problems
-    # -----------------------------
-    if n_classes > 2:
-        model.set_params(num_class=n_classes)
-
-    # -----------------------------
-    # 6) Fit model with provided keyword arguments
-    # -----------------------------
-    model.fit(X_safe, y_safe, **fit_kwargs)
-
-    return model
-
-
-"""
-def safe_edge_output(edge_outputs, num_classes):
-    \"""
-    Ensures each edge output is 2D with shape (n_samples, num_classes).
-    If outputs are missing columns, pad with zeros.
-    If outputs are 1D, convert to one-hot.
-    \"""
-    safe_list = []
-    for i, H in enumerate(edge_outputs):
-        H = np.asarray(H)
-
-        # Case 1: 1D vector of labels -> convert to one-hot
-        if H.ndim == 1:
-            H_onehot = np.zeros((H.shape[0], num_classes))
-            H_onehot[np.arange(H.shape[0]), H.astype(int)] = 1
-            H = H_onehot
-
-        # Case 2: Single row (e.g. (num_classes,)) -> reshape
-        elif H.ndim == 1 and H.shape[0] == num_classes:
-            H = H.reshape(1, -1)
-
-        # Case 3: Already 2D but wrong num_classes -> pad or truncate
-        elif H.ndim == 2:
-            if H.shape[1] < num_classes:
-                # pad missing columns with zeros
-                pad_width = num_classes - H.shape[1]
-                H = np.pad(H, ((0, 0), (0, pad_width)), mode='constant')
-            elif H.shape[1] > num_classes:
-                # truncate extra columns
-                H = H[:, :num_classes]
-
-        else:
-            raise ValueError(f"[safe_edge_output] Unexpected shape {H.shape} for edge {i}")
-
-        safe_list.append(H)
-
-    return safe_list
-"""
-
 def  compute_accuracy(y_true, y_pred):
     """
     Compute accuracy safely with debug info.
@@ -1555,17 +1420,6 @@ def make_edge_groups(n_devices: int, n_edges: int, random_state: int = 42) -> Li
     rng_local = np.random.default_rng(random_state)
     rng_local.shuffle(idxs)
     return [list(g) for g in np.array_split(idxs, n_edges)]
-
-def safe_pad(e, max_cols, mode="constant", constant_values=0):
-    n_rows, n_cols = e.shape
-    if n_cols > max_cols:
-        e_fixed = e[:, :max_cols]  # truncate
-    elif n_cols < max_cols:
-        pad_width = max_cols - n_cols
-        e_fixed = np.pad(e, ((0, 0), (0, pad_width)), mode=mode, constant_values=constant_values)
-    else:
-        e_fixed = e.copy()
-    return e_fixed
 
 # ==========================================================
 # SAVE FUNCTION
@@ -1802,6 +1656,7 @@ def evaluate_multilevel_performance(
     y_tests,
     le,
     num_classes,
+    epoch=0,
     combine_mode="last",
     device_model_weights=None,
     edge_model_weights=None,
@@ -1812,12 +1667,8 @@ def evaluate_multilevel_performance(
     device_weight_mode="weighted",
     top_k=3,
 ):
-    """
-    Evaluate hierarchical federated model performance: device, edge, and global levels.
-    Edge predictions can be weighted by their reliability.
-    Returns a structured dictionary with predictions and metrics.
-    """
-    print_layer_banner("Evaluation", current_epoch=10)
+
+    print_layer_banner("Evaluation", current_epoch=epoch)
 
     def normalize_weights(weights):
         w = np.asarray(weights, dtype=np.float32)
@@ -1857,7 +1708,7 @@ def evaluate_multilevel_performance(
             continue
 
         # Stack predictions from multiple models per device
-        preds_list = [predict_proba_fixed(m, X_test, num_classes).astype(np.float32)
+        preds_list = [predict_proba_fixed(m, X_test, y_true, num_classes).astype(np.float32)
                       for m in (models_per_device if isinstance(models_per_device, list) else [models_per_device])]
 
         # Compute combination weights
@@ -1923,7 +1774,7 @@ def evaluate_multilevel_performance(
         # Edge model predictions
         if edge_idx < len(edge_models) and edge_models[edge_idx]:
             X_edge_combined = np.vstack([X_tests[d] for d in edge_devices])
-            edge_pred_accum = predict_proba_fixed(edge_models[edge_idx], X_edge_combined, num_classes)
+            edge_pred_accum = predict_proba_fixed(edge_models[edge_idx], X_edge_combined, y_edge_true,num_classes)
             if calibrate:
                 edge_pred_accum = calibrate_probs(y_edge_true, edge_pred_accum)
 
@@ -2076,7 +1927,6 @@ def hpfl_train_with_accuracy(
     # 4️⃣ Epoch Loop
     # -------------------------
     for epoch in range(num_epochs):
-        log_util.safe_log(f"\n===== Epoch {epoch + 1}/{num_epochs} =====\n")
 
         # --- Forward Pass ---
         (
@@ -2105,7 +1955,6 @@ def hpfl_train_with_accuracy(
             device_embeddings=device_embeddings,
             y_true_per_edge=y_true_per_edge,
             edge_sample_slices=edge_sample_slices,
-            global_pred_matrix=y_global_pred,
             n_classes=n_classes,
             use_classification=True,
             epoch=epoch,
@@ -2131,6 +1980,7 @@ def hpfl_train_with_accuracy(
             y_tests=y_tests,
             le=le,
             num_classes=n_classes,
+            epoch=epoch,
             combine_mode="weighted",
             top_k=3,
             edge_reliabilities=edge_reliabilities
@@ -2165,69 +2015,6 @@ def hpfl_train_with_accuracy(
 
     return history
 
-
-"""
-def evaluate_final_accuracy(devices_data, device_models, edge_groups, le, num_classes, gossip_summary=None):
-    \"""
-    Evaluate final accuracy at:
-    - Device-level
-    - Edge-level
-    - Global/Gossip-level (if gossip_summary provided)
-    \"""
-    # -----------------------------
-    # Device-level
-    # -----------------------------
-    device_acc_list = []
-    for idx, (X_test, _, y_test, _) in enumerate(devices_data):
-        X_test_np, y_test_np = safe_array(X_test), safe_array(y_test)
-        device_preds = np.zeros((X_test_np.shape[0], num_classes))
-        for mdl in device_models[idx]:
-            device_preds += predict_proba_fixed(mdl, X_test_np, num_classes, le)
-        device_preds = device_preds.argmax(axis=1)
-        device_acc_list.append(compute_accuracy(y_test_np, device_preds))
-    device_acc = np.mean(device_acc_list)
-
-    # -----------------------------
-    # Edge-level
-    # -----------------------------
-    edge_acc_list = []
-    for edge_devices in edge_groups:
-        if len(edge_devices) == 0:
-            continue
-        X_edge = np.vstack([safe_array(devices_data[i][0]) for i in edge_devices])
-        y_edge = np.hstack([safe_array(devices_data[i][2]) for i in edge_devices])
-        edge_preds = np.zeros((X_edge.shape[0], num_classes))
-        for i in edge_devices:
-            for mdl in device_models[i]:
-                edge_preds += predict_proba_fixed(mdl, X_edge, num_classes, le)
-        edge_preds = edge_preds.argmax(axis=1)
-        edge_acc_list.append(compute_accuracy(y_edge, edge_preds))
-    edge_acc = np.mean(edge_acc_list) if edge_acc_list else 0.0
-
-    # -----------------------------
-    # Global/Gossip-level
-    # -----------------------------
-    global_acc = None
-    if gossip_summary is not None:
-        X_global = np.vstack([safe_array(devices_data[i][0]) for i in range(len(devices_data))])
-        y_global = np.hstack([safe_array(devices_data[i][2]) for i in range(len(devices_data))])
-        betas = np.asarray(gossip_summary["betas"])
-        alpha = np.asarray(gossip_summary["alpha"])
-        if betas.shape[0] != X_global.shape[1]:
-            # Pad or truncate to match feature dimension
-            if betas.shape[0] < X_global.shape[1]:
-                pad_width = X_global.shape[1] - betas.shape[0]
-                betas = np.vstack([betas, np.zeros((pad_width, betas.shape[1]))])
-            else:
-                betas = betas[:X_global.shape[1], :]
-        if alpha.ndim != 1 or alpha.shape[0] != betas.shape[1]:
-            alpha = alpha.flatten()
-        logits = X_global @ betas + alpha
-        global_preds = np.argmax(sp_softmax(logits, axis=1), axis=1)
-        global_acc = compute_accuracy(y_global, global_preds)
-
-    return device_acc, edge_acc, global_acc
-"""
 
 # Create dated folder inside the main save_dir
 def get_dated_save_dir(base_dir="hdpftl_plot_outputs"):
@@ -2294,7 +2081,7 @@ def plot_device_accuracies(
         y_true = le.transform(y_test)
 
         # Stack predictions
-        preds_list = [predict_proba_fixed(m, X_test, num_classes) for m in models_per_device]
+        preds_list = [predict_proba_fixed(m, X_test, y_true, num_classes) for m in models_per_device]
 
         # Compute weights for "weighted" mode
         if combine_mode == "weighted":
@@ -2360,7 +2147,7 @@ def plot_device_accuracies(
     ax1.grid(axis='y', linestyle='--', alpha=0.6)
 
     mean_acc = np.mean(accuracies)
-    ax1.axhline(mean_acc, color='red', linestyle='--', label=f"Mean Accuracy = {mean_acc:.3f}")
+    ax1.axhline(float(mean_acc), color='red', linestyle='--', label=f"Mean Accuracy = {float(mean_acc):.3f}")
 
     ax2 = ax1.twinx()
     safe_log_losses = [x for x in log_losses if np.isfinite(x)]
@@ -2459,7 +2246,7 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
 
         # Device heatmap
         if device_accs[epoch_idx]:
-            plt.figure(figsize=(max(6, len(device_accs[epoch_idx]) * 0.5), 4))
+            plt.figure(figsize=(max(6.0, len(device_accs[epoch_idx]) * 0.5), 4.0))
             sns.heatmap(np.array([device_accs[epoch_idx]]), annot=True, cmap="Blues",
                         cbar=True, vmin=0, vmax=1)
             plt.xlabel("Device Index")
@@ -2472,7 +2259,8 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
 
         # Edge heatmap
         if edge_accs[epoch_idx]:
-            plt.figure(figsize=(max(6, len(edge_accs[epoch_idx]) * 0.5), 4))
+            plt.figure(figsize=(max(6.0, len(edge_accs[epoch_idx]) * 0.5), 4.0))
+
             sns.heatmap(np.array([edge_accs[epoch_idx]]), annot=True, cmap="Oranges",
                         cbar=True, vmin=0, vmax=1)
             plt.xlabel("Edge Index")
@@ -2490,7 +2278,7 @@ def plot_hpfl_all(metrics_test, save_root_dir="hdpftl_plot_outputs", show_plots=
             device_topk_epoch = metrics_test["metrics"]["device"].get("topk", [])
             if device_topk_epoch and len(device_topk_epoch) > epoch_idx:
                 topk_matrix = np.array([device_topk_epoch[epoch_idx]])  # shape: [1, num_devices]
-                plt.figure(figsize=(max(6, topk_matrix.shape[1]*0.5), 4))
+                plt.figure(figsize=(max(6, int(topk_matrix.shape[1] * 0.5)), 4))
                 sns.heatmap(topk_matrix, annot=True, cmap="Greens", cbar=True, vmin=0, vmax=1)
                 plt.xlabel("Device Index")
                 plt.ylabel("Epoch")
@@ -2612,4 +2400,3 @@ if __name__ == "__main__":
     history = hpfl_train_with_accuracy(d_data=devices_data, e_groups=edge_groups, edge_finetune_data = edge_finetune_data,
                                            le=le, n_classes=num_classes, verbose=True)
     plot_hpfl_all(history)
-
